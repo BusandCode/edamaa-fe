@@ -19,7 +19,7 @@ import {
   MagnifyingGlassIcon,
   UserCircleIcon,
   HomeIcon,
-  UserGroupIcon
+  // UserGroupIcon
 } from '@heroicons/react/24/outline';
 
 const StudentDashboard = () => {
