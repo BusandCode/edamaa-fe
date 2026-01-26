@@ -17,7 +17,9 @@ import {
   CreditCardIcon,
   PlusIcon,
   MagnifyingGlassIcon,
-  UserCircleIcon
+  UserCircleIcon,
+  HomeIcon,
+  UserGroupIcon
 } from '@heroicons/react/24/outline';
 
 const StudentDashboard = () => {
@@ -49,6 +51,16 @@ const StudentDashboard = () => {
 
   const OnSubjectClick = () => {
     navigate('/mysubjects');
+  }
+
+  const handleAssignmentsClick = () => {
+    // navigate('/assignments');
+    console.log('Assignments clicked');
+  }
+
+  const handlePerformanceClick = () => {
+    // navigate('/performance');
+    console.log('Performance clicked');
   }
 
   return (
@@ -136,9 +148,9 @@ const StudentDashboard = () => {
 
           {[
            { label: 'My Subjects', icon: BookOpenIcon, color: 'from-blue-500 to-blue-700', onClick: OnSubjectClick },
-            { label: 'Assignments', icon: ClipboardDocumentListIcon, color: 'from-green-500 to-green-700' },
+            { label: 'Assignments', icon: ClipboardDocumentListIcon, color: 'from-green-500 to-green-700', onClick: handleAssignmentsClick },
             { label: 'Join Class', icon: VideoCameraIcon, color: 'from-red-500 to-red-700', live: true },
-            { label: 'Performance Report', icon: ChartBarIcon, color: 'from-purple-500 to-purple-700' },
+            { label: 'Performance Report', icon: ChartBarIcon, color: 'from-purple-500 to-purple-700', onClick: handlePerformanceClick },
             { label: 'Resource Library', icon: DocumentTextIcon, color: 'from-orange-500 to-orange-700' },
             { label: 'Payment & Subscriptions', icon: CreditCardIcon, color: 'from-yellow-500 to-yellow-700' },
           ].map(({ label, icon: Icon, color, live, onClick }) => (
@@ -192,6 +204,36 @@ const StudentDashboard = () => {
         </div>
       )}
 
+      </div>
+
+      {/* Bottom Navigation - Mobile Only */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white shadow-lg md:hidden z-10">
+        <div className="flex justify-around items-center py-2 sm:py-3 px-2">
+          <button className="flex flex-col items-center gap-0.5 sm:gap-1 text-orange-500">
+            <div className="bg-orange-100 p-2 sm:p-2.5 rounded-lg">
+              <HomeIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+            </div>
+            <span className="text-[14px]">Home</span>
+          </button>
+          <button onClick={OnSubjectClick} className="flex flex-col items-center gap-0.5 sm:gap-1 text-gray-600 hover:text-orange-500">
+            <div className="p-2 sm:p-2.5 rounded-lg hover:bg-orange-100">
+              <BookOpenIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+            </div>
+            <span className="text-[14px]">Subjects</span>
+          </button>
+          <button onClick={handleAssignmentsClick} className="flex flex-col items-center gap-0.5 sm:gap-1 text-gray-600 hover:text-orange-500">
+            <div className="p-2 sm:p-2.5 rounded-lg hover:bg-orange-100">
+              <ClipboardDocumentListIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+            </div>
+            <span className="text-[14px]">Tasks</span>
+          </button>
+          <button onClick={handlePerformanceClick} className="flex flex-col items-center gap-0.5 sm:gap-1 text-gray-600 hover:text-orange-500">
+            <div className="p-2 sm:p-2.5 rounded-lg hover:bg-orange-100">
+              <ChartBarIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+            </div>
+            <span className="text-[14px]">Progress</span>
+          </button>
+        </div>
       </div>
 
       {/* PROFILE MODAL */}
