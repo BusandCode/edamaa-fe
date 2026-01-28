@@ -82,7 +82,7 @@ const QuickAccessGrid = ({
             )}
 
             <div
-              className={`w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br ${color} flex items-center justify-center transform group-hover:scale-110 transition-transform duration-200`}
+              className={`w-16 h-16 mx-auto mb-4 rounded-2xl bg-linear-to-br ${color} flex items-center justify-center transform group-hover:scale-110 transition-transform duration-200`}
             >
               <Icon className="w-8 h-8 text-white" />
             </div>

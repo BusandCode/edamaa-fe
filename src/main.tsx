@@ -18,6 +18,8 @@ import TutorDashboard from './pages/dashboards/TutorDashboard.tsx'
 import StudentDashboard from './pages/dashboards/StudentDashboard.tsx'
 import StudentProfile from './pages/profiles/StudentProfile.tsx'
 
+//Import Assignments
+import Assignments from './pages/assignments/Assignments.tsx'
 //Import students
 import StudentListTutor from './pages/lists/tutors/StudentListTutor.tsx'
 import StudentListSchool from './pages/lists/schools/StudentListSchool.tsx'
@@ -62,6 +64,8 @@ createRoot(document.getElementById('root')!).render(
 
         {/* Subjects */}
         <Route path='/mysubjects' element={<StudentSubjects />} />
+        {/* Assignments */}
+        <Route path='/assignments' element={<Assignments />} />
       </Routes>
     </Router>
   </StrictMode>,

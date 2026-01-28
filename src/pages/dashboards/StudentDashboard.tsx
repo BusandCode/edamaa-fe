@@ -3,15 +3,12 @@ import NewLogo from '../../components/NewLogo';
 import RecordClasses from "../../components/RecordClasses";
 import { useNavigate } from 'react-router-dom';
 import StudentProfile from "../profiles/StudentProfile";
+import BottomNavigation from '../../components/modules/students/BottomNavigation';
 import {
   Bars3Icon,
   BellIcon,
-  BookOpenIcon,
-  ClipboardDocumentListIcon,
-  ChartBarIcon,
   MagnifyingGlassIcon,
   UserCircleIcon,
-  HomeIcon,
   PlusIcon,
 } from '@heroicons/react/24/outline';
 
@@ -66,7 +63,7 @@ const StudentDashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-gray-50 via-blue-50 to-purple-50">
+    <div className="min-h-screen bg-gray-100">
       {/* HEADER */}
       <header className="bg-white shadow-sm sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -284,35 +281,13 @@ const StudentDashboard = () => {
       )}
 
       {/* Bottom Navigation - Mobile Only */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 py-3 z-40">
-        <div className="flex items-center justify-around">
-          <button className="flex flex-col items-center gap-1 text-[#3D08BA]">
-            <HomeIcon className="w-6 h-6" />
-            <span className="text-xs font-medium">Home</span>
-          </button>
-          <button
-            onClick={OnSubjectClick}
-            className="flex flex-col items-center gap-1 text-gray-600"
-          >
-            <BookOpenIcon className="w-6 h-6" />
-            <span className="text-xs">Subjects</span>
-          </button>
-          <button
-            onClick={handleAssignmentsClick}
-            className="flex flex-col items-center gap-1 text-gray-600"
-          >
-            <ClipboardDocumentListIcon className="w-6 h-6" />
-            <span className="text-xs">Tasks</span>
-          </button>
-          <button
-            onClick={handlePerformanceClick}
-            className="flex flex-col items-center gap-1 text-gray-600"
-          >
-            <ChartBarIcon className="w-6 h-6" />
-            <span className="text-xs">Progress</span>
-          </button>
-        </div>
-      </nav>
+      <BottomNavigation
+        activeTab="student-dashboard"
+        onHomeClick={() => navigate('/student-dashboard')}
+        onSubjectsClick={OnSubjectClick}
+        onAssignmentsClick={handleAssignmentsClick}
+        onPerformanceClick={handlePerformanceClick}
+      />
 
       {/* PROFILE MODAL */}
       {showProfile && (

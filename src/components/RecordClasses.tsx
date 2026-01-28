@@ -107,7 +107,7 @@ const RecordClasses = ({ onClassClick }: RecordClassesProps) => {
             onClick={() => onClassClick?.(classItem)}
           >
             {/* Thumbnail */}
-            <div className="relative h-40 bg-gradient-to-br from-[#3D08BA] to-[#5a2dd4] overflow-hidden">
+            <div className="relative h-40 bg-linear-to-br from-[#3D08BA] to-[#5a2dd4] overflow-hidden">
               <img 
                 src={classItem.thumbnail}
                 alt={classItem.title}
@@ -116,7 +116,7 @@ const RecordClasses = ({ onClassClick }: RecordClassesProps) => {
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="w-16 h-16 bg-white/90 rounded-full flex items-center justify-center hover:bg-white transition-all">
                   {/* Play button triangle */}
-                  <div className="w-0 h-0 border-t-[12px] border-t-transparent border-l-[18px] border-l-[#3D08BA] border-b-[12px] border-b-transparent ml-1"></div>
+                  <div className="w-0 h-0 border-t-12 border-t-transparent border-l-18 border-l-[#3D08BA] border-b-12 border-b-transparent ml-1"></div>
                 </div>
               </div>
               <div className="absolute top-3 right-3 bg-black/70 text-white text-xs px-2 py-1 rounded">
