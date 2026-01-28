@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { FaSearch, FaCheckCircle, FaChartLine, FaCalendarAlt, FaVideo, FaIdCard, FaUsers, FaFileAlt, FaCertificate, FaBook, FaCamera } from 'react-icons/fa';import NewLogo from '../../components/NewLogo';
-import QuickActionButton from '../../components/schools/QuickActionButton';
-import RecentActivity from '../../components/schools/RecentActivity';
+import QuickActionButton from '../../components/modules/schools/QuickActionButton';
+import RecentActivity from '../../components/modules/schools/RecentActivity';
 import { useNavigate } from 'react-router-dom';
-import NavBar from '../../components/schools/NavBar';
+import NavBar from '../../components/modules/schools/NavBar';
 
 
 

@@ -21,9 +21,9 @@ interface StudentProfileProps {
 const StudentProfile: React.FC<StudentProfileProps> = ({ 
   onClose, 
   onSave,
-  initialName = 'John Doe',
-  initialUsername = 'johndoe',
-  initialEmail = 'john.doe@example.com',
+  initialName = 'Andrew Adetokunbo',
+  initialUsername = 'Andrewtoks',
+  initialEmail = 'adetokunboandrew@example.com',
   initialBio = 'Computer Science student passionate about learning',
   initialProfileImage = null
 }) => {

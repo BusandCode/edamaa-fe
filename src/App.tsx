@@ -53,12 +53,11 @@ const App = () => {
               </button>
               <button 
                 onClick={handleSignup}
-                className="px-6 py-2 border-2 border-[#3D08BA] text-[#3D08BA] rounded-full font-semibold hover:bg-[#3D08BA] hover:text-white transition-all"
+                className="px-6 py-2 cursor-pointer border-2 border-[#3D08BA] text-[#3D08BA] rounded-full font-semibold hover:bg-[#3D08BA] hover:text-white transition-all"
               >
                 Sign up
               </button>
             </div>
-
             {/* Mobile menu button */}
             <button 
               className="md:hidden p-2"

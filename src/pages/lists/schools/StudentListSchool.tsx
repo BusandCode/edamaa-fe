@@ -8,7 +8,7 @@ import {
   FaEye,
   FaEdit} from 'react-icons/fa';
 import { students } from './students';
-import NavBar from '../../../components/schools/NavBar';
+import NavBar from '../../../components/modules/schools/NavBar';
 
 const StudentList = () => {
   const [searchQuery, setSearchQuery] = useState('');
