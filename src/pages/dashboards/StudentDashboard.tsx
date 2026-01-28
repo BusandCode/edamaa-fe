@@ -27,7 +27,7 @@ const StudentDashboard = () => {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
-  const [profileSrc, setProfileSrc] = useState(null);
+  const [profileSrc] = useState(null);
   const [name, setName] = useState('Andrew');
   const [username, setUsername] = useState('andrew123');
   const [email, setEmail] = useState('andrew@example.com');
@@ -66,7 +66,7 @@ const StudentDashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-purple-50">
+    <div className="min-h-screen bg-linear-to-br from-gray-50 via-blue-50 to-purple-50">
       {/* HEADER */}
       <header className="bg-white shadow-sm sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
