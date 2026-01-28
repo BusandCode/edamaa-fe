@@ -7,7 +7,6 @@ import BottomNavigation from '../../components/modules/students/BottomNavigation
 import {
   Bars3Icon,
   BellIcon,
-  MagnifyingGlassIcon,
   UserCircleIcon,
   PlusIcon,
 } from '@heroicons/react/24/outline';
