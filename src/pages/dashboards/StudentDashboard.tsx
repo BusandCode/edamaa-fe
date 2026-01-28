@@ -63,148 +63,108 @@ const StudentDashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-gray-50">
       {/* HEADER */}
       <header className="bg-white shadow-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          {/* Top Row */}
-          <div className="flex items-center justify-between py-4">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
+          {/* Logo and Search Row */}
+          <div className="flex items-center justify-between gap-2 sm:gap-3 mb-2 sm:mb-3">
+            {/* Logo */}
             <div className='shrink-0'>
               <NewLogo logoWidth={30} logoHeight={30} textSize="text-[14px]" gap="gap-1.5" centered={false} />
             </div>
 
-            {/* Search - Desktop */}
-            <div className="hidden md:flex flex-1 max-w-md mx-8">
-              <div className="relative w-full">
-                <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search courses, subjects, assignments..."
-                  className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3D08BA] focus:border-transparent"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              {/* Mobile Menu Toggle */}
+            {/* Notification and Menu */}
+            <div className="flex items-center gap-1 sm:gap-2">
+              <button className="relative p-1.5 sm:p-2 rounded-full hover:bg-gray-100">
+                <BellIcon className="w-5 h-5 sm:w-6 sm:h-6 text-gray-600" />
+                <span className="absolute top-0.5 right-0.5 sm:top-1 sm:right-1 w-1.5 h-1.5 sm:w-2 sm:h-2 bg-red-500 rounded-full"></span>
+              </button>
               <button
                 onClick={() => setMenuOpen(true)}
-                className="md:hidden p-2 rounded-lg hover:bg-gray-100"
+                className="md:hidden p-1.5 sm:p-2 rounded-full hover:bg-gray-100"
               >
-                <Bars3Icon className="w-6 h-6" />
+                <Bars3Icon className="w-5 h-5 sm:w-6 sm:h-6" />
               </button>
-
-              {/* Bell */}
-              <button className="relative p-2 rounded-lg hover:bg-gray-100">
-                <BellIcon className="w-6 h-6 text-gray-600" />
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
-              </button>
-
-              {/* Profile */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowProfile(true)}
-                  className="w-12 h-12 rounded-full border-2 border-[#F68C29] overflow-hidden bg-gray-100 flex items-center justify-center hover:scale-105 transition-transform"
-                >
-                  {profileSrc ? (
-                    <img
-                      src={profileSrc}
-                      alt="Profile"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <UserCircleIcon className="w-8 h-8 text-gray-400" />
-                  )}
-                </button>
-                <button
-                  onClick={() => setShowProfile(true)}
-                  className="absolute -bottom-1 -right-1 w-6 h-6 bg-[#3D08BA] rounded-full flex items-center justify-center hover:bg-[#2D0690] transition-colors"
-                >
-                  <PlusIcon className="w-4 h-4 text-white" />
-                </button>
-              </div>
             </div>
           </div>
 
           {/* Welcome Section */}
-          <div className="hidden md:block pb-4 border-t border-gray-100 pt-4">
-            <div className="flex items-center gap-3 md:gap-4">
-              {/* Profile Avatar with Plus Button */}
-              <div className="relative shrink-0 group">
-                <button
-                  type="button"
-                  aria-label="View profile"
-                  title="View profile"
-                  onClick={() => setShowProfile(true)}
+          <div className="flex items-center gap-2 sm:gap-3 md:gap-4 min-w-0">
+            {/* Profile Avatar with Plus Button */}
+            <div className="relative shrink-0 group">
+              <button
+                type="button"
+                aria-label="View profile"
+                title="View profile"
+                onClick={() => setShowProfile(true)}
+                className="
+                  relative
+                  w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 lg:w-20 lg:h-20
+                  rounded-full
+                  overflow-hidden
+                  border-2 border-[#F68C29]
+                  bg-gray-100
+                  flex items-center justify-center
+                  focus:outline-none
+                  focus:ring-2 focus:ring-[#3D08BA]
+                  transition
+                "
+              >
+                {profileSrc ? (
+                  <img
+                    src={profileSrc}
+                    alt="Profile"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <UserCircleIcon className="w-6 h-6 sm:w-8 sm:h-8 md:w-10 md:h-10 lg:w-12 lg:h-12 text-gray-400" />
+                )}
+
+                {/* Hover Overlay */}
+                <div
                   className="
-                    relative
-                    w-14 h-14 md:w-16 md:h-16 lg:w-20 lg:h-20
-                    rounded-full
-                    overflow-hidden
-                    border-2 border-[#F68C29]
-                    bg-gray-100
-                    flex items-center justify-center
-                    focus:outline-none
-                    focus:ring-2 focus:ring-[#3D08BA]
-                    transition
-                    hover:scale-105
+                    absolute inset-0
+                    bg-black/40
+                    hidden sm:flex
+                    items-center justify-center
+                    text-white text-[9px] md:text-[10px] font-medium
+                    opacity-0 group-hover:opacity-100
+                    transition-opacity
                   "
                 >
-                  {profileSrc ? (
-                    <img
-                      src={profileSrc}
-                      alt="Profile"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <UserCircleIcon className="w-10 h-10 md:w-12 md:h-12 text-gray-400" />
-                  )}
+                  View Profile
+                </div>
+              </button>
 
-                  {/* Hover Overlay */}
-                  <div
-                    className="
-                      absolute inset-0
-                      bg-black/40
-                      flex
-                      items-center justify-center
-                      text-white text-[9px] md:text-[10px] font-medium
-                      opacity-0 group-hover:opacity-100
-                      transition-opacity
-                    "
-                  >
-                    View Profile
-                  </div>
-                </button>
+              {/* Plus Button */}
+              <button
+                type="button"
+                onClick={() => setShowProfile(true)}
+                aria-label="Edit profile"
+                title="Edit profile"
+                className="
+                  absolute -bottom-0.5 -right-0.5 sm:-bottom-1 sm:-right-1
+                  w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7
+                  rounded-full
+                  bg-[#3D08BA]
+                  flex items-center justify-center
+                  shadow-md
+                  hover:bg-[#2c0691]
+                  transition
+                "
+              >
+                <PlusIcon className="w-3 h-3 sm:w-4 sm:h-4 text-white" />
+              </button>
+            </div>
 
-                {/* Plus Button */}
-                <button
-                  type="button"
-                  onClick={() => setShowProfile(true)}
-                  aria-label="Edit profile"
-                  title="Edit profile"
-                  className="
-                    absolute -bottom-1 -right-1
-                    w-6 h-6 md:w-7 md:h-7
-                    rounded-full
-                    bg-[#3D08BA]
-                    flex items-center justify-center
-                    shadow-md
-                    hover:bg-[#2c0691]
-                    transition
-                  "
-                >
-                  <PlusIcon className="w-4 h-4 text-white" />
-                </button>
-              </div>
-
-              {/* Name and Welcome */}
-              <div className="min-w-0 flex-1">
-                <p className="text-sm text-gray-600 leading-tight">Welcome back</p>
-                <h1 className="text-xl md:text-2xl font-bold text-gray-900 truncate leading-tight mt-0.5">
-                  {name}!
-                </h1>
-                <p className="text-sm text-gray-600 mt-1">{description}</p>
-              </div>
+            {/* Name and Welcome */}
+            <div className="min-w-0 flex-1">
+              <p className="text-[14px] text-gray-600 leading-tight">Welcome back</p>
+              <h1 className="text-sm sm:text-base md:text-lg lg:text-xl font-bold text-gray-800 truncate leading-tight mt-0.5">
+                {name}
+              </h1>
+              <p className="text-[12px] text-gray-600 mt-0.5">{description}</p>
             </div>
           </div>
         </div>

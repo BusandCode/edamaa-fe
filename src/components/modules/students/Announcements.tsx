@@ -69,7 +69,7 @@ const Announcements = () => {
             className={`border-l-4 ${announcement.type === 'urgent' ? 'border-red-500' : announcement.type === 'event' ? 'border-blue-500' : 'border-green-500'} ${announcement.bgColor} p-4 rounded-lg`}
           >
             <div className="flex items-start gap-3">
-              <div className={`w-8 h-8 rounded-full ${announcement.bgColor} flex items-center justify-center flex-shrink-0`}>
+              <div className={`w-8 h-8 rounded-full ${announcement.bgColor} flex items-center justify-center shrink-0`}>
                 <announcement.icon className={`w-5 h-5 ${announcement.color}`} />
               </div>
 

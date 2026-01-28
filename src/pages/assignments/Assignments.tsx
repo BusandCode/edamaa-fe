@@ -384,7 +384,7 @@ const Assignments = () => {
       {/* Bottom Navigation */}
       <BottomNavigation
         activeTab="assignments"
-        onHomeClick={() => navigate('/')}
+        onHomeClick={() => navigate('/student-dashboard')}
         onSubjectsClick={() => navigate('/mysubjects')}
         onAssignmentsClick={() => navigate('/assignments')}
         onPerformanceClick={() => navigate('/performance')}
