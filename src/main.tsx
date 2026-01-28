@@ -18,6 +18,9 @@ import TutorDashboard from './pages/dashboards/TutorDashboard.tsx'
 import StudentDashboard from './pages/dashboards/StudentDashboard.tsx'
 import StudentProfile from './pages/profiles/StudentProfile.tsx'
 
+//Import Notifications
+import StudentNotifications from './components/modules/students/StudentNotifications.tsx'
+
 //Import Assignments
 import Assignments from './pages/assignments/Assignments.tsx'
 //Import students
@@ -66,6 +69,9 @@ createRoot(document.getElementById('root')!).render(
         <Route path='/mysubjects' element={<StudentSubjects />} />
         {/* Assignments */}
         <Route path='/assignments' element={<Assignments />} />
+
+        {/* Notifications */}
+        <Route path="/notifications" element={<StudentNotifications />} />
       </Routes>
     </Router>
   </StrictMode>,

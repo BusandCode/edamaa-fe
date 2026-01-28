@@ -48,6 +48,9 @@ const StudentDashboard = () => {
   const OnSubjectClick = () => {
     navigate('/mysubjects');
   };
+  const handleNotificationClick = () => {
+    navigate('/notifications');
+  };
 
   const handleAssignmentsClick = () => {
     navigate('/assignments');
@@ -75,7 +78,7 @@ const StudentDashboard = () => {
 
             {/* Notification and Menu */}
             <div className="flex items-center gap-1 sm:gap-2">
-              <button className="relative p-1.5 sm:p-2 rounded-full hover:bg-gray-100">
+              <button onClick={handleNotificationClick} className="relative p-1.5 sm:p-2 rounded-full hover:bg-gray-100">
                 <BellIcon className="w-5 h-5 sm:w-6 sm:h-6 text-gray-600" />
                 <span className="absolute top-0.5 right-0.5 sm:top-1 sm:right-1 w-1.5 h-1.5 sm:w-2 sm:h-2 bg-red-500 rounded-full"></span>
               </button>
