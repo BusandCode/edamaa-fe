@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   BellIcon,
@@ -12,7 +12,7 @@ import {
   EllipsisVerticalIcon,
 } from '@heroicons/react/24/outline';
 
-interface Notification {
+export interface Notification {
   id: string;
   type: 'assignment' | 'grade' | 'announcement' | 'reminder' | 'achievement';
   title: string;
@@ -22,78 +22,115 @@ interface Notification {
   priority: 'high' | 'medium' | 'low';
 }
 
-const StudentNotifications = () => {
+// Initial notifications data
+export const initialNotifications: Notification[] = [
+  {
+    id: '1',
+    type: 'assignment',
+    title: 'New Assignment Posted',
+    message: 'Mathematics: Calculus Problem Set Due in 2 days',
+    time: '5 minutes ago',
+    isRead: false,
+    priority: 'high',
+  },
+  {
+    id: '2',
+    type: 'grade',
+    title: 'Grade Published',
+    message: 'Your Physics Lab Report score is now available: 95/100',
+    time: '1 hour ago',
+    isRead: false,
+    priority: 'medium',
+  },
+  {
+    id: '3',
+    type: 'achievement',
+    title: 'Achievement Unlocked! 🎉',
+    message: 'You\'ve completed 10 assignments this month!',
+    time: '3 hours ago',
+    isRead: false,
+    priority: 'low',
+  },
+  {
+    id: '4',
+    type: 'announcement',
+    title: 'Class Rescheduled',
+    message: 'Chemistry class moved to 3:00 PM tomorrow',
+    time: '5 hours ago',
+    isRead: true,
+    priority: 'high',
+  },
+  {
+    id: '5',
+    type: 'reminder',
+    title: 'Upcoming Deadline',
+    message: 'English Essay submission deadline is tomorrow at 11:59 PM',
+    time: '1 day ago',
+    isRead: true,
+    priority: 'high',
+  },
+  {
+    id: '6',
+    type: 'announcement',
+    title: 'New Study Material',
+    message: 'Professor Lee uploaded lecture notes for Chapter 5',
+    time: '2 days ago',
+    isRead: true,
+    priority: 'medium',
+  },
+  {
+    id: '7',
+    type: 'grade',
+    title: 'Quiz Results',
+    message: 'Biology Quiz 3 results: 88/100 - Great job!',
+    time: '3 days ago',
+    isRead: true,
+    priority: 'medium',
+  },
+];
+
+// Helper function to get unread count from localStorage or initial data
+export const getUnreadNotificationCount = (): number => {
+  if (typeof window !== 'undefined') {
+    const stored = localStorage.getItem('notifications');
+    if (stored) {
+      const notifications: Notification[] = JSON.parse(stored);
+      return notifications.filter(n => !n.isRead).length;
+    }
+  }
+  return initialNotifications.filter(n => !n.isRead).length;
+};
+
+interface StudentNotificationsProps {
+  onUnreadCountChange?: (count: number) => void;
+}
+
+const StudentNotifications = ({ onUnreadCountChange }: StudentNotificationsProps) => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'all' | 'unread'>('all');
-  const [notifications, setNotifications] = useState<Notification[]>([
-    {
-      id: '1',
-      type: 'assignment',
-      title: 'New Assignment Posted',
-      message: 'Mathematics: Calculus Problem Set Due in 2 days',
-      time: '5 minutes ago',
-      isRead: false,
-      priority: 'high',
-    },
-    {
-      id: '2',
-      type: 'grade',
-      title: 'Grade Published',
-      message: 'Your Physics Lab Report score is now available: 95/100',
-      time: '1 hour ago',
-      isRead: false,
-      priority: 'medium',
-    },
-    {
-      id: '3',
-      type: 'achievement',
-      title: 'Achievement Unlocked! 🎉',
-      message: 'You\'ve completed 10 assignments this month!',
-      time: '3 hours ago',
-      isRead: false,
-      priority: 'low',
-    },
-    {
-      id: '4',
-      type: 'announcement',
-      title: 'Class Rescheduled',
-      message: 'Chemistry class moved to 3:00 PM tomorrow',
-      time: '5 hours ago',
-      isRead: true,
-      priority: 'high',
-    },
-    {
-      id: '5',
-      type: 'reminder',
-      title: 'Upcoming Deadline',
-      message: 'English Essay submission deadline is tomorrow at 11:59 PM',
-      time: '1 day ago',
-      isRead: true,
-      priority: 'high',
-    },
-    {
-      id: '6',
-      type: 'announcement',
-      title: 'New Study Material',
-      message: 'Professor Lee uploaded lecture notes for Chapter 5',
-      time: '2 days ago',
-      isRead: true,
-      priority: 'medium',
-    },
-    {
-      id: '7',
-      type: 'grade',
-      title: 'Quiz Results',
-      message: 'Biology Quiz 3 results: 88/100 - Great job!',
-      time: '3 days ago',
-      isRead: true,
-      priority: 'medium',
-    },
-  ]);
+  
+  // Initialize from localStorage or use initial data
+  const [notifications, setNotifications] = useState<Notification[]>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('notifications');
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    }
+    return initialNotifications;
+  });
 
   const [selectedNotification, setSelectedNotification] = useState<string | null>(null);
 
   const unreadCount = notifications.filter(n => !n.isRead).length;
+
+  // Update localStorage and notify parent when notifications change
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('notifications', JSON.stringify(notifications));
+    }
+    onUnreadCountChange?.(unreadCount);
+  }, [notifications, unreadCount, onUnreadCountChange]);
 
   const getNotificationIcon = (type: Notification['type']) => {
     switch (type) {
@@ -170,7 +207,6 @@ const StudentNotifications = () => {
                     <span className="text-white text-xs font-bold">{unreadCount}</span>
                   </div>
                 )}
-               
               </div>
             </div>
 
