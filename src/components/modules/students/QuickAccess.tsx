@@ -19,12 +19,14 @@ interface QuickAccessGridProps {
   onSubjectClick: () => void;
   onAssignmentsClick: () => void;
   onPerformanceClick: () => void;
+  onJoinClass: () => void;
 }
 
 const QuickAccessGrid = ({
   onSubjectClick,
   onAssignmentsClick,
   onPerformanceClick,
+  onJoinClass,
 }: QuickAccessGridProps) => {
   const quickAccessItems: QuickAccessItem[] = [
     {
@@ -44,6 +46,7 @@ const QuickAccessGrid = ({
       icon: VideoCameraIcon,
       color: 'from-red-500 to-red-700',
       live: true,
+      onClick: onJoinClass,
     },
     {
       label: 'Performance Report',
