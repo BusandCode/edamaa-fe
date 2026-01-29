@@ -21,6 +21,9 @@ import StudentProfile from './pages/profiles/StudentProfile.tsx'
 //Import Notifications
 import StudentNotifications from './components/modules/students/StudentNotifications.tsx'
 
+//Import Join class
+import JoinClass from './components/modules/students/JoinClass.tsx'
+
 //Import Assignments
 import Assignments from './pages/assignments/Assignments.tsx'
 //Import students
@@ -72,6 +75,8 @@ createRoot(document.getElementById('root')!).render(
 
         {/* Notifications */}
         <Route path="/notifications" element={<StudentNotifications />} />
+        {/* Join Class */}
+        <Route path="/join-class" element={<JoinClass />} />
       </Routes>
     </Router>
   </StrictMode>,

@@ -21,25 +21,41 @@ import ProgressOverview from '../../components/modules/students/ProgressOverview
 
 interface StudentDashboardProps {
   unreadNotifications?: number;
+  initialName?: string;
+  initialEmail?: string;
+  initialBio?: string;
+  initialProfileImage?: string | null;
 }
 
-const StudentDashboard = ({ unreadNotifications = 3 }: StudentDashboardProps) => {
+const StudentDashboard = ({ 
+  unreadNotifications = 3,
+  initialName = 'Andrew',
+  initialEmail = 'andrew@example.com',
+  initialBio = 'I am here to learn, unlearn and relearn',
+  initialProfileImage = null,
+}: StudentDashboardProps) => {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
-  const [profileSrc] = useState(null);
-  const [name, setName] = useState('Andrew');
+  const [profileSrc, setProfileSrc] = useState<string | null>(initialProfileImage);
+  const [name, setName] = useState(initialName);
   const [username, setUsername] = useState('andrew123');
-  const [email, setEmail] = useState('andrew@example.com');
-  const [description, setDescription] = useState(
-    'I am here to learn, unlearn and relearn'
-  );
+  const [email, setEmail] = useState(initialEmail);
+  const [description, setDescription] = useState(initialBio);
   const [notificationCount, setNotificationCount] = useState(unreadNotifications);
 
   // Update notification count when prop changes
   useEffect(() => {
     setNotificationCount(unreadNotifications);
   }, [unreadNotifications]);
+
+  // Update profile data when props change
+  useEffect(() => {
+    setName(initialName);
+    setEmail(initialEmail);
+    setDescription(initialBio);
+    setProfileSrc(initialProfileImage);
+  }, [initialName, initialEmail, initialBio, initialProfileImage]);
 
   const handleProfileUpdate = (updatedProfile: {
     name: string;
@@ -52,7 +68,7 @@ const StudentDashboard = ({ unreadNotifications = 3 }: StudentDashboardProps) =>
     setUsername(updatedProfile.username);
     setEmail(updatedProfile.email);
     setDescription(updatedProfile.bio);
-    // setProfileSrc(updatedProfile.profileImage);
+    setProfileSrc(updatedProfile.profileImage);
   };
 
   const OnSubjectClick = () => {
@@ -71,8 +87,12 @@ const StudentDashboard = ({ unreadNotifications = 3 }: StudentDashboardProps) =>
     navigate('/performance');
   };
 
-  const handleJoinClass = (classId: string) => {
-    navigate(`/class/${classId}`);
+  const handleJoinClass = (classId?: string) => {
+    if (classId) {
+      navigate(`/join-class/${classId}`);
+    } else {
+      navigate('/join-class');
+    }
   };
 
   return (
@@ -91,6 +111,7 @@ const StudentDashboard = ({ unreadNotifications = 3 }: StudentDashboardProps) =>
             <button
               onClick={() => setMenuOpen(true)}
               className="p-2 rounded-full hover:bg-gray-100 transition-colors"
+              aria-label="Settings"
             >
               <Cog6ToothIcon className="w-6 h-6 text-gray-600" />
             </button>
@@ -118,6 +139,7 @@ const StudentDashboard = ({ unreadNotifications = 3 }: StudentDashboardProps) =>
                     focus:outline-none
                     focus:ring-2 focus:ring-[#3D08BA]
                     transition
+                    hover:scale-105
                   "
                 >
                   {profileSrc ? (
@@ -199,7 +221,7 @@ const StudentDashboard = ({ unreadNotifications = 3 }: StudentDashboardProps) =>
       </header>
 
       {/* MAIN CONTENT */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-24 md:pb-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* LEFT COLUMN - Main Content */}
           <div className="lg:col-span-2 space-y-6">
@@ -256,6 +278,7 @@ const StudentDashboard = ({ unreadNotifications = 3 }: StudentDashboardProps) =>
                 <button
                   onClick={() => setMenuOpen(false)}
                   className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                  aria-label="Close menu"
                 >
                   <svg className="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
