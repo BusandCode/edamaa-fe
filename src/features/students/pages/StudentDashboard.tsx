@@ -74,6 +74,9 @@ const StudentDashboard = () => {
   const handleJoinClassClick = () => {
     navigate('/join-class');
   };
+  const handleResourcesClick = () => {
+    navigate('/resources');
+  };
 
   const handleLogout = () => {
     // Add your logout logic here
@@ -259,6 +262,7 @@ const StudentDashboard = () => {
               onAssignmentsClick={handleAssignmentsClick}
               onPerformanceClick={handlePerformanceClick}
               onJoinClass={handleJoinClassClick}
+              onResourceClick={handleResourcesClick}
             />
 
             {/* Upcoming Classes */}

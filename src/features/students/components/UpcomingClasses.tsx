@@ -149,7 +149,7 @@ const UpcomingClasses = () => {
                 <button
                   className={`w-full sm:w-auto px-4 py-2 sm:py-2.5 rounded-lg text-sm font-medium transition-all duration-200 shrink-0 ${
                     classItem.isLive
-                      ? 'bg-red-400 text-white hover:bg-red-500 shadow-sm'
+                      ? 'bg-red-500 text-white hover:bg-red-600 shadow-sm'
                       : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-200'
                   }`}
                 >
