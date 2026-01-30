@@ -4,7 +4,7 @@ import { FaBookOpen, FaUsers, FaGraduationCap, FaLaptop, FaPlay, FaAward, FaTrop
 import { IoTrendingUp } from 'react-icons/io5'
 import { FaFacebook, FaTwitter, FaInstagram, FaLinkedin, FaYoutube } from 'react-icons/fa'
 import { MdEmail, MdPhone, MdLocationOn } from 'react-icons/md'
-import NewLogo from './components/NewLogo'
+import NewLogo from './components/common/NewLogo'
 import { motion } from "framer-motion";
 
 
