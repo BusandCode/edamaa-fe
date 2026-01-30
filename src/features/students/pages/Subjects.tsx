@@ -2,327 +2,440 @@ import { useState } from 'react';
 import {
   MagnifyingGlassIcon,
   BookOpenIcon,
-  ClockIcon,
-  PlayIcon,
-  CalendarIcon,
-  FunnelIcon,
   AcademicCapIcon,
-  ChartBarIcon,
-  VideoCameraIcon
+  VideoCameraIcon,
+  ClockIcon,
+  CheckCircleIcon,
+  PlayCircleIcon,
+  ArrowRightIcon,
 } from '@heroicons/react/24/outline';
+import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid';
 import { useNavigate } from 'react-router-dom';
+import BottomNavigation from '../../../components/layout/student-layout/StudentBottomNavigation';
 
 const MySubjects = () => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterCategory, setFilterCategory] = useState('all');
-  const [showFilters, setShowFilters] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
   const navigate = useNavigate();
-  const onBackClick = () => {
-    navigate(-1);
-  }
+
+  const handleHomeClick = () => {
+    navigate('/student-dashboard');
+  };
+
+  const handleAssignmentsClick = () => {
+    navigate('/assignments');
+  };
+
+  const handlePerformanceClick = () => {
+    navigate('/performance');
+  };
+
+  const handleCourseClick = (courseId: number) => {
+    navigate(`/course/${courseId}`);
+  };
 
   const subjects = [
     {
       id: 1,
-      title: 'Mathematics',
-      description: 'Advanced mathematical concepts and problem solving',
+      title: 'Advanced Mathematics for Data Science',
+      instructor: 'Dr. Adetokunbo Andrew',
       category: 'Science',
-      color: '#3D08BA',
-      schedule: 'Mon, Wed, Fri - 2:00 PM',
-      duration: '12 weeks',
-      enrolled: 45,
-      status: 'ongoing',
+      thumbnail: 'https://images.unsplash.com/photo-1635070041078-e363dbe005cb?w=400',
+      rating: 4.8,
+      totalStudents: 2453,
       progress: 65,
-      instructor: 'Dr. Sarah Johnson',
-      nextClass: 'Monday, 2:00 PM',
       totalLessons: 36,
       completedLessons: 23,
-      assignments: 8,
-      completedAssignments: 5
+      duration: '12 weeks',
+      nextLesson: 'Calculus Applications',
+      lastAccessed: '2 hours ago',
+      level: 'Intermediate'
     },
     {
       id: 2,
-      title: 'Physics',
-      description: 'Fundamental principles of physics and mechanics',
+      title: 'Modern Physics: Quantum Mechanics',
+      instructor: 'Prof. Sobowale Olamide',
       category: 'Science',
-      color: '#3D08BA',
-      schedule: 'Tue, Thu - 10:00 AM',
-      duration: '10 weeks',
-      enrolled: 38,
-      status: 'ongoing',
+      thumbnail: 'https://images.unsplash.com/photo-1636466497217-26a8cbeaf0aa?w=400',
+      rating: 4.9,
+      totalStudents: 1876,
       progress: 45,
-      instructor: 'Prof. Michael Chen',
-      nextClass: 'Tuesday, 10:00 AM',
       totalLessons: 30,
       completedLessons: 14,
-      assignments: 6,
-      completedAssignments: 3
+      duration: '10 weeks',
+      nextLesson: 'Wave Functions',
+      lastAccessed: '1 day ago',
+      level: 'Advanced'
     },
     {
       id: 3,
-      title: 'English Literature',
-      description: 'Classic and contemporary literary analysis',
+      title: 'English Literature: Classic to Contemporary',
+      instructor: 'Dr. Ajayi Olubukunmi',
       category: 'Arts',
-      color: '#3D08BA',
-      schedule: 'Mon, Wed - 11:00 AM',
-      duration: '8 weeks',
-      enrolled: 52,
-      status: 'ongoing',
+      thumbnail: 'https://images.unsplash.com/photo-1481627834876-b7833e8f5570?w=400',
+      rating: 4.7,
+      totalStudents: 3201,
       progress: 80,
-      instructor: 'Dr. Emily Rodriguez',
-      nextClass: 'Monday, 11:00 AM',
       totalLessons: 24,
       completedLessons: 19,
-      assignments: 5,
-      completedAssignments: 4
+      duration: '8 weeks',
+      nextLesson: 'Modernist Poetry',
+      lastAccessed: '3 hours ago',
+      level: 'Beginner'
     },
     {
       id: 4,
-      title: 'Computer Science',
-      description: 'Programming fundamentals and algorithms',
+      title: 'Full Stack Web Development',
+      instructor: 'Prof. Andrew',
       category: 'Technology',
-      color: '#3D08BA',
-      schedule: 'Mon, Wed, Fri - 4:00 PM',
-      duration: '14 weeks',
-      enrolled: 60,
-      status: 'ongoing',
+      thumbnail: 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=400',
+      rating: 4.9,
+      totalStudents: 5678,
       progress: 55,
-      instructor: 'Prof. David Kumar',
-      nextClass: 'Monday, 4:00 PM',
       totalLessons: 42,
       completedLessons: 23,
-      assignments: 10,
-      completedAssignments: 6
+      duration: '14 weeks',
+      nextLesson: 'React Hooks Deep Dive',
+      lastAccessed: '5 hours ago',
+      level: 'Intermediate'
     },
     {
       id: 5,
-      title: 'Chemistry',
-      description: 'Organic and inorganic chemistry principles',
+      title: 'Organic Chemistry Fundamentals',
+      instructor: 'Mide Code',
       category: 'Science',
-      color: '#3D08BA',
-      schedule: 'Tue, Thu - 9:00 AM',
-      duration: '12 weeks',
-      enrolled: 42,
-      status: 'ongoing',
+      thumbnail: 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?w=400',
+      rating: 4.6,
+      totalStudents: 1543,
       progress: 70,
-      instructor: 'Dr. Lisa Wang',
-      nextClass: 'Tuesday, 9:00 AM',
       totalLessons: 36,
       completedLessons: 25,
-      assignments: 7,
-      completedAssignments: 5
+      duration: '12 weeks',
+      nextLesson: 'Reaction Mechanisms',
+      lastAccessed: '1 day ago',
+      level: 'Intermediate'
     },
     {
       id: 6,
-      title: 'History',
-      description: 'World history and cultural development',
+      title: 'World History: Ancient Civilizations',
+      instructor: 'Prof. Ajayi',
       category: 'Social Studies',
-      color: '#3D08BA',
-      schedule: 'Wed, Fri - 1:00 PM',
-      duration: '10 weeks',
-      enrolled: 35,
-      status: 'ongoing',
+      thumbnail: 'https://images.unsplash.com/photo-1461360370896-922624d12aa1?w=400',
+      rating: 4.5,
+      totalStudents: 2109,
       progress: 40,
-      instructor: 'Prof. James Thompson',
-      nextClass: 'Wednesday, 1:00 PM',
       totalLessons: 30,
       completedLessons: 12,
-      assignments: 6,
-      completedAssignments: 2
+      duration: '10 weeks',
+      nextLesson: 'Roman Empire',
+      lastAccessed: '2 days ago',
+      level: 'Beginner'
     }
   ];
 
-  const categories = ['all', 'Science', 'Arts', 'Technology', 'Social Studies'];
+  const filteredSubjects = subjects.filter(subject =>
+    subject.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    subject.instructor.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
-  const filteredSubjects = subjects.filter(subject => {
-    const matchesSearch = subject.title.toLowerCase().includes(searchQuery.toLowerCase())
-                        //  subject.code.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = filterCategory === 'all' || subject.category === filterCategory;
-    return matchesSearch && matchesCategory;
-  });
-
+  const stats = {
+    totalCourses: subjects.length,
+    inProgress: subjects.filter(s => s.progress > 0 && s.progress < 100).length,
+    completed: subjects.filter(s => s.progress === 100).length,
+    totalHours: 156
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
+    <div className="min-h-screen bg-linear-to-br from-gray-50 to-gray-100">
       {/* Header */}
-      <div className="bg-white shadow-sm sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-          <div className="mb-4 flex items-start justify-between gap-4">
-            <div>
-            <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">My Subjects</h1>
-            <p className="text-xs sm:text-sm text-gray-600 mt-1">All courses you're enrolled in</p>
-          </div>
-            <div>
-              <button onClick={onBackClick} className='bg-[#3D08BA] text-white px-5 py-2 rounded-[20px]'>Back</button>
-            </div>
-          </div>
-          
-
-          {/* Stats Cards */}
-          <div className="flex justify-between items-start mb-6 gap-4 flex-wrap">
-            <div className="bg-[#3D08BA] rounded-xl p-3 sm:p-4 text-white">
-              <div className="flex items-center gap-2 mb-1 sm:mb-2">
-                <BookOpenIcon className="w-4 h-4 sm:w-5 sm:h-5" />
-                <p className="text-xs sm:text-sm">Total Subjects</p>
+      <header className="bg-white shadow-sm sticky top-0 z-30 border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          {/* Top Section */}
+          <div className="py-6">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-[#3D08BA] mb-2">
+                  My Learning
+                </h1>
+                <p className="text-sm sm:text-base text-gray-600">
+                  Continue your learning journey
+                </p>
               </div>
-              <p className="text-xl sm:text-2xl font-bold">{subjects.length}</p>
             </div>
-          </div>
 
-          {/* Search and Filter */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-1 relative">
-              <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 sm:w-5 sm:h-5 text-gray-400" />
+            {/* Stats Cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+              <div className="bg-[#3D08BA] rounded-xl p-4 text-white shadow-sm">
+                <BookOpenIcon className="w-6 h-6 mb-2 opacity-90" />
+                <p className="text-2xl font-bold mb-1">{stats.totalCourses}</p>
+                <p className="text-xs opacity-90">Total Courses</p>
+              </div>
+              <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
+                <ClockIcon className="w-6 h-6 mb-2 text-[#3D08BA]" />
+                <p className="text-2xl font-bold text-gray-900 mb-1">{stats.inProgress}</p>
+                <p className="text-xs text-gray-600">In Progress</p>
+              </div>
+              <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
+                <CheckCircleIcon className="w-6 h-6 mb-2 text-green-500" />
+                <p className="text-2xl font-bold text-gray-900 mb-1">{stats.completed}</p>
+                <p className="text-xs text-gray-600">Completed</p>
+              </div>
+              <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
+                <AcademicCapIcon className="w-6 h-6 mb-2 text-[#3D08BA]" />
+                <p className="text-2xl font-bold text-gray-900 mb-1">{stats.totalHours}h</p>
+                <p className="text-xs text-gray-600">Learning Time</p>
+              </div>
+            </div>
+
+            {/* Search Bar */}
+            <div className="relative">
+              <MagnifyingGlassIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
               <input
                 type="text"
-                placeholder="Search subjects..."
+                placeholder="Search your courses..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 sm:pl-10 pr-4 py-2 sm:py-2.5 text-sm sm:text-base border rounded-lg focus:outline-none focus:border-[#3D08BA]"
+                className="w-full pl-12 pr-4 py-3 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3D08BA] focus:border-transparent bg-white shadow-sm"
               />
             </div>
-            <button 
-              onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center justify-center gap-2 px-4 py-2 sm:py-2.5 border rounded-lg hover:bg-gray-50 text-sm sm:text-base"
-            >
-              <FunnelIcon className="w-4 h-4 sm:w-5 sm:h-5" />
-              Filter
-            </button>
           </div>
 
-          {/* Filter Categories */}
-          {showFilters && (
-            <div className="flex flex-wrap gap-2 mt-3 sm:mt-4">
-              {categories.map(category => (
-                <button
-                  key={category}
-                  onClick={() => setFilterCategory(category)}
-                  className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-medium transition-colors ${
-                    filterCategory === category
-                      ? 'bg-[#3D08BA] text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {category.charAt(0).toUpperCase() + category.slice(1)}
-                </button>
-              ))}
-            </div>
-          )}
+          {/* View Mode Toggle */}
+          <div className="flex items-center gap-2 pb-4">
+            <button
+              onClick={() => setViewMode('grid')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                viewMode === 'grid'
+                  ? 'bg-[#3D08BA] text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              Grid View
+            </button>
+            <button
+              onClick={() => setViewMode('list')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                viewMode === 'list'
+                  ? 'bg-[#3D08BA] text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              List View
+            </button>
+          </div>
         </div>
-      </div>
+      </header>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-          {filteredSubjects.map(subject => (
-            <div
-              key={subject.id}
-              className="bg-white rounded-xl sm:rounded-2xl shadow-sm hover:shadow-lg overflow-hidden cursor-pointer transition-shadow"
-            >
-              {/* Subject Header */}
-              <div 
-                className="p-4 sm:p-5 text-white"
-                style={{ backgroundColor: subject.color }}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24">
+        {/* Grid View */}
+        {viewMode === 'grid' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredSubjects.map((subject) => (
+              <div
+                key={subject.id}
+                onClick={() => handleCourseClick(subject.id)}
+                className="bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 cursor-pointer group border border-gray-200"
               >
-                <h3 className="text-lg sm:text-xl font-bold mb-1">{subject.title}</h3>
-                <p className="text-xs sm:text-sm opacity-90 line-clamp-2">{subject.description}</p>
-              </div>
+                {/* Thumbnail */}
+                <div className="relative aspect-video overflow-hidden bg-gray-200">
+                  <img
+                    src={subject.thumbnail}
+                    alt={subject.title}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                  <div className="absolute inset-0 bg-linear-to-t from-black/60 to-transparent" />
+                  
+                  {/* Play Button Overlay */}
+                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <PlayCircleIcon className="w-16 h-16 text-white drop-shadow-lg" />
+                  </div>
 
-              {/* Subject Details */}
-              <div className="p-4 sm:p-5">
-                {/* Instructor */}
-                <div className="flex items-center gap-2 mb-3 pb-3 border-b">
-                  <AcademicCapIcon className="w-4 h-4 text-gray-500" />
-                  <span className="text-xs sm:text-sm text-gray-700">{subject.instructor}</span>
+                  {/* Progress Badge */}
+                  <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-sm px-3 py-1 rounded-full">
+                    <span className="text-xs font-bold text-red-500">{subject.progress}%</span>
+                  </div>
+
+                  {/* Level Badge */}
+                  <div className="absolute top-3 left-3">
+                    <span className="bg-[#3D08BA] text-white px-3 py-1 rounded-full text-xs font-medium">
+                      {subject.level}
+                    </span>
+                  </div>
                 </div>
 
-                {/* Progress Bar */}
-                <div className="mb-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-medium text-gray-700">Course Progress</span>
-                    <span className="text-xs font-bold text-[#F68C29]">{subject.progress}%</span>
+                {/* Content */}
+                <div className="p-5">
+                  {/* Category */}
+                  <span className="text-xs font-semibold text-[#3D08BA] uppercase tracking-wider">
+                    {subject.category}
+                  </span>
+
+                  {/* Title */}
+                  <h3 className="text-lg font-bold text-gray-900 mt-2 mb-2 line-clamp-2 group-hover:text-[#3D08BA] transition-colors">
+                    {subject.title}
+                  </h3>
+
+                  {/* Instructor */}
+                  <p className="text-sm text-gray-600 mb-3 flex items-center gap-2">
+                    <AcademicCapIcon className="w-4 h-4" />
+                    {subject.instructor}
+                  </p>
+
+                  {/* Rating & Students */}
+                  <div className="flex items-center gap-4 mb-4 text-sm">
+                    <div className="flex items-center gap-1">
+                      <StarSolidIcon className="w-4 h-4 text-yellow-400" />
+                      <span className="font-semibold text-gray-900">{subject.rating}</span>
+                    </div>
+                    <div className="text-gray-500">
+                      {subject.totalStudents.toLocaleString()} students
+                    </div>
                   </div>
-                  <div className="h-2 bg-gray-200  rounded-full overflow-hidden">
-                    <div 
-                      className="h-full transition-all bg-[#F68C29] duration-300"
-                      style={{ 
-                        width: `${subject.progress}%`,
-                      }}
+
+                  {/* Progress Bar */}
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between text-xs mb-2">
+                      <span className="text-gray-600">Progress</span>
+                      <span className="font-semibold text-gray-900">
+                        {subject.completedLessons}/{subject.totalLessons} lessons
+                      </span>
+                    </div>
+                    <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-linear-to-r from-red-300 to-red-400 transition-all duration-500"
+                        style={{ width: `${subject.progress}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Next Lesson */}
+                  <div className="flex items-center justify-between text-sm pt-4 border-t border-gray-100">
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <VideoCameraIcon className="w-4 h-4" />
+                      <span className="text-xs">Next: {subject.nextLesson}</span>
+                    </div>
+                    <ArrowRightIcon className="w-4 h-4 text-[#3D08BA] group-hover:translate-x-1 transition-transform" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* List View */}
+        {viewMode === 'list' && (
+          <div className="space-y-4">
+            {filteredSubjects.map((subject) => (
+              <div
+                key={subject.id}
+                onClick={() => handleCourseClick(subject.id)}
+                className="bg-white rounded-2xl p-5 shadow-sm hover:shadow-lg transition-all duration-300 cursor-pointer group border border-gray-200"
+              >
+                <div className="flex flex-col sm:flex-row gap-5">
+                  {/* Thumbnail */}
+                  <div className="relative w-full sm:w-48 aspect-video sm:aspect-auto sm:h-32 rounded-xl overflow-hidden bg-gray-200 shrink-0">
+                    <img
+                      src={subject.thumbnail}
+                      alt={subject.title}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
+                    <div className="absolute inset-0 bg-linear-to-t from-black/40 to-transparent" />
+                    <div className="absolute top-2 right-2 bg-white/95 backdrop-blur-sm px-2 py-1 rounded-full">
+                      <span className="text-xs font-bold text-[#3D08BA]">{subject.progress}%</span>
+                    </div>
+                    <PlayCircleIcon className="absolute inset-0 m-auto w-12 h-12 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                   </div>
-                </div>
 
-                {/* Stats Grid */}
-                <div className="grid grid-cols-2 gap-3 mb-4">
-                  <div className="bg-gray-50 rounded-lg p-2 sm:p-3">
-                    <p className="text-xs text-gray-600 mb-1">Lessons</p>
-                    <p className="text-sm sm:text-base font-bold text-gray-900">
-                      {subject.completedLessons}/{subject.totalLessons}
+                  {/* Content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-4 mb-2">
+                      <div className="flex-1">
+                        <span className="text-xs font-semibold text-[#3D08BA] uppercase tracking-wider">
+                          {subject.category}
+                        </span>
+                        <h3 className="text-xl font-bold text-gray-900 mt-1 group-hover:text-[#3D08BA] transition-colors">
+                          {subject.title}
+                        </h3>
+                      </div>
+                      <span className="bg-[#3D08BA] text-white px-3 py-1 rounded-full text-xs font-medium shrink-0">
+                        {subject.level}
+                      </span>
+                    </div>
+
+                    <p className="text-sm text-gray-600 mb-3 flex items-center gap-2">
+                      <AcademicCapIcon className="w-4 h-4" />
+                      {subject.instructor}
                     </p>
-                  </div>
-                  <div className="bg-gray-50 rounded-lg p-2 sm:p-3">
-                    <p className="text-xs text-gray-600 mb-1">Assignments</p>
-                    <p className="text-sm sm:text-base font-bold text-gray-900">
-                      {subject.completedAssignments}/{subject.assignments}
-                    </p>
+
+                    <div className="flex flex-wrap items-center gap-4 mb-3 text-sm">
+                      <div className="flex items-center gap-1">
+                        <StarSolidIcon className="w-4 h-4 text-yellow-400" />
+                        <span className="font-semibold text-gray-900">{subject.rating}</span>
+                      </div>
+                      <div className="text-gray-500">
+                        {subject.totalStudents.toLocaleString()} students
+                      </div>
+                      <div className="text-gray-500">
+                        {subject.completedLessons}/{subject.totalLessons} lessons
+                      </div>
+                      <div className="text-gray-500">Last accessed: {subject.lastAccessed}</div>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="mb-3">
+                      <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-linear-to-r from-red-300 to-red-400 transition-all duration-500"
+                          style={{ width: `${subject.progress}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-sm text-gray-600">
+                        <VideoCameraIcon className="w-4 h-4" />
+                        <span>Next: {subject.nextLesson}</span>
+                      </div>
+                      <button className="px-4 py-2 bg-[#3D08BA] text-white rounded-lg font-medium text-sm hover:bg-red-400 transition-colors flex items-center gap-2">
+                        Continue Learning
+                        <ArrowRightIcon className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
-
-                {/* Schedule Info */}
-                <div className="space-y-2 mb-4">
-                  <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-600">
-                    <ClockIcon className="w-4 h-4" />
-                    <span>{subject.schedule}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-600">
-                    <CalendarIcon className="w-4 h-4" />
-                    <span>Next: {subject.nextClass}</span>
-                  </div>
-                </div>
-
-                {/* Action Buttons */}
-                <div className="grid grid-cols-2 gap-2 mb-3">
-                  <button 
-                    className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs sm:text-sm font-medium rounded-lg transition-colors border-[#F68C29] text-[#F68C29] border-2"
-                  >
-                    <VideoCameraIcon className="w-4 h-4" />
-                    Join Class
-                  </button>
-                  <button 
-                    className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs sm:text-sm font-medium rounded-lg border-2 transition-colors"
-                    style={{ 
-                      borderColor: subject.color,
-                      color: subject.color
-                    }}
-                  >
-                    <ChartBarIcon className="w-4 h-4" />
-                    Progress
-                  </button>
-                </div>
-
-                {/* View Details Button */}
-                <button 
-                  className="w-full text-white py-2.5 sm:py-3 rounded-lg font-semibold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity text-sm sm:text-base"
-                  style={{ backgroundColor: subject.color }}
-                >
-                  <PlayIcon className="w-4 h-4 sm:w-5 sm:h-5" />
-                  View Subject Details
-                </button>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
 
         {/* Empty State */}
         {filteredSubjects.length === 0 && (
-          <div className="text-center py-12">
-            <BookOpenIcon className="w-12 h-12 sm:w-16 sm:h-16 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-2">No subjects found</h3>
-            <p className="text-sm text-gray-600">Try adjusting your search or filters</p>
+          <div className="text-center py-16">
+            <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
+              <BookOpenIcon className="w-12 h-12 text-gray-400" />
+            </div>
+            <h3 className="text-2xl font-bold text-gray-900 mb-2">No courses found</h3>
+            <p className="text-gray-600 mb-6">Try adjusting your search query</p>
+            <button
+              onClick={() => setSearchQuery('')}
+              className="px-6 py-3 bg-[#3D08BA] text-white rounded-xl font-semibold hover:bg-red-400 transition-colors"
+            >
+              Clear Search
+            </button>
           </div>
         )}
-      </div>
+      </main>
+
+      {/* Bottom Navigation - Mobile Only */}
+      <BottomNavigation
+        activeTab="subjects"
+        onHomeClick={handleHomeClick}
+        onSubjectsClick={() => {}}
+        onAssignmentsClick={handleAssignmentsClick}
+        onPerformanceClick={handlePerformanceClick}
+      />
     </div>
   );
 };
