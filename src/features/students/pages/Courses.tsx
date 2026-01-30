@@ -153,7 +153,7 @@ const MyCourses = () => {
           <div className="py-6">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2">
+                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-[#3D08BA] mb-2">
                   My Learning
                 </h1>
                 <p className="text-sm sm:text-base text-gray-600">
@@ -243,7 +243,7 @@ const MyCourses = () => {
 
                   {/* Progress Badge */}
                   <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-sm px-3 py-1 rounded-full">
-                    <span className="text-xs font-bold text-[#3D08BA]">{subject.progress}%</span>
+                    <span className="text-xs font-bold text-red-500">{subject.progress}%</span>
                   </div>
 
                   {/* Level Badge */}
@@ -332,7 +332,7 @@ const MyCourses = () => {
                     />
                     <div className="absolute inset-0 bg-linear-to-t from-black/40 to-transparent" />
                     <div className="absolute top-2 right-2 bg-white/95 backdrop-blur-sm px-2 py-1 rounded-full">
-                      <span className="text-xs font-bold text-[#3D08BA]">{subject.progress}%</span>
+                      <span className="text-xs font-bold text-red-500">{subject.progress}%</span>
                     </div>
                     <PlayCircleIcon className="absolute inset-0 m-auto w-12 h-12 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                   </div>
