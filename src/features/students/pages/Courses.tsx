@@ -4,8 +4,6 @@ import {
   BookOpenIcon,
   AcademicCapIcon,
   VideoCameraIcon,
-  ClockIcon,
-  CheckCircleIcon,
   PlayCircleIcon,
   ArrowRightIcon,
 } from '@heroicons/react/24/outline';
@@ -13,7 +11,7 @@ import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid';
 import { useNavigate } from 'react-router-dom';
 import BottomNavigation from '../../../components/layout/student-layout/StudentBottomNavigation';
 
-const MySubjects = () => {
+const MyCourses = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
@@ -35,7 +33,7 @@ const MySubjects = () => {
     navigate(`/course/${courseId}`);
   };
 
-  const subjects = [
+  const Courses = [
     {
       id: 1,
       title: 'Advanced Mathematics for Data Science',
@@ -134,28 +132,28 @@ const MySubjects = () => {
     }
   ];
 
-  const filteredSubjects = subjects.filter(subject =>
+  const filteredCourses = Courses.filter(subject =>
     subject.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
     subject.instructor.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const stats = {
-    totalCourses: subjects.length,
-    inProgress: subjects.filter(s => s.progress > 0 && s.progress < 100).length,
-    completed: subjects.filter(s => s.progress === 100).length,
+    totalCourses: Courses.length,
+    inProgress: Courses.filter(s => s.progress > 0 && s.progress < 100).length,
+    completed: Courses.filter(s => s.progress === 100).length,
     totalHours: 156
   };
 
   return (
     <div className="min-h-screen bg-linear-to-br from-gray-50 to-gray-100">
       {/* Header */}
-      <header className="bg-white shadow-sm sticky top-0 z-30 border-b border-gray-200">
+      <header className="bg-white shadow-sm top-0 z-30 border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           {/* Top Section */}
           <div className="py-6">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-[#3D08BA] mb-2">
+                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2">
                   My Learning
                 </h1>
                 <p className="text-sm sm:text-base text-gray-600">
@@ -164,28 +162,19 @@ const MySubjects = () => {
               </div>
             </div>
 
-            {/* Stats Cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
-              <div className="bg-[#3D08BA] rounded-xl p-4 text-white shadow-sm">
-                <BookOpenIcon className="w-6 h-6 mb-2 opacity-90" />
-                <p className="text-2xl font-bold mb-1">{stats.totalCourses}</p>
-                <p className="text-xs opacity-90">Total Courses</p>
-              </div>
-              <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
-                <ClockIcon className="w-6 h-6 mb-2 text-[#3D08BA]" />
-                <p className="text-2xl font-bold text-gray-900 mb-1">{stats.inProgress}</p>
-                <p className="text-xs text-gray-600">In Progress</p>
-              </div>
-              <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
-                <CheckCircleIcon className="w-6 h-6 mb-2 text-green-500" />
-                <p className="text-2xl font-bold text-gray-900 mb-1">{stats.completed}</p>
-                <p className="text-xs text-gray-600">Completed</p>
-              </div>
-              <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
-                <AcademicCapIcon className="w-6 h-6 mb-2 text-[#3D08BA]" />
-                <p className="text-2xl font-bold text-gray-900 mb-1">{stats.totalHours}h</p>
-                <p className="text-xs text-gray-600">Learning Time</p>
-              </div>
+            {/* Simple Stats Text */}
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mb-6 text-sm text-gray-600">
+              <span>
+                <strong className="text-gray-900">{stats.totalCourses}</strong> courses enrolled
+              </span>
+              <span className="hidden sm:inline">•</span>
+              <span>
+                <strong className="text-gray-900">{stats.inProgress}</strong> in progress
+              </span>
+              <span className="hidden sm:inline">•</span>
+              <span>
+                <strong className="text-gray-900">{stats.completed}</strong> completed
+              </span>
             </div>
 
             {/* Search Bar */}
@@ -232,7 +221,7 @@ const MySubjects = () => {
         {/* Grid View */}
         {viewMode === 'grid' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredSubjects.map((subject) => (
+            {filteredCourses.map((subject) => (
               <div
                 key={subject.id}
                 onClick={() => handleCourseClick(subject.id)}
@@ -254,7 +243,7 @@ const MySubjects = () => {
 
                   {/* Progress Badge */}
                   <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-sm px-3 py-1 rounded-full">
-                    <span className="text-xs font-bold text-red-500">{subject.progress}%</span>
+                    <span className="text-xs font-bold text-[#3D08BA]">{subject.progress}%</span>
                   </div>
 
                   {/* Level Badge */}
@@ -304,7 +293,7 @@ const MySubjects = () => {
                     </div>
                     <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-linear-to-r from-red-300 to-red-400 transition-all duration-500"
+                        className="h-full bg-linear-to-r from-[#3D08BA] to-red-400 transition-all duration-500"
                         style={{ width: `${subject.progress}%` }}
                       />
                     </div>
@@ -327,7 +316,7 @@ const MySubjects = () => {
         {/* List View */}
         {viewMode === 'list' && (
           <div className="space-y-4">
-            {filteredSubjects.map((subject) => (
+            {filteredCourses.map((subject) => (
               <div
                 key={subject.id}
                 onClick={() => handleCourseClick(subject.id)}
@@ -387,7 +376,7 @@ const MySubjects = () => {
                     <div className="mb-3">
                       <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-linear-to-r from-red-300 to-red-400 transition-all duration-500"
+                          className="h-full bg-linear-to-r from-[#3D08BA] to-red-400 transition-all duration-500"
                           style={{ width: `${subject.progress}%` }}
                         />
                       </div>
@@ -411,7 +400,7 @@ const MySubjects = () => {
         )}
 
         {/* Empty State */}
-        {filteredSubjects.length === 0 && (
+        {filteredCourses.length === 0 && (
           <div className="text-center py-16">
             <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
               <BookOpenIcon className="w-12 h-12 text-gray-400" />
@@ -430,9 +419,9 @@ const MySubjects = () => {
 
       {/* Bottom Navigation - Mobile Only */}
       <BottomNavigation
-        activeTab="subjects"
+        activeTab="courses"
         onHomeClick={handleHomeClick}
-        onSubjectsClick={() => {}}
+        onCoursesClick={() => {}}
         onAssignmentsClick={handleAssignmentsClick}
         onPerformanceClick={handlePerformanceClick}
       />
@@ -440,4 +429,4 @@ const MySubjects = () => {
   );
 };
 
-export default MySubjects;
+export default MyCourses;

@@ -6,9 +6,9 @@ import {
 } from '@heroicons/react/24/outline';
 
 interface BottomNavigationProps {
-  activeTab?: 'student-dashboard' | 'subjects' | 'assignments' | 'performance';
+  activeTab?: 'student-dashboard' | 'courses' | 'assignments' | 'performance';
   onHomeClick?: () => void;
-  onSubjectsClick?: () => void;
+  onCoursesClick?: () => void;
   onAssignmentsClick?: () => void;
   onPerformanceClick?: () => void;
 }
@@ -16,7 +16,7 @@ interface BottomNavigationProps {
 const StudentBottomNavigation = ({
   activeTab = 'student-dashboard',
   onHomeClick,
-  onSubjectsClick,
+  onCoursesClick,
   onAssignmentsClick,
   onPerformanceClick,
 }: BottomNavigationProps) => {
@@ -43,12 +43,12 @@ const StudentBottomNavigation = ({
         </button>
         
         <button
-          onClick={onSubjectsClick}
-          className={getButtonClass('subjects')}
-          aria-label="Subjects"
+          onClick={onCoursesClick}
+          className={getButtonClass('courses')}
+          aria-label="Courses"
         >
           <BookOpenIcon className="w-5 h-5" />
-          <span className={getTextClass('subjects')}>Subjects</span>
+          <span className={getTextClass('courses')}>Courses</span>
         </button>
         
         <button

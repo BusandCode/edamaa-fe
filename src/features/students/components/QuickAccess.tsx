@@ -15,23 +15,23 @@ interface QuickAccessItem {
 }
 
 interface QuickAccessGridProps {
-  onSubjectClick: () => void;
+  onCoursesClick: () => void;
   onAssignmentsClick: () => void;
   onPerformanceClick: () => void;
   onJoinClass: () => void;
 }
 
 const QuickAccessGrid = ({
-  onSubjectClick,
+  onCoursesClick,
   onAssignmentsClick,
   onPerformanceClick,
   onJoinClass,
 }: QuickAccessGridProps) => {
   const quickAccessItems: QuickAccessItem[] = [
     {
-      label: 'My Subjects',
+      label: 'My Courses',
       icon: BookOpenIcon,
-      onClick: onSubjectClick,
+      onClick: onCoursesClick,
     },
     {
       label: 'Assignments',

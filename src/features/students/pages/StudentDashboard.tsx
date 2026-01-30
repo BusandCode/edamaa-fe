@@ -55,8 +55,8 @@ const StudentDashboard = () => {
     // setProfileSrc(updatedProfile.profileImage);
   };
 
-  const OnSubjectClick = () => {
-    navigate('/mysubjects');
+  const OnCoursesClick = () => {
+    navigate('/mycourses');
   };
 
   const handleNotificationClick = () => {
@@ -100,7 +100,7 @@ const StudentDashboard = () => {
     { 
       icon: AcademicCapIcon, 
       label: 'My Courses', 
-      onClick: OnSubjectClick
+      onClick: OnCoursesClick
     },
     { 
       icon: Cog6ToothIcon, 
@@ -255,7 +255,7 @@ const StudentDashboard = () => {
 
             {/* Quick Access Grid */}
             <QuickAccessGrid
-              onSubjectClick={OnSubjectClick}
+              onCoursesClick={OnCoursesClick}
               onAssignmentsClick={handleAssignmentsClick}
               onPerformanceClick={handlePerformanceClick}
               onJoinClass={handleJoinClassClick}
@@ -377,7 +377,7 @@ const StudentDashboard = () => {
       <BottomNavigation
         activeTab="student-dashboard"
         onHomeClick={() => navigate('/student-dashboard')}
-        onSubjectsClick={OnSubjectClick}
+        onCoursesClick={OnCoursesClick}
         onAssignmentsClick={handleAssignmentsClick}
         onPerformanceClick={handlePerformanceClick}
       />

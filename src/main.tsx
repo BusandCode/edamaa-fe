@@ -34,7 +34,7 @@ import StudentListSchool from './features/schools/pages/lists/StudentListSchool.
 import CoursesList from './features/tutors/pages/courses/CoursesList.tsx'
 
 //Import subjects
-import StudentSubjects from './features/students/pages/Subjects.tsx'
+import StudentSubjects from './features/students/pages/Courses.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -69,7 +69,7 @@ createRoot(document.getElementById('root')!).render(
         <Route path='/courses' element={<CoursesList />} />
 
         {/* Subjects */}
-        <Route path='/mysubjects' element={<StudentSubjects />} />
+        <Route path='/mycourses' element={<StudentSubjects />} />
         {/* Assignments */}
         <Route path='/assignments' element={<Assignments />} />
 

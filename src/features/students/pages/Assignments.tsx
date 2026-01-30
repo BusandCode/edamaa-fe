@@ -144,7 +144,7 @@ const Assignments = () => {
     },
   ];
 
-  const subjects = ['all', ...Array.from(new Set(assignments.map(a => a.subject)))];
+  const Courses = ['all', ...Array.from(new Set(assignments.map(a => a.subject)))];
 
   const filteredAssignments = assignments.filter(assignment => {
     const matchesTab = activeTab === 'all' || assignment.status === activeTab;
@@ -251,9 +251,9 @@ const Assignments = () => {
                 onChange={(e) => setSelectedSubject(e.target.value)}
                 className="px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3D08BA] focus:border-transparent"
               >
-                {subjects.map(subject => (
+                {Courses.map(subject => (
                   <option key={subject} value={subject}>
-                    {subject === 'all' ? 'All Subjects' : subject}
+                    {subject === 'all' ? 'All Courses' : subject}
                   </option>
                 ))}
               </select>
@@ -385,7 +385,7 @@ const Assignments = () => {
       <BottomNavigation
         activeTab="assignments"
         onHomeClick={() => navigate('/student-dashboard')}
-        onSubjectsClick={() => navigate('/mysubjects')}
+        onCoursesClick={() => navigate('/mycourses')}
         onAssignmentsClick={() => navigate('/assignments')}
         onPerformanceClick={() => navigate('/performance')}
       />
