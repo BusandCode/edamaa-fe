@@ -21,7 +21,7 @@ const PerformanceStats = () => {
     {
       id: '1',
       label: 'Current GPA',
-      value: '3.85',
+      value: '4.85',
       change: '+0.15 from last semester',
       trend: 'up',
       icon: AcademicCapIcon,
@@ -61,7 +61,7 @@ const PerformanceStats = () => {
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
       {stats.map((stat) => (
         <div
           key={stat.id}
