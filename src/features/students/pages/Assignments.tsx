@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import BottomNavigation from '../../../components/layout/student-layout/StudentBottomNavigation';
 import {
   ArrowLeftIcon,
   FunnelIcon,
@@ -380,15 +379,6 @@ const Assignments = () => {
           )}
         </div>
       </main>
-
-      {/* Bottom Navigation */}
-      <BottomNavigation
-        activeTab="assignments"
-        onHomeClick={() => navigate('/student-dashboard')}
-        onCoursesClick={() => navigate('/mycourses')}
-        onAssignmentsClick={() => navigate('/assignments')}
-        onPerformanceClick={() => navigate('/performance')}
-      />
 
       <style>{`
         .line-clamp-2 {
