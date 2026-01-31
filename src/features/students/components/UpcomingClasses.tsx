@@ -76,9 +76,9 @@ const UpcomingClasses = () => {
       {/* Header */}
       <div className="flex items-center justify-between gap-2 mb-4 sm:mb-5 md:mb-6">
         <h2 className="text-base sm:text-lg md:text-xl font-bold text-gray-900">Upcoming Classes</h2>
-        <button className="text-xs sm:text-sm text-[#3D08BA] hover:text-[#2D0690] font-medium shrink-0 transition-colors">
+        {/* <button className="text-xs sm:text-sm text-[#3D08BA] hover:text-[#2D0690] font-medium shrink-0 transition-colors">
           View All →
-        </button>
+        </button> */}
       </div>
 
       {/* Class List */}

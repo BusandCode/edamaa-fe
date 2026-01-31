@@ -57,9 +57,9 @@ const Announcements = () => {
           <MegaphoneIcon className="w-6 h-6 text-[#3D08BA]" />
           <h2 className="text-xl font-bold text-gray-900">Announcements</h2>
         </div>
-        <button className="text-sm text-[#3D08BA] hover:text-[#2D0690] font-medium">
+        {/* <button className="text-sm text-[#3D08BA] hover:text-[#2D0690] font-medium">
           View All
-        </button>
+        </button> */}
       </div>
 
       <div className="space-y-4">

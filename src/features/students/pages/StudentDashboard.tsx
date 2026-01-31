@@ -58,6 +58,9 @@ const StudentDashboard = () => {
   const OnCoursesClick = () => {
     navigate('/mycourses');
   };
+  const handlePaymentsClick = () => {
+    navigate('/payments');
+  };
 
   const handleNotificationClick = () => {
     navigate('/notifications');
@@ -275,6 +278,7 @@ const StudentDashboard = () => {
             {/* Quick Access Grid */}
             <QuickAccessGrid
               onCoursesClick={OnCoursesClick}
+              onPaymentsClick= {handlePaymentsClick}
               onAssignmentsClick={handleAssignmentsClick}
               onPerformanceClick={handlePerformanceClick}
               onJoinClass={handleJoinClassClick}

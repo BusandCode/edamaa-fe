@@ -22,6 +22,7 @@ import StudentProfile from './features/students/pages/StudentProfile.tsx'
 import StudentListTutor from './features/tutors/pages/lists/StudentList.tsx'
 import StudentListSchool from './features/schools/pages/lists/StudentListSchool.tsx'
 import Assignments from './features/students/pages/Assignments.tsx'
+import Payments from './features/students/pages/Payments.tsx'
 import JoinClass from './features/students/pages/JoinClass.tsx'
 import StudentNotifications from './features/students/components/StudentNotifications.tsx'
 import ResourceLibrary from './features/students/pages/Resources.tsx'
@@ -74,6 +75,8 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/join-class" element={<JoinClass />} />
         {/* Resource Library */}
         <Route path="/resources" element={<ResourceLibrary />} />
+        {/* Payments */}
+        <Route path="/payments" element={<Payments />} />
       </Routes>
     </Router>
   </StrictMode>,

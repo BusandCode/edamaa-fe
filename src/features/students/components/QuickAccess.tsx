@@ -20,6 +20,7 @@ interface QuickAccessGridProps {
   onPerformanceClick: () => void;
   onJoinClass: () => void;
   onResourceClick: () => void;
+  onPaymentsClick: () => void;
 }
 
 const QuickAccessGrid = ({
@@ -27,7 +28,8 @@ const QuickAccessGrid = ({
   onAssignmentsClick,
   onPerformanceClick,
   onJoinClass,
-  onResourceClick
+  onResourceClick,
+  onPaymentsClick
 }: QuickAccessGridProps) => {
   const quickAccessItems: QuickAccessItem[] = [
     {
@@ -59,6 +61,7 @@ const QuickAccessGrid = ({
     {
       label: 'Payments',
       icon: CreditCardIcon,
+      onClick: onPaymentsClick,
     },
   ];
 
