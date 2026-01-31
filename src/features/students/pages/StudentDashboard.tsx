@@ -118,7 +118,7 @@ const StudentDashboard = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+    <div className="min-h-screen bg-linear-to-br from-gray-50 to-gray-100">
       {/* STICKY TOP BAR - Logo, Notification & Menu */}
       <div className="bg-white shadow-sm sticky top-0 z-50 border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6">
@@ -318,7 +318,7 @@ const StudentDashboard = () => {
             onClick={(e) => e.stopPropagation()}
           >
             {/* Menu Header */}
-            <div className="p-5 sm:p-6 border-b border-gray-200 bg-gradient-to-br from-[#3D08BA] to-[#2c0691]">
+            <div className="p-5 sm:p-6 border-b border-gray-200 bg-linear-to-br from-[#3D08BA] to-[#2c0691]">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl sm:text-2xl font-bold text-white">Menu</h2>
                 <button
@@ -408,7 +408,7 @@ const StudentDashboard = () => {
         activeTab="student-dashboard"
         onHomeClick={() => navigate('/student-dashboard')}
         onCoursesClick={OnCoursesClick}
-        onAssignmentsClick={handleAssignmentsClick}
+        // onAssignmentsClick={handleAssignmentsClick}
         onPerformanceClick={handlePerformanceClick}
       />
 
