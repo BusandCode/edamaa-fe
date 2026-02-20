@@ -286,10 +286,10 @@ const Sparkline = ({ data, color }: SparklineProps): JSX.Element => {
   return (
     <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-10" preserveAspectRatio="none">
       <defs>
-        <linearlinear id={gradId} x1="0" y1="0" x2="0" y2="1">
+        {/* <linearlinear id={gradId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor={color} stopOpacity="0.3" />
           <stop offset="100%" stopColor={color} stopOpacity="0.02" />
-        </linearlinear>
+        </linearlinear> */}
       </defs>
       <path d={areaPath} fill={`url(#${gradId})`} />
       <path d={linePath} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
