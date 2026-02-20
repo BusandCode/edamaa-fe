@@ -32,6 +32,9 @@ import CoursesList from './features/tutors/pages/courses/CoursesList.tsx'
 //Import subjects
 import StudentSubjects from './features/students/pages/Courses.tsx'
 
+//Import performance stats
+import  Performancestats  from './features/students/pages/Performancestats.tsx'
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Router>
@@ -77,7 +80,9 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/resources" element={<ResourceLibrary />} />
         {/* Payments */}
         <Route path="/payments" element={<Payments />} />
+        {/* Payments */}
+        <Route path="/performance" element={<Performancestats />} />
       </Routes>
     </Router>
-  </StrictMode>,
+  </StrictMode>
 )
