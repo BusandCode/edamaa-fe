@@ -654,10 +654,8 @@ const Performancestats = ({
   const DAY_INITIALS: string[] = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
   return (
-    <div style={{ fontFamily: "'DM Sans', 'Outfit', system-ui, sans-serif" }}>
+    <div>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Syne:wght@700;800&display=swap');
-
         .perf-card { transition: all 0.22s cubic-bezier(0.34,1.56,0.64,1); }
         .perf-card:hover { transform: translateY(-3px) scale(1.01); }
         .perf-card.active { transform: translateY(-3px) scale(1.01); }
@@ -685,7 +683,7 @@ const Performancestats = ({
             {icons.Brain('w-4 h-4 text-[#3D08BA]')}
             <h2
               className="text-gray-900"
-              style={{ fontFamily: "'Syne', sans-serif", fontSize: '1.1rem', fontWeight: 800 }}
+              style={{ fontSize: '1.1rem', fontWeight: 800 }}
             >
               My Performance
             </h2>
@@ -754,7 +752,7 @@ const Performancestats = ({
               </div>
 
               {/* Value */}
-              <p className="text-2xl font-bold text-gray-900 leading-none mb-0.5" style={{ fontFamily: "'Syne',sans-serif" }}>
+              <p className="text-2xl font-bold text-gray-900 leading-none mb-0.5">
                 {mounted ? <AnimatedValue value={stat.value} /> : stat.value}
               </p>
               <p className="text-xs font-semibold text-gray-700 mb-0.5">{stat.label}</p>
@@ -804,7 +802,7 @@ const Performancestats = ({
 
               <div className="flex items-center gap-3">
                 <div className="text-right">
-                  <p className="text-2xl font-bold text-gray-900" style={{ fontFamily: "'Syne',sans-serif" }}>
+                  <p className="text-2xl font-bold text-gray-900">
                     {active.value}
                   </p>
                   {active.trend !== 0 ? (
