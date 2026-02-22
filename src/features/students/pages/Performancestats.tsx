@@ -692,7 +692,7 @@ const Performancestats = ({
               On track
             </span>
           </div>
-          <p className="text-xs text-gray-400 pl-6">February 2025 · 48 students</p>
+          <p className="text-xs text-gray-400 pl-6">February 2025</p>
         </div>
         <button className="flex items-center gap-1.5 text-xs bg-[#3D08BA] text-white px-3 py-1.5 rounded-lg font-medium hover:bg-[#3D08BA]/90 transition-colors">
           {icons.TrendUp('w-3.5 h-3.5')}

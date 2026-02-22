@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FaSearch, FaBell, FaCog, FaBook, FaUserGraduate, FaMoneyBillWave, FaHome, FaClock, FaCalendar, FaCopy, FaVideo, FaPlus } from 'react-icons/fa';
+import { FaSearch, FaBook, FaUserGraduate, FaMoneyBillWave, FaHome, FaClock, FaCalendar, FaCopy, FaVideo, FaPlus } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import NewLogo from '../../../components/common/NewLogo';
 import { students } from './lists/students';
@@ -8,26 +8,34 @@ import 'react-toastify/dist/ReactToastify.css';
 import ScheduleClass, { type NewClassData } from '../components/ScheduleClass';
 import { motion, AnimatePresence } from 'framer-motion';
 import TutorProfile from './TutorProfile';
+import {
+  UserCircleIcon,
+  PlusIcon,
+  Cog6ToothIcon,
+  QuestionMarkCircleIcon,
+  ArrowRightOnRectangleIcon,
+} from '@heroicons/react/24/outline';
+import { BellIcon as BellSolidIcon } from '@heroicons/react/24/solid';
+import { HiOutlineMenu, HiOutlineX } from 'react-icons/hi';
 
 const TutorDashboard = () => {
   const [activeTab, setActiveTab] = useState('classroom');
   const [showProfile, setShowProfile] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  // Profile image and editable name
   const [profileSrc, setProfileSrc] = useState<string | null>(null);
   const [name, setName] = useState('Abdulrahman Farhan');
-  const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
-  const [description, setDescription] = useState('Enter your bio here...');
+  const [username, setUsername] = useState('abdulrahman');
+  const [email, setEmail] = useState('abdulrahman@example.com');
+  const [description, setDescription] = useState('Experienced tutor specializing in mathematics and science. Passionate about helping students achieve their academic goals and fostering a love for learning.');
   const [showMobileSearch, setShowMobileSearch] = useState(false);
 
-
-   const handleProfileUpdate = (updatedProfile: { 
+  const handleProfileUpdate = (updatedProfile: {
     name: string;
     username?: string;
     email: string;
-    bio: string; 
+    bio: string;
     subjects?: string;
     experience?: string;
     profileImage: string | null;
@@ -38,7 +46,6 @@ const TutorDashboard = () => {
     setDescription(updatedProfile.bio);
     setProfileSrc(updatedProfile.profileImage);
   };
-
 
   const [upcomingClasses, setUpcomingClasses] = useState([
     {
@@ -65,10 +72,11 @@ const TutorDashboard = () => {
     try {
       await navigator.clipboard.writeText(classroomId);
       toast.success('Classroom ID copied successfully');
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     } catch (err) {
       toast.error('Failed to copy classroom ID');
     }
-  }; 
+  };
 
   const handleScheduleClass = (newClass: NewClassData) => {
     setUpcomingClasses([...upcomingClasses, newClass]);
@@ -79,29 +87,50 @@ const TutorDashboard = () => {
   };
 
   const navigate = useNavigate();
-  const handleStudentListClick = () => {
-    navigate('/student-list');
-  };
-  const handleCourseClick = () =>{
-    navigate('/courses')
-  }
+  const handleStudentListClick = () => navigate('/student-list');
+  const handleCourseClick = () => navigate('/courses');
+  const handleLogout = () => navigate('/login');
+
+  // Menu items
+  const menuItems = [
+    {
+      icon: UserCircleIcon,
+      label: 'My Profile',
+      onClick: () => { setShowProfile(true); setMenuOpen(false); }
+    },
+    {
+      icon: BellSolidIcon,
+      label: 'Notifications',
+      onClick: () => navigate('/notifications')
+    },
+    {
+      icon: Cog6ToothIcon,
+      label: 'Account Settings',
+      onClick: () => navigate('/settings')
+    },
+    {
+      icon: QuestionMarkCircleIcon,
+      label: 'Help & Support',
+      onClick: () => navigate('/help')
+    },
+  ];
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className={`bg-white shadow-sm sticky top-0 z-10 ${showProfile ? 'blur-sm' : ''}`}>
-        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
-          {/* Logo and Search */}
-          <div className="flex items-center justify-between gap-2 sm:gap-3 mb-2 sm:mb-3">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+
+      {/* STICKY TOP BAR */}
+      <div className="bg-white shadow-sm sticky top-0 z-50 border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6">
+          <div className="flex items-center justify-between py-3 sm:py-3.5">
             {/* Logo */}
-            <div className='shrink-0'>
-              <NewLogo logoWidth={30} logoHeight={30} textSize="text-[14px]" gap="gap-1.5" centered={false} />
+            <div className="shrink-0">
+              <NewLogo logoWidth={32} logoHeight={32} textSize="text-sm sm:text-base" gap="gap-2" centered={false} />
             </div>
-            
-            {/* Search Bar - Desktop */}
-            <div className="hidden md:flex items-center flex-1 max-w-md mx-4 lg:mx-8">
+
+            {/* Desktop Search */}
+            <div className="hidden md:flex items-center flex-1 max-w-md mx-8">
               <div className="relative w-full">
-                <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={14} />
+                <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
                 <input
                   type="text"
                   placeholder="Search course, tutorial..."
@@ -110,141 +139,136 @@ const TutorDashboard = () => {
               </div>
             </div>
 
-            {/* Mobile Search button */}
-            <button
-              onClick={() => setShowMobileSearch((s) => !s)}
-              className="md:hidden p-1.5 sm:p-2 rounded-full hover:bg-gray-100"
-              aria-label="Search"
-            >
-              <FaSearch className="text-gray-600 text-base sm:text-lg" />
-            </button>
-
-            {/* Notification and Settings */}
-            <div className="flex items-center gap-1 sm:gap-2">
-              <button className="relative p-1.5 sm:p-2 hover:bg-gray-100 rounded-full">
-                <FaBell className="text-gray-600 text-base sm:text-lg md:text-xl" />
-                <span className="absolute top-0.5 right-0.5 sm:top-1 sm:right-1 w-1.5 h-1.5 sm:w-2 sm:h-2 bg-red-500 rounded-full"></span>
+            {/* Right Side */}
+            <div className="flex items-center gap-2 sm:gap-3">
+              {/* Mobile Search */}
+              <button
+                onClick={() => setShowMobileSearch(s => !s)}
+                className="md:hidden p-1.5 sm:p-2 rounded-full hover:bg-gray-100 transition-colors"
+                aria-label="Search"
+              >
+                <FaSearch className="text-gray-600 text-base" />
               </button>
-              <button className="p-1.5 sm:p-2 hover:bg-gray-100 rounded-full">
-                <FaCog className="text-gray-600 text-base sm:text-lg md:text-xl" />
+
+              {/* Notification Bell */}
+              <button
+                onClick={() => navigate('/notifications')}
+                className="relative shrink-0 p-1.5 sm:p-2 rounded-full hover:bg-gray-100 transition-colors"
+                aria-label="Notifications"
+              >
+                <div className="relative">
+                  <div className="w-9 h-9 sm:w-10 sm:h-10 bg-[#3D08BA] rounded-full flex items-center justify-center">
+                    <BellSolidIcon className="w-5 h-5 text-white" />
+                  </div>
+                  <div className="absolute -top-1 -right-1 min-w-5 h-5 px-1.5 bg-red-500 rounded-full flex items-center justify-center shadow-md">
+                    <span className="text-white text-[10px] font-bold">3</span>
+                  </div>
+                </div>
+              </button>
+
+              {/* Hamburger Menu */}
+              <button
+                onClick={() => setMenuOpen(!menuOpen)}
+                className="p-1.5 sm:p-2 rounded-full hover:bg-gray-100 transition-colors"
+                aria-label="Menu"
+              >
+                {menuOpen
+                  ? <HiOutlineX className="w-6 h-6 text-gray-600" />
+                  : <HiOutlineMenu className="w-6 h-6 text-gray-600" />
+                }
               </button>
             </div>
           </div>
+        </div>
 
-          {/* Mobile search overlay */}
-          {showMobileSearch && (
-            <div className="md:hidden absolute left-0 right-0 top-full bg-white px-3 sm:px-4 py-2 sm:py-3 border-t shadow z-20">
-              <div className="relative max-w-7xl mx-auto">
-                <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={12} />
-                <input
-                  type="text"
-                  placeholder="Search course, tutorial..."
-                  className="w-full pl-9 pr-10 py-2 border border-gray-200 rounded-lg focus:outline-none focus:border-[#3D08BA] text-sm"
-                />
-                <button 
-                  onClick={() => setShowMobileSearch(false)} 
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 text-lg" 
-                  aria-label="Close search"
-                >
-                  ✕
-                </button>
-              </div>
+        {/* Mobile Search Overlay */}
+        {showMobileSearch && (
+          <div className="md:hidden border-t border-gray-100 px-3 py-2 bg-white">
+            <div className="relative max-w-7xl mx-auto">
+              <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={12} />
+              <input
+                type="text"
+                placeholder="Search course, tutorial..."
+                className="w-full pl-9 pr-10 py-2 border border-gray-200 rounded-lg focus:outline-none focus:border-[#3D08BA] text-sm"
+              />
+              <button
+                onClick={() => setShowMobileSearch(false)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-lg"
+                aria-label="Close search"
+              >
+                ✕
+              </button>
             </div>
-          )}
+          </div>
+        )}
+      </div>
 
-          {/* Welcome Section */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
-            <div className="flex items-center gap-2 sm:gap-3 md:gap-4 min-w-0 flex-1">
-              {/* Profile Avatar with Plus Button */}
+      {/* PROFILE SECTION */}
+      <div className="bg-white shadow-sm border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-5">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+            {/* Left: Avatar + Name */}
+            <div className="flex items-start sm:items-center gap-3 sm:gap-4 flex-1 min-w-0">
+              {/* Profile Avatar */}
               <div className="relative shrink-0 group">
                 <button
                   type="button"
                   aria-label="View profile"
-                  title="View profile"
                   onClick={() => setShowProfile(true)}
                   className="
-                    relative
-                    w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 lg:w-20 lg:h-20
-                    rounded-full
-                    overflow-hidden
-                    border-2 border-[#f8f8f8]
-                    bg-gray-200
+                    relative w-14 h-14 sm:w-16 sm:h-16 md:w-20 md:h-20
+                    rounded-full overflow-hidden
+                    border-4 border-[#F68C29]
+                    bg-gray-100
                     flex items-center justify-center
-                    focus:outline-none
-                    focus:ring-2 focus:ring-[#3D08BA]
-                    transition
+                    focus:outline-none focus:ring-2 focus:ring-[#3D08BA]
+                    transition-all hover:shadow-lg
                   "
                 >
                   {profileSrc ? (
-                    <img
-                      src={profileSrc}
-                      alt="Profile"
-                      className="w-full h-full object-cover"
-                    />
+                    <img src={profileSrc} alt="Profile" className="w-full h-full object-cover" />
                   ) : (
-                    <svg
-                      className="w-6 h-6 sm:w-8 sm:h-8 md:w-10 md:h-10 lg:w-12 lg:h-12 text-gray-400"
-                      fill="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
-                    </svg>
+                    <UserCircleIcon className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 text-gray-400" />
                   )}
-
-                  {/* Hover Overlay */}
-                  <div
-                    className="
-                      absolute inset-0
-                      bg-black/40
-                      hidden sm:flex
-                      items-center justify-center
-                      text-white text-[9px] md:text-[10px] font-medium
-                      opacity-0 group-hover:opacity-100
-                      transition-opacity
-                    "
-                  >
-                    View Profile
+                  <div className="absolute inset-0 bg-black/40 hidden sm:flex items-center justify-center text-white text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                    View
                   </div>
                 </button>
-
-                {/* Plus Button */}
                 <button
                   type="button"
                   onClick={() => setShowProfile(true)}
                   aria-label="Edit profile"
-                  title="Edit profile"
                   className="
-                    absolute -bottom-0.5 -right-0.5 sm:-bottom-1 sm:-right-1
+                    absolute bottom-0 right-0
                     w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7
-                    rounded-full
-                    bg-[#3D08BA]
+                    rounded-full bg-[#3D08BA]
                     flex items-center justify-center
-                    shadow-md
-                    hover:bg-[#2c0691]
-                    transition
+                    shadow-lg hover:bg-[#2c0691]
+                    transition-all hover:scale-110
                   "
                 >
-                  <FaPlus className="text-white text-[14px] md:text-sm" />
+                  <PlusIcon className="w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4 text-white" />
                 </button>
               </div>
 
-              {/* Name and Welcome */}
+              {/* Name + Bio */}
               <div className="min-w-0 flex-1">
-                <p className="text-[14px] text-gray-600 leading-tight">Welcome</p>
-                <h2 className="text-sm sm:text-base md:text-lg lg:text-xl font-bold text-gray-800 truncate leading-tight mt-0.5">
+                <p className="text-xs sm:text-sm text-gray-600 leading-tight mb-0.5">Welcome back</p>
+                <h1 className="text-lg sm:text-xl md:text-2xl font-bold text-gray-900 leading-tight mb-1 truncate">
                   {name}
-                </h2>
-                <p className='text-[12px] text-gray-600'>{description}</p>
+                </h1>
+                <p className="text-xs sm:text-sm text-gray-600 leading-relaxed max-w-[400px]">{description}</p>
+                <p className="text-[10px] sm:text-xs text-gray-500 mt-1">@{username}</p>
               </div>
             </div>
 
             {/* Share Classroom ID */}
-            <div className="w-2/4 sm:w-auto bg-[#F68C29] px-3 sm:px-4 py-2 rounded-lg">
-              <p className="text-[14px] text-white">Share Classroom ID</p>
-              <div onClick={copyToClipboard}  className="flex items-center gap-2 mt-1">
-                <span className="text-xs sm:text-sm font-bold text-white">ID: {classroomId}</span>
+            <div className="w-full sm:w-auto bg-[#F68C29] px-4 py-3 rounded-xl shadow-sm">
+              <p className="text-xs text-white font-medium mb-1">Share Classroom ID</p>
+              <div onClick={copyToClipboard} className="flex items-center gap-2 cursor-pointer">
+                <span className="text-sm font-bold text-white">ID: {classroomId}</span>
                 <button className="text-white hover:scale-110 transition-transform">
-                  <FaCopy className="text-xs sm:text-sm" />
+                  <FaCopy className="text-sm" />
                 </button>
               </div>
             </div>
@@ -252,146 +276,106 @@ const TutorDashboard = () => {
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className={`max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6 pb-24 sm:pb-28 ${showProfile ? 'blur-sm' : ''}`}>
+      {/* MAIN CONTENT */}
+      <main className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 pb-24 md:pb-8">
+
         {/* Stats Cards */}
-        <div className="grid grid-cols-3 gap-2 sm:gap-3 md:gap-4 mb-4 sm:mb-6">
-          <div className="bg-white rounded-lg sm:rounded-xl p-3 sm:p-4 md:p-6 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
-            <div className="flex flex-col items-center">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 bg-[#3D08BA] bg-opacity-10 rounded-lg sm:rounded-xl flex items-center justify-center mb-2 sm:mb-3">
-                <FaBook className="text-white text-xs sm:text-sm md:text-base" />
+        <div className="grid grid-cols-3 gap-3 sm:gap-4 mb-5 sm:mb-6">
+          {[
+            { icon: FaBook, label: 'Total Courses', value: '12' },
+            { icon: FaUserGraduate, label: 'Total Students', value: String(students.length) },
+            { icon: FaMoneyBillWave, label: 'Total Earnings', value: '$45,280' },
+          ].map(({ icon: Icon, label, value }) => (
+            <div
+              key={label}
+              className="bg-white rounded-xl p-3 sm:p-4 md:p-6 shadow-sm hover:shadow-md transition-shadow cursor-pointer border border-gray-100"
+            >
+              <div className="flex flex-col items-center">
+                <div className="w-9 h-9 sm:w-11 sm:h-11 md:w-12 md:h-12 bg-[#3D08BA]/10 rounded-xl flex items-center justify-center mb-2 sm:mb-3">
+                  <Icon className="text-[#3D08BA] text-sm sm:text-base md:text-lg" />
+                </div>
+                <h3 className="text-[11px] sm:text-xs md:text-sm text-gray-600 mb-1 text-center leading-tight">{label}</h3>
+                <p className="text-sm sm:text-base md:text-lg font-bold text-gray-800">{value}</p>
               </div>
-              <h3 className="text-[14px] md:text-sm text-gray-600 mb-1 text-center">Total Courses</h3>
-              <p className="text-sm sm:text-base md:text-lg font-bold text-gray-800">12</p>
             </div>
-          </div>
-
-          <div className="bg-white rounded-lg sm:rounded-xl p-3 sm:p-4 md:p-6 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
-            <div className="flex flex-col items-center">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 bg-[#3D08BA] bg-opacity-10 rounded-lg sm:rounded-xl flex items-center justify-center mb-2 sm:mb-3">
-                <FaUserGraduate className="text-white text-xs sm:text-sm md:text-base" />
-              </div>
-              <h3 className="text-[14px] md:text-sm text-gray-600 mb-1 text-center">Total Students</h3>
-              <p className="text-sm sm:text-base md:text-lg font-bold text-gray-800">{students.length}</p>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg sm:rounded-xl p-3 sm:p-4 md:p-6 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
-            <div className="flex flex-col items-center">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 bg-[#3D08BA] bg-opacity-10 rounded-lg sm:rounded-xl flex items-center justify-center mb-2 sm:mb-3">
-                <FaMoneyBillWave className="text-white text-xs sm:text-sm md:text-base" />
-              </div>
-              <h3 className="text-[14px] md:text-sm text-gray-600 mb-1 text-center">Total Earnings</h3>
-              <p className="text-sm sm:text-base md:text-lg font-bold text-gray-800">$45,280</p>
-            </div>
-          </div>
+          ))}
         </div>
 
         {/* Tabs */}
-        <div className="bg-white rounded-lg sm:rounded-xl p-1.5 sm:p-2 shadow-sm mb-4 sm:mb-6 inline-flex gap-1 sm:gap-2 overflow-x-auto w-full sm:w-auto">
-          <button
-            onClick={() => setActiveTab('group')}
-            className={`px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 rounded-lg font-medium transition-colors text-xs sm:text-sm md:text-base whitespace-nowrap ${
-              activeTab === 'group'
-                ? 'bg-[#3D08BA] text-white'
-                : 'text-gray-600 hover:bg-gray-50'
-            }`}
-          >
-            Group
-          </button>
-          <button
-            onClick={() => setActiveTab('classroom')}
-            className={`px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 rounded-lg font-medium transition-colors text-xs sm:text-sm md:text-base whitespace-nowrap ${
-              activeTab === 'classroom'
-                ? 'bg-[#3D08BA] text-white'
-                : 'text-gray-600 hover:bg-gray-50'
-            }`}
-          >
-            Classroom
-          </button>
-          <button
-            onClick={() => setActiveTab('live')}
-            className={`px-3 sm:px-4 md:px-6 py-1.5 sm:py-2 rounded-lg font-medium transition-colors flex items-center gap-1 sm:gap-2 text-xs sm:text-sm md:text-base whitespace-nowrap ${
-              activeTab === 'live'
-                ? 'bg-[#3D08BA] text-white'
-                : 'text-gray-600 hover:bg-gray-50'
-            }`}
-          >
-            <FaVideo className="text-xs sm:text-sm" /> Live
-          </button>
+        <div className="bg-white rounded-xl p-1.5 shadow-sm border border-gray-100 mb-5 sm:mb-6 inline-flex gap-1 sm:gap-2 overflow-x-auto w-full sm:w-auto">
+          {(['group', 'classroom', 'live'] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 sm:px-6 py-2 rounded-lg font-medium transition-colors text-xs sm:text-sm md:text-base whitespace-nowrap flex items-center gap-1.5 capitalize ${
+                activeTab === tab
+                  ? 'bg-[#3D08BA] text-white shadow-sm'
+                  : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {tab === 'live' && <FaVideo className="text-xs sm:text-sm" />}
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </button>
+          ))}
         </div>
 
-        {/* Conditional Content Based on Active Tab */}
+        {/* Tab Content */}
         <AnimatePresence mode="wait">
           {activeTab === 'classroom' && (
-            <motion.div 
+            <motion.div
               key="classroom"
-              // variants={tabContentVariants}
-              initial="hidden"
-              animate="visible"
-              exit="exit"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
               className="mb-6"
             >
-              <div className="flex items-center justify-between mb-3 sm:mb-4">
-                <h3 className="text-base sm:text-lg md:text-xl font-bold text-gray-800">Upcoming Class</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-base sm:text-lg md:text-xl font-bold text-gray-800">Upcoming Classes</h3>
               </div>
 
-              {/* Class Cards */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
                 {upcomingClasses.map((classItem, index) => (
                   <motion.div
                     key={classItem.id}
                     custom={index}
-                    // variants={cardVariants}
-                    initial="hidden"
-                    animate="visible"
-                    whileHover={{ y: -5, transition: { duration: 0.2 } }}
-                    className="bg-linear-to-r from-[#5a18f2] to-[#3D08BA] rounded-xl sm:rounded-2xl p-4 sm:p-5 md:p-6 shadow-lg hover:shadow-xl transition-shadow"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.1 }}
+                    whileHover={{ y: -4, transition: { duration: 0.2 } }}
+                    className="bg-gradient-to-br from-[#3D08BA] to-[#5a18f2] rounded-2xl p-4 sm:p-5 md:p-6 shadow-lg hover:shadow-xl transition-shadow border border-[#5a18f2]/20"
                   >
-                    {/* Student Avatars and Date */}
+                    {/* Avatars + Date */}
                     <div className="flex items-center justify-between mb-3 sm:mb-4">
-                      <div className="flex items-center">
-                        <div className="flex -space-x-2">
-                          <div className="w-7 h-7 sm:w-8 sm:h-8 md:w-10 md:h-10 rounded-full border-2 border-white overflow-hidden bg-white">
-                            <img 
-                              src="https://api.dicebear.com/7.x/avataaars/svg?seed=student1" 
-                              alt="Student"
-                              className="w-full h-full"
-                            />
+                      <div className="flex -space-x-2">
+                        {[1, 2].map(n => (
+                          <div key={n} className="w-7 h-7 sm:w-9 sm:h-9 rounded-full border-2 border-white overflow-hidden bg-white">
+                            <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=student${n}`} alt="Student" className="w-full h-full" />
                           </div>
-                          <div className="w-7 h-7 sm:w-8 sm:h-8 md:w-10 md:h-10 rounded-full border-2 border-white overflow-hidden bg-white">
-                            <img 
-                              src="https://api.dicebear.com/7.x/avataaars/svg?seed=student2" 
-                              alt="Student"
-                              className="w-full h-full"
-                            />
-                          </div>
-                          <div className="w-7 h-7 sm:w-8 sm:h-8 md:w-10 md:h-10 rounded-full border-2 border-white bg-white flex items-center justify-center">
-                            <span className="text-[14px] font-bold text-gray-700">+{classItem.students}</span>
-                          </div>
+                        ))}
+                        <div className="w-7 h-7 sm:w-9 sm:h-9 rounded-full border-2 border-white bg-white flex items-center justify-center">
+                          <span className="text-[10px] font-bold text-gray-700">+{classItem.students}</span>
                         </div>
                       </div>
-                      <div className="bg-white bg-opacity-20 backdrop-blur-sm px-2 sm:px-3 py-1 sm:py-2 rounded-lg flex items-center gap-1 sm:gap-2">
-                        <FaCalendar className="text-white text-[14px]" />
-                        <span className="text-gray-700 text-[12px] font-medium">{classItem.date}</span>
+                      <div className="bg-white/20 backdrop-blur-sm px-2.5 py-1.5 rounded-lg flex items-center gap-1.5">
+                        <FaCalendar className="text-white text-[11px]" />
+                        <span className="text-white text-[11px] font-medium">{classItem.date}</span>
                       </div>
                     </div>
 
-                    {/* Class Title */}
-                    <h4 className="text-sm sm:text-base md:text-lg lg:text-xl font-bold text-white mb-3 sm:mb-4 line-clamp-2">
+                    <h4 className="text-sm sm:text-base md:text-lg font-bold text-white mb-3 sm:mb-4 line-clamp-2">
                       {classItem.title}
                     </h4>
 
-                    {/* Time and Action */}
-                    <div className="flex items-stretch sm:items-center justify-between gap-2 sm:gap-3">
-                      <div className="bg-white px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg flex items-center justify-center gap-1 sm:gap-2">
-                        <FaClock className="text-gray-700 text-xs sm:text-sm" />
-                        <span className="text-gray-800 font-medium text-xs sm:text-sm">{classItem.time}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="bg-white/20 backdrop-blur-sm px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                        <FaClock className="text-white text-xs" />
+                        <span className="text-white font-medium text-xs sm:text-sm">{classItem.time}</span>
                       </div>
-                      <motion.button 
+                      <motion.button
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
-                        className="bg-[#F68C29] text-white px-4 py-1.5 rounded-lg font-semibold hover:bg-opacity-90 transition-all text-xs sm:text-sm md:text-base"
+                        className="bg-[#F68C29] text-white px-4 py-1.5 rounded-lg font-semibold hover:bg-[#e07d20] transition-colors text-xs sm:text-sm shadow-md"
                       >
                         Start Class
                       </motion.button>
@@ -401,137 +385,199 @@ const TutorDashboard = () => {
               </div>
             </motion.div>
           )}
+
+          {activeTab === 'live' && (
+            <motion.div
+              key="live"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="mb-6"
+            >
+              <h3 className="text-base sm:text-lg md:text-xl font-bold text-gray-800 mb-4 sm:mb-6">Live Session</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+
+                {/* Go Live Card */}
+                <div className="relative bg-gradient-to-br from-[#3D08BA] via-[#7B2FBE] to-[#F68C29] rounded-2xl p-6 sm:p-8 shadow-2xl hover:shadow-[0_20px_60px_-15px_rgba(61,8,186,0.5)] transition-all duration-300 hover:-translate-y-1 overflow-hidden">
+                  <div className="absolute -top-10 -right-10 w-40 h-40 bg-[#F68C29]/20 rounded-full blur-2xl" />
+                  <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-[#3D08BA]/30 rounded-full blur-2xl" />
+                  <div className="relative flex flex-col items-center text-center">
+                    <div className="w-16 h-16 sm:w-20 sm:h-20 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center mb-4 shadow-lg border border-white/20">
+                      <FaVideo className="text-white text-2xl sm:text-3xl" />
+                    </div>
+                    <h4 className="text-xl sm:text-2xl font-bold text-white mb-2">Go Live Now</h4>
+                    <p className="text-white/90 mb-6 text-sm sm:text-base">Start an instant live session with your students</p>
+                    <button
+                      onClick={handleGoLive}
+                      className="bg-white text-[#3D08BA] px-6 sm:px-8 py-3 rounded-xl font-bold hover:shadow-lg active:scale-95 transition-all duration-200 text-sm sm:text-base w-full sm:w-auto flex items-center justify-center gap-2 shadow-md"
+                    >
+                      <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+                      Go Live
+                    </button>
+                  </div>
+                </div>
+
+                {/* Schedule Live Class Card */}
+                <div className="relative bg-gradient-to-br from-[#F68C29] via-[#B8559E] to-[#3D08BA] rounded-2xl p-6 sm:p-8 shadow-2xl hover:shadow-[0_20px_60px_-15px_rgba(253,131,16,0.5)] transition-all duration-300 hover:-translate-y-1 overflow-hidden">
+                  <div className="absolute -top-10 -right-10 w-40 h-40 bg-[#3D08BA]/20 rounded-full blur-2xl" />
+                  <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-[#F68C29]/30 rounded-full blur-2xl" />
+                  <div className="relative flex flex-col items-center text-center">
+                    <div className="w-16 h-16 sm:w-20 sm:h-20 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center mb-4 shadow-lg border border-white/20">
+                      <FaCalendar className="text-white text-2xl sm:text-3xl" />
+                    </div>
+                    <h4 className="text-xl sm:text-2xl font-bold text-white mb-2">Schedule Live Class</h4>
+                    <p className="text-white/90 mb-6 text-sm sm:text-base">Plan and schedule a live session for later</p>
+                    <button
+                      onClick={() => setShowScheduleModal(true)}
+                      className="bg-white text-[#F68C29] px-6 sm:px-8 py-3 rounded-xl font-bold hover:shadow-lg active:scale-95 transition-all duration-200 text-sm sm:text-base w-full sm:w-auto flex items-center justify-center gap-2 shadow-md"
+                    >
+                      <FaPlus className="text-sm" />
+                      Schedule Class
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'group' && (
+            <motion.div
+              key="group"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="mb-6"
+            >
+              <h3 className="text-base sm:text-lg md:text-xl font-bold text-gray-800 mb-4">Group Sessions</h3>
+              <div className="bg-white rounded-2xl p-8 text-center shadow-sm border border-gray-100">
+                <p className="text-gray-600">Group content will be displayed here</p>
+              </div>
+            </motion.div>
+          )}
         </AnimatePresence>
+      </main>
 
-        {activeTab === 'live' && (
-          <div className="mb-6">
-            <h3 className="text-base sm:text-lg md:text-xl font-bold text-gray-800 mb-4 sm:mb-6">Live Session</h3>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-              {/* Go Live Card */}
-                    <div className="relative bg-linear-to-br from-[#3D08BA] via-[#7B2FBE] to-[#fd8310] rounded-xl sm:rounded-2xl p-6 sm:p-8 shadow-2xl hover:shadow-[0_20px_60px_-15px_rgba(61,8,186,0.6)] transition-all duration-300 transform hover:scale-105 overflow-hidden">
-        {/* Animated background overlay */}
-        <div className="absolute inset-0 bg-linear-to-tr from-white/10 to-transparent opacity-0 hover:opacity-100 transition-opacity duration-300"></div>
-        
-        {/* Decorative circles */}
-        <div className="absolute -top-10 -right-10 w-40 h-40 bg-[#fd8310]/20 rounded-full blur-2xl"></div>
-        <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-[#3D08BA]/30 rounded-full blur-2xl"></div>
-        
-        <div className="relative flex flex-col items-center text-center">
-          <div className="w-16 h-16 sm:w-20 sm:h-20 bg-linear-to-br from-white/30 to-white/10 backdrop-blur-sm rounded-full flex items-center justify-center mb-4 shadow-lg border border-white/20">
-            <FaVideo className="text-white text-2xl sm:text-3xl drop-shadow-lg" />
-          </div>
-          <h4 className="text-xl sm:text-2xl font-bold text-white mb-2 drop-shadow-md">Go Live Now</h4>
-          <p className="text-white text-opacity-95 mb-6 text-sm sm:text-base drop-shadow-sm">
-            Start an instant live session with your students
-          </p>
-          <button 
-            onClick={handleGoLive}
-            className="bg-white text-[#3D08BA] px-6 sm:px-8 py-3 rounded-lg font-bold hover:bg-opacity-95 hover:shadow-lg active:scale-95 transition-all duration-200 text-sm sm:text-base w-full sm:w-auto flex items-center justify-center gap-2 shadow-md"
-          >
-            <div className="w-3 h-3 bg-linear-to-r from-[#3D08BA] to-[#fd8310] rounded-full animate-pulse shadow-sm"></div>
-            Go Live
-          </button>
-        </div>
-        </div>
-              {/* Schedule Live Class Card */}
-              <div className="relative bg-linear-to-br from-[#fd8310] via-[#B8559E] to-[#5a18f2] rounded-xl sm:rounded-2xl p-6 sm:p-8 shadow-2xl hover:shadow-[0_20px_60px_-15px_rgba(253,131,16,0.6)] transition-all duration-300 transform hover:scale-105 overflow-hidden">
-  {/* Animated background overlay */}
-  <div className="absolute inset-0 bg-linear-to-tr from-white/10 to-transparent opacity-0 hover:opacity-100 transition-opacity duration-300"></div>
-  
-  {/* Decorative circles */}
-  <div className="absolute -top-10 -right-10 w-40 h-40 bg-[#5a18f2]/20 rounded-full blur-2xl"></div>
-  <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-[#fd8310]/30 rounded-full blur-2xl"></div>
-  
-  <div className="relative flex flex-col items-center text-center">
-    <div className="w-16 h-16 sm:w-20 sm:h-20 bg-linear-to-br from-white/30 to-white/10 backdrop-blur-sm rounded-full flex items-center justify-center mb-4 shadow-lg border border-white/20">
-      <FaCalendar className="text-white text-2xl sm:text-3xl drop-shadow-lg" />
-    </div>
-    <h4 className="text-xl sm:text-2xl font-bold text-white mb-2 drop-shadow-md">Schedule Live Class</h4>
-    <p className="text-white text-opacity-95 mb-6 text-sm sm:text-base drop-shadow-sm">
-      Plan and schedule a live session for later
-    </p>
-    <button 
-      onClick={() => setShowScheduleModal(true)}
-      className="bg-white text-[#fd8310] px-6 sm:px-8 py-3 rounded-lg font-bold hover:bg-opacity-95 hover:shadow-lg active:scale-95 transition-all duration-200 text-sm sm:text-base w-full sm:w-auto flex items-center justify-center gap-2 shadow-md"
-    >
-      <FaPlus className="text-sm" />
-      Schedule Class
-    </button>
-  </div>
-</div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'group' && (
-          <div className="mb-6">
-            <h3 className="text-base sm:text-lg md:text-xl font-bold text-gray-800 mb-4">Group Sessions</h3>
-            <div className="bg-white rounded-xl p-8 text-center shadow-sm">
-              <p className="text-gray-600">Group content will be displayed here</p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white shadow-lg md:hidden z-10">
+      {/* Bottom Navigation - Mobile */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white shadow-lg md:hidden z-10 border-t border-gray-200">
         <div className="flex justify-around items-center py-2 sm:py-3 px-2">
-          <button className="flex flex-col items-center gap-0.5 sm:gap-1 text-orange-500">
+          <button className="flex flex-col items-center gap-0.5 sm:gap-1 text-[#F68C29]">
             <div className="bg-orange-100 p-2 sm:p-2.5 rounded-lg">
-              <FaHome size={16} className="sm:w-5 sm:h-5" />
+              <FaHome size={16} />
             </div>
-            <span className="text-[14px]">Home</span>
+            <span className="text-[11px] font-medium">Home</span>
           </button>
-          <button onClick={handleCourseClick} className="flex flex-col items-center gap-0.5 sm:gap-1 text-gray-600 hover:text-orange-500">
-            <div className="p-2 sm:p-2.5 rounded-lg hover:bg-orange-100">
-              <FaBook size={16} className="sm:w-5 sm:h-5" />
+          <button onClick={handleCourseClick} className="flex flex-col items-center gap-0.5 sm:gap-1 text-gray-500 hover:text-[#F68C29]">
+            <div className="p-2 sm:p-2.5 rounded-lg hover:bg-orange-50">
+              <FaBook size={16} />
             </div>
-            <span className="text-[14px]">Courses</span>
+            <span className="text-[11px]">Courses</span>
           </button>
-          <button onClick={handleStudentListClick} className="flex flex-col items-center gap-0.5 sm:gap-1 text-gray-600 hover:text-orange-500">
-            <div className="p-2 sm:p-2.5 rounded-lg hover:bg-orange-100">
-              <FaUserGraduate size={16} className="sm:w-5 sm:h-5" />
+          <button onClick={handleStudentListClick} className="flex flex-col items-center gap-0.5 sm:gap-1 text-gray-500 hover:text-[#F68C29]">
+            <div className="p-2 sm:p-2.5 rounded-lg hover:bg-orange-50">
+              <FaUserGraduate size={16} />
             </div>
-            <span className="text-[14px]">Students</span>
+            <span className="text-[11px]">Students</span>
           </button>
-          <button className="flex flex-col items-center gap-0.5 sm:gap-1 text-gray-600 hover:text-orange-500">
-            <div className="p-2 sm:p-2.5 rounded-lg hover:bg-orange-100">
-              <FaMoneyBillWave size={16} className="sm:w-5 sm:h-5" />
+          <button className="flex flex-col items-center gap-0.5 sm:gap-1 text-gray-500 hover:text-[#F68C29]">
+            <div className="p-2 sm:p-2.5 rounded-lg hover:bg-orange-50">
+              <FaMoneyBillWave size={16} />
             </div>
-            <span className="text-[14px]">Earnings</span>
+            <span className="text-[11px]">Earnings</span>
           </button>
         </div>
       </div>
 
-      {/* Schedule Class Modal Component */}
-      <ScheduleClass 
+      {/* Menu Sidebar */}
+      {menuOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 backdrop-blur-sm" onClick={() => setMenuOpen(false)}>
+          <div
+            className="absolute top-0 right-0 bg-white w-80 sm:w-96 h-full shadow-2xl overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Menu Header */}
+            <div className="p-5 sm:p-6 border-b border-gray-200 bg-gradient-to-br from-[#3D08BA] to-[#2c0691]">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl sm:text-2xl font-bold text-white">Menu</h2>
+                <button onClick={() => setMenuOpen(false)} className="p-2 hover:bg-white/20 rounded-full transition-colors">
+                  <HiOutlineX className="w-6 h-6 text-white" />
+                </button>
+              </div>
+              <div className="flex items-center gap-3 bg-white/10 backdrop-blur-sm rounded-xl p-3">
+                <div className="w-14 h-14 rounded-full border-2 border-white bg-gray-100 flex items-center justify-center shrink-0">
+                  {profileSrc
+                    ? <img src={profileSrc} alt="Profile" className="w-full h-full rounded-full object-cover" />
+                    : <UserCircleIcon className="w-9 h-9 text-gray-400" />
+                  }
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-white truncate">{name}</p>
+                  <p className="text-xs text-white/80 truncate">{email}</p>
+                  <p className="text-xs text-white/60 mt-0.5">@{username}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Menu Items */}
+            <nav className="p-4 sm:p-5">
+              <div className="space-y-1">
+                {menuItems.map((item, index) => (
+                  <button
+                    key={index}
+                    onClick={() => { item.onClick(); setMenuOpen(false); }}
+                    className="w-full text-left px-4 py-3 rounded-xl hover:bg-gray-100 text-gray-700 font-medium transition-all flex items-center gap-3 group hover:shadow-sm"
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-gray-100 group-hover:bg-[#3D08BA] flex items-center justify-center transition-colors">
+                      <item.icon className="w-5 h-5 text-gray-600 group-hover:text-white transition-colors" />
+                    </div>
+                    <span className="flex-1">{item.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Logout */}
+              <div className="mt-6 pt-6 border-t border-gray-200">
+                <button
+                  onClick={handleLogout}
+                  className="w-full text-left px-4 py-3 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 font-semibold transition-all flex items-center gap-3 group"
+                >
+                  <div className="w-10 h-10 rounded-lg bg-red-100 group-hover:bg-red-200 flex items-center justify-center transition-colors">
+                    <ArrowRightOnRectangleIcon className="w-5 h-5 text-red-600" />
+                  </div>
+                  <span>Logout</span>
+                </button>
+              </div>
+            </nav>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule Class Modal */}
+      <ScheduleClass
         isOpen={showScheduleModal}
         onClose={() => setShowScheduleModal(false)}
         onSchedule={handleScheduleClass}
       />
 
-      <ToastContainer 
-        position="top-right" 
-        autoClose={3000} 
-        hideProgressBar={false} 
-        newestOnTop={false} 
-        closeOnClick 
-        rtl={false} 
-        pauseOnFocusLoss 
-        draggable 
-        pauseOnHover 
+      <ToastContainer
+        position="top-right"
+        autoClose={3000}
+        hideProgressBar={false}
+        newestOnTop={false}
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
       />
 
-{/* Tutor Profile Modal */}
+      {/* Tutor Profile Modal */}
       {showProfile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
-          <div 
-            className="absolute inset-0 bg-black bg-opacity-50"
-            onClick={() => setShowProfile(false)}
-          ></div>
-          <div className="relative z-10 w-full max-w-4xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto">
-            <TutorProfile 
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 backdrop-blur-sm">
+          <div className="absolute inset-0" onClick={() => setShowProfile(false)} />
+          <div className="relative z-10 w-full max-w-4xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto rounded-2xl">
+            <TutorProfile
               onClose={() => setShowProfile(false)}
               onSave={handleProfileUpdate}
               initialName={name}
@@ -543,7 +589,6 @@ const TutorDashboard = () => {
           </div>
         </div>
       )}
-
     </div>
   );
 };
