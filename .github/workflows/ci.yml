@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:password@localhost:5432/edumaa
+      DIRECT_URL: postgresql://postgres:password@localhost:5432/edumaa
+      REDIS_URL: redis://127.0.0.1:6379
+      DJANGO_INTERNAL_API_URL: http://127.0.0.1:8000/admin-api
+      INTERNAL_API_TOKEN: ci-internal-token
+      SENTRY_DSN: ""
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: edumaa
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enforce backend service boundaries
+        run: bash scripts/check_service_boundaries.sh
+
+      # Node (NestJS) checks
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install NestJS deps
+        working-directory: backend/nestjs
+        run: npm install --no-audit --no-fund
+
+      # Python (Django) checks
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Django deps
+        working-directory: backend/django
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Prisma generate
+        working-directory: backend/nestjs
+        run: npx prisma generate
+
+      - name: Build NestJS (strict TypeScript gate)
+        working-directory: backend/nestjs
+        run: npm run build
+
+      - name: Prisma db push
+        working-directory: backend/nestjs
+        run: npx prisma db push
+
+      - name: Django migrate
+        working-directory: backend/django
+        run: |
+          python manage.py migrate --noinput
+
+      - name: Django check
+        working-directory: backend/django
+        run: |
+          python manage.py check
+
+      - name: Django internal API permission tests
+        working-directory: backend/django
+        run: |
+          python manage.py test core.tests.test_internal_api_permissions -v 2
+
+      - name: Start Django server
+        working-directory: backend/django
+        run: |
+          nohup python manage.py runserver 127.0.0.1:8000 > /tmp/django-ci.log 2>&1 &
+
+      - name: Start NestJS server
+        working-directory: backend/nestjs
+        run: |
+          nohup node dist/main.js > /tmp/nest-ci.log 2>&1 &
+
+      - name: Smoke test internal admin bridge
+        run: bash scripts/smoke_internal_bridge.sh
+
+      - name: Dump app logs on failure
+        if: failure()
+        run: |
+          echo "=== Django CI Log ==="
+          (test -f /tmp/django-ci.log && tail -n 200 /tmp/django-ci.log) || true
+          echo "=== NestJS CI Log ==="
+          (test -f /tmp/nest-ci.log && tail -n 200 /tmp/nest-ci.log) || true
+
+      - name: Lint (optional)
+        run: echo "Add linting steps here"

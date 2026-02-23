@@ -1,0 +1,22 @@
+/**
+ * Root application module.
+ *
+ * This module wires together small feature modules. Keep this file focused on
+ * high-level composition — business logic belongs in feature modules.
+ */
+import { Module } from '@nestjs/common';
+import { UsersModule } from './users/users.module';
+import { PrismaService } from './prisma.service';
+import { WebhooksModule } from './webhooks/webhooks.module';
+import { RealtimeModule } from './realtime/realtime.module';
+import { AuthModule } from './auth/auth.module';
+import { SupabaseModule } from './supabase/supabase.module';
+import { InternalAdminModule } from './internal-admin/internal-admin.module';
+
+@Module({
+  // Feature modules are registered here so Nest can compose the app.
+  imports: [UsersModule, WebhooksModule, RealtimeModule, AuthModule, SupabaseModule, InternalAdminModule],
+  controllers: [],
+  providers: [PrismaService],
+})
+export class AppModule {}
