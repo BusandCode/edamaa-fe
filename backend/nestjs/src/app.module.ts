@@ -12,10 +12,19 @@ import { RealtimeModule } from './realtime/realtime.module';
 import { AuthModule } from './auth/auth.module';
 import { SupabaseModule } from './supabase/supabase.module';
 import { InternalAdminModule } from './internal-admin/internal-admin.module';
+import { LearningProgressModule } from './learning-progress/learning-progress.module';
 
 @Module({
   // Feature modules are registered here so Nest can compose the app.
-  imports: [UsersModule, WebhooksModule, RealtimeModule, AuthModule, SupabaseModule, InternalAdminModule],
+  imports: [
+    UsersModule,
+    WebhooksModule,
+    RealtimeModule,
+    AuthModule,
+    SupabaseModule,
+    InternalAdminModule,
+    LearningProgressModule,
+  ],
   controllers: [],
   providers: [PrismaService],
 })

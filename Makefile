@@ -1,13 +1,13 @@
-.PHONY: help up down nest-install nest-start prisma-generate prisma-push django-install django-migrate bootstrap check-boundaries smoke-internal-bridge
+.PHONY: help up down local-up local-down web-up web-down nest-install nest-start prisma-generate prisma-push django-install django-migrate bootstrap check-boundaries smoke-internal-bridge
 
-DATABASE_URL ?= postgresql://postgres:password@localhost:5432/edumaa
+DATABASE_URL ?= postgresql://postgres:password@localhost:5432/edamaa
 DIRECT_URL ?= $(DATABASE_URL)
 REDIS_URL ?= redis://localhost:6379
 DJANGO_INTERNAL_API_URL ?= http://localhost:8000/admin-api
 INTERNAL_API_TOKEN ?=
 
 help:
-	@echo "Make targets: up down nest-install nest-start prisma-generate prisma-push django-install django-migrate bootstrap check-boundaries smoke-internal-bridge"
+	@echo "Make targets: up down local-up local-down web-up web-down nest-install nest-start prisma-generate prisma-push django-install django-migrate bootstrap check-boundaries smoke-internal-bridge"
 	@echo "Vars: DATABASE_URL, DIRECT_URL, REDIS_URL, DJANGO_INTERNAL_API_URL, INTERNAL_API_TOKEN"
 
 up:
@@ -15,6 +15,18 @@ up:
 
 down:
 	docker-compose down
+
+local-up:
+	bash scripts/local-up.sh
+
+local-down:
+	bash scripts/local-down.sh
+
+web-up:
+	bash scripts/web-up.sh
+
+web-down:
+	bash scripts/web-down.sh
 
 nest-install:
 	cd backend/nestjs && npm install --no-audit --no-fund
@@ -26,7 +38,7 @@ prisma-push:
 	cd backend/nestjs && DATABASE_URL='$(DATABASE_URL)' DIRECT_URL='$(DIRECT_URL)' npx prisma db push
 
 nest-start:
-	cd backend/nestjs && DATABASE_URL='$(DATABASE_URL)' DIRECT_URL='$(DIRECT_URL)' REDIS_URL='$(REDIS_URL)' DJANGO_INTERNAL_API_URL='$(DJANGO_INTERNAL_API_URL)' INTERNAL_API_TOKEN='$(INTERNAL_API_TOKEN)' nohup npm run start > /tmp/edumaa-nestjs.log 2>&1 &
+	cd backend/nestjs && DATABASE_URL='$(DATABASE_URL)' DIRECT_URL='$(DIRECT_URL)' REDIS_URL='$(REDIS_URL)' DJANGO_INTERNAL_API_URL='$(DJANGO_INTERNAL_API_URL)' INTERNAL_API_TOKEN='$(INTERNAL_API_TOKEN)' nohup npm run start > /tmp/edamaa-nestjs.log 2>&1 &
 
 django-install:
 	cd backend/django && python3 -m venv .venv || true && . .venv/bin/activate && pip install -r requirements.txt

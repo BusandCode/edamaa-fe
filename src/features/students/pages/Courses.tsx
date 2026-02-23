@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   MagnifyingGlassIcon,
   BookOpenIcon,
@@ -6,14 +6,23 @@ import {
   VideoCameraIcon,
   PlayCircleIcon,
   ArrowRightIcon,
+  ChatBubbleLeftRightIcon,
 } from '@heroicons/react/24/outline';
 import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid';
 import { useNavigate } from 'react-router-dom';
 import BottomNavigation from '../../../components/layout/student-layout/StudentBottomNavigation';
+import CourseMatesChatPanel from '../../../components/communication/CourseMatesChatPanel';
+import {
+  CURRENT_STUDENT,
+  RECORDED_COURSES,
+  type RecordedCourse,
+} from '../data/recordedCourses';
 
 const MyCourses = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [selectedChatCourse, setSelectedChatCourse] = useState<RecordedCourse | null>(null);
+  const [chatNotice, setChatNotice] = useState('');
 
   const navigate = useNavigate();
 
@@ -33,114 +42,29 @@ const MyCourses = () => {
     navigate(`/course/${courseId}`);
   };
 
-  const Courses = [
-    {
-      id: 1,
-      title: 'Advanced Mathematics for Data Science',
-      instructor: 'Dr. Adetokunbo Andrew',
-      category: 'Science',
-      thumbnail: 'https://images.unsplash.com/photo-1635070041078-e363dbe005cb?w=400',
-      rating: 4.8,
-      totalStudents: 2453,
-      progress: 65,
-      totalLessons: 36,
-      completedLessons: 23,
-      duration: '12 weeks',
-      nextLesson: 'Calculus Applications',
-      lastAccessed: '2 hours ago',
-      level: 'Intermediate'
-    },
-    {
-      id: 2,
-      title: 'Modern Physics: Quantum Mechanics',
-      instructor: 'Prof. Sobowale Olamide',
-      category: 'Science',
-      thumbnail: 'https://images.unsplash.com/photo-1636466497217-26a8cbeaf0aa?w=400',
-      rating: 4.9,
-      totalStudents: 1876,
-      progress: 45,
-      totalLessons: 30,
-      completedLessons: 14,
-      duration: '10 weeks',
-      nextLesson: 'Wave Functions',
-      lastAccessed: '1 day ago',
-      level: 'Advanced'
-    },
-    {
-      id: 3,
-      title: 'English Literature: Classic to Contemporary',
-      instructor: 'Dr. Ajayi Olubukunmi',
-      category: 'Arts',
-      thumbnail: 'https://images.unsplash.com/photo-1481627834876-b7833e8f5570?w=400',
-      rating: 4.7,
-      totalStudents: 3201,
-      progress: 80,
-      totalLessons: 24,
-      completedLessons: 19,
-      duration: '8 weeks',
-      nextLesson: 'Modernist Poetry',
-      lastAccessed: '3 hours ago',
-      level: 'Beginner'
-    },
-    {
-      id: 4,
-      title: 'Full Stack Web Development',
-      instructor: 'Prof. Andrew',
-      category: 'Technology',
-      thumbnail: 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=400',
-      rating: 4.9,
-      totalStudents: 5678,
-      progress: 55,
-      totalLessons: 42,
-      completedLessons: 23,
-      duration: '14 weeks',
-      nextLesson: 'React Hooks Deep Dive',
-      lastAccessed: '5 hours ago',
-      level: 'Intermediate'
-    },
-    {
-      id: 5,
-      title: 'Organic Chemistry Fundamentals',
-      instructor: 'Mide Code',
-      category: 'Science',
-      thumbnail: 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?w=400',
-      rating: 4.6,
-      totalStudents: 1543,
-      progress: 70,
-      totalLessons: 36,
-      completedLessons: 25,
-      duration: '12 weeks',
-      nextLesson: 'Reaction Mechanisms',
-      lastAccessed: '1 day ago',
-      level: 'Intermediate'
-    },
-    {
-      id: 6,
-      title: 'World History: Ancient Civilizations',
-      instructor: 'Prof. Ajayi',
-      category: 'Social Studies',
-      thumbnail: 'https://images.unsplash.com/photo-1461360370896-922624d12aa1?w=400',
-      rating: 4.5,
-      totalStudents: 2109,
-      progress: 40,
-      totalLessons: 30,
-      completedLessons: 12,
-      duration: '10 weeks',
-      nextLesson: 'Roman Empire',
-      lastAccessed: '2 days ago',
-      level: 'Beginner'
-    }
-  ];
+  const openCourseChat = (course: RecordedCourse) => {
+    setSelectedChatCourse(course);
+  };
 
-  const filteredCourses = Courses.filter(subject =>
+  useEffect(() => {
+    if (!chatNotice) {
+      return;
+    }
+    const timer = window.setTimeout(() => setChatNotice(''), 3500);
+    return () => window.clearTimeout(timer);
+  }, [chatNotice]);
+
+  const courses = RECORDED_COURSES;
+
+  const filteredCourses = courses.filter(subject =>
     subject.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
     subject.instructor.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const stats = {
-    totalCourses: Courses.length,
-    inProgress: Courses.filter(s => s.progress > 0 && s.progress < 100).length,
-    completed: Courses.filter(s => s.progress === 100).length,
+    totalCourses: courses.length,
+    inProgress: courses.filter(s => s.progress > 0 && s.progress < 100).length,
+    completed: courses.filter(s => s.progress === 100).length,
     totalHours: 156
   };
 
@@ -218,6 +142,12 @@ const MyCourses = () => {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24">
+        {chatNotice && (
+          <div className="mb-4 rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-4 py-3 text-sm text-[#3D08BA]">
+            {chatNotice}
+          </div>
+        )}
+
         {/* Grid View */}
         {viewMode === 'grid' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -305,7 +235,16 @@ const MyCourses = () => {
                       <VideoCameraIcon className="w-4 h-4" />
                       <span className="text-xs">Next: {subject.nextLesson}</span>
                     </div>
-                    <ArrowRightIcon className="w-4 h-4 text-[#3D08BA] group-hover:translate-x-1 transition-transform" />
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openCourseChat(subject);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-lg border border-[#3D08BA]/30 bg-white px-3 py-1.5 text-xs font-medium text-[#3D08BA] hover:bg-[#3D08BA]/5 transition-colors"
+                    >
+                      <ChatBubbleLeftRightIcon className="w-4 h-4" />
+                      Course Chat
+                    </button>
                   </div>
                 </div>
               </div>
@@ -387,10 +326,28 @@ const MyCourses = () => {
                         <VideoCameraIcon className="w-4 h-4" />
                         <span>Next: {subject.nextLesson}</span>
                       </div>
-                      <button className="px-4 py-2 bg-[#3D08BA] text-white rounded-lg font-medium text-sm hover:bg-red-400 transition-colors flex items-center gap-2">
-                        Continue Learning
-                        <ArrowRightIcon className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openCourseChat(subject);
+                          }}
+                          className="px-3 py-2 rounded-lg border border-[#3D08BA]/30 bg-white text-[#3D08BA] font-medium text-sm hover:bg-[#3D08BA]/5 transition-colors inline-flex items-center gap-2"
+                        >
+                          <ChatBubbleLeftRightIcon className="w-4 h-4" />
+                          Course Chat
+                        </button>
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleCourseClick(subject.id);
+                          }}
+                          className="px-4 py-2 bg-[#3D08BA] text-white rounded-lg font-medium text-sm hover:bg-red-400 transition-colors flex items-center gap-2"
+                        >
+                          Continue Learning
+                          <ArrowRightIcon className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -416,6 +373,19 @@ const MyCourses = () => {
           </div>
         )}
       </main>
+
+      {selectedChatCourse && (
+        <CourseMatesChatPanel
+          course={{
+            id: selectedChatCourse.id,
+            title: selectedChatCourse.title,
+            classmates: selectedChatCourse.classmates,
+            currentStudent: CURRENT_STUDENT,
+          }}
+          onClose={() => setSelectedChatCourse(null)}
+          onNotice={setChatNotice}
+        />
+      )}
 
       {/* Bottom Navigation - Mobile Only */}
       <BottomNavigation

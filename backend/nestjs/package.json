@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "start": "ts-node src/main.ts",
-    "worker": "ts-node src/worker/worker.ts",
+    "start": "ts-node --files src/main.ts",
+    "worker": "ts-node --files src/worker/worker.ts",
     "build": "tsc"
   },
   "dependencies": {

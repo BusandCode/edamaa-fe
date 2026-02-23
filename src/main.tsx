@@ -16,6 +16,7 @@ import StudentRegistration from './features/students/pages/StudentRegistration.t
 import SchoolDashboard from './features/schools/pages/SchoolDashboard.tsx'
 import TutorDashboard from './features/tutors/pages/TutorDashboard.tsx'
 import StudentDashboard from './features/students/pages/StudentDashboard.tsx'
+import StudentHome from './features/students/pages/StudentHome.tsx'
 import StudentProfile from './features/students/pages/StudentProfile.tsx'
 
 // For Students
@@ -31,6 +32,7 @@ import CoursesList from './features/tutors/pages/courses/CoursesList.tsx'
 
 //Import subjects
 import StudentSubjects from './features/students/pages/Courses.tsx'
+import CourseLearning from './features/students/pages/CourseLearning.tsx'
 
 //Import performance stats
 import  Performancestats  from './features/students/pages/Performancestats.tsx'
@@ -55,6 +57,7 @@ createRoot(document.getElementById('root')!).render(
         {/* Dashboard Routes */}
         <Route path="/school-dashboard" element={<SchoolDashboard />} />
         <Route path="/tutor-dashboard" element={<TutorDashboard />} />
+        <Route path="/student-home" element={<StudentHome />} />
         <Route path="/student-dashboard" element={<StudentDashboard />} />
 
         {/* Proile routes */}
@@ -69,6 +72,7 @@ createRoot(document.getElementById('root')!).render(
 
         {/* Subjects */}
         <Route path='/mycourses' element={<StudentSubjects />} />
+        <Route path='/course/:courseId' element={<CourseLearning />} />
         {/* Assignments */}
         <Route path='/assignments' element={<Assignments />} />
 

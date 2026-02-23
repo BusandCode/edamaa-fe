@@ -14,7 +14,7 @@ echo "Repo root: $ROOT_DIR"
 
 cd "$ROOT_DIR"
 
-LOCAL_DATABASE_URL="postgresql://postgres:password@localhost:5432/edumaa"
+LOCAL_DATABASE_URL="postgresql://postgres:password@localhost:5432/edamaa"
 DATABASE_URL="${DATABASE_URL:-}"
 DIRECT_URL="${DIRECT_URL:-}"
 REDIS_URL="${REDIS_URL:-redis://localhost:6379}"
@@ -72,8 +72,8 @@ else
   echo "Skipping prisma db push for external DATABASE_URL. Set ALLOW_SCHEMA_PUSH=1 to enable."
 fi
 
-echo "Starting NestJS in background (logs -> /tmp/edumaa-nestjs.log)"
-nohup env DATABASE_URL="$DATABASE_URL" DIRECT_URL="$DIRECT_URL" REDIS_URL="$REDIS_URL" DJANGO_INTERNAL_API_URL="$DJANGO_INTERNAL_API_URL" INTERNAL_API_TOKEN="$INTERNAL_API_TOKEN" npm run start > /tmp/edumaa-nestjs.log 2>&1 &
+echo "Starting NestJS in background (logs -> /tmp/edamaa-nestjs.log)"
+nohup env DATABASE_URL="$DATABASE_URL" DIRECT_URL="$DIRECT_URL" REDIS_URL="$REDIS_URL" DJANGO_INTERNAL_API_URL="$DJANGO_INTERNAL_API_URL" INTERNAL_API_TOKEN="$INTERNAL_API_TOKEN" npm run start > /tmp/edamaa-nestjs.log 2>&1 &
 
 echo "Setting up Django"
 cd "$ROOT_DIR/backend/django"
@@ -90,5 +90,5 @@ else
 fi
 
 echo "Bootstrap complete."
-echo "- NestJS: http://localhost:3001 (check /tmp/edumaa-nestjs.log)"
+echo "- NestJS: http://localhost:3001 (check /tmp/edamaa-nestjs.log)"
 echo "- Django admin: http://localhost:8000/admin (runserver if desired)"

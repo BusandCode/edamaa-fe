@@ -9,7 +9,7 @@ datasource db {
 }
 
 // -------------------------
-// Prisma schema for edumaa
+// Prisma schema for edamaa
 // -------------------------
 // The schema models below are intentionally minimal for the scaffold.
 // Add fields, indexes and constraints as the domain requires.

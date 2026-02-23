@@ -1,6 +1,6 @@
-import { Injectable, Logger, MessageEvent, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, Logger, MessageEvent, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import IORedis from 'ioredis';
-import { Observable, Subject } from 'rxjs';
+import { Observable, Subject, filter } from 'rxjs';
 
 type RealtimeEnvelope = {
   channel: string;
@@ -70,10 +70,6 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
   }
 
   async publish(channel: string, event: string, payload: unknown) {
-    if (!this.redisReady || !this.publisher) {
-      throw new ServiceUnavailableException('Realtime Redis is unavailable');
-    }
-
     const envelope: RealtimeEnvelope = {
       channel,
       event,
@@ -81,19 +77,43 @@ export class RealtimeService implements OnModuleInit, OnModuleDestroy {
       publishedAt: new Date().toISOString(),
     };
 
-    await this.publisher.publish(channel, JSON.stringify(envelope));
+    // Prefer Redis pub/sub when available so messages fan out across instances.
+    if (this.redisReady && this.publisher) {
+      await this.publisher.publish(channel, JSON.stringify(envelope));
+      return envelope;
+    }
+
+    // Local dev fallback: keep realtime usable even when Redis is offline.
+    this.events$.next({ data: envelope });
     return envelope;
   }
 
-  stream(): Observable<MessageEvent> {
-    return this.events$.asObservable();
+  stream(channel?: string): Observable<MessageEvent> {
+    if (!channel) {
+      return this.events$.asObservable();
+    }
+
+    return this.events$.pipe(
+      filter((event) => {
+        const data = event.data;
+        return (
+          !!data &&
+          typeof data === 'object' &&
+          'channel' in data &&
+          typeof (data as RealtimeEnvelope).channel === 'string' &&
+          (data as RealtimeEnvelope).channel === channel
+        );
+      })
+    );
   }
 
   status() {
+    const usingRedis = this.redisReady;
     return {
-      provider: 'redis',
-      mode: 'pubsub',
-      ok: this.redisReady,
+      provider: usingRedis ? 'redis' : 'in-memory',
+      mode: usingRedis ? 'pubsub' : 'local',
+      ok: true,
+      redisReady: usingRedis,
       skipped: this.skipRedisConnect,
     };
   }

@@ -44,7 +44,7 @@ TEMPLATES = [
 WSGI_APPLICATION = 'adminpanel.wsgi.application'
 ASGI_APPLICATION = 'adminpanel.asgi.application'
 
-DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:password@localhost:5432/edumaa')
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:password@localhost:5432/edamaa')
 DATABASES = {'default': dj_database_url.parse(DATABASE_URL)}
 
 STATIC_URL = '/static/'

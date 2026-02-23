@@ -24,10 +24,9 @@ const StudentRegistration: React.FC = () => {
     
     console.log('Student registration form submitted');
     
-    // Navigate to Student Dashboard - Uncomment this line when you have react-router-dom
-    // window.location.href = '/student-dashboard';
-    alert('Registration successful! Redirecting to dashboard...');
-    navigate('/student-dashboard');
+    // Send new students to the premium home, where they can open Student Dashboard from the header button.
+    alert('Registration successful! Redirecting to learning home...');
+    navigate('/student-home');
   }
 
   return (

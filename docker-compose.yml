@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: edumaa
+      POSTGRES_DB: edamaa
     ports:
       - '5432:5432'
     volumes:

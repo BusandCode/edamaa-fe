@@ -1,75 +1,152 @@
-# React + TypeScript + Vite
+# edamaa
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Backend stack (as configured):
 
-Currently, two official plugins are available:
+- Supabase (Postgres/Auth/Storage/Realtime) as the core DB/auth/store.
+- NestJS + Prisma (TypeScript) for client-facing API, realtime signaling, and Stripe endpoints.
+- Django + Django REST Framework + Celery (Python) for admin, analytics, ML, and heavy background jobs.
+- Redis (cache/pubsub), S3/CDN (or Supabase Storage + CDN), Mux (video), and GitHub Actions + Sentry for CI/observability.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Repo layout
 
-## React Compiler
+- Frontend: React + TypeScript + Vite (`/`)
+- NestJS API: `backend/nestjs`
+- Django admin/analytics: `backend/django`
+- Local infra helpers: `docker-compose.yml`, `Makefile`, `scripts/bootstrap.sh`
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+## Environment
 
-Note: This will impact Vite dev & build performances.
+### NestJS (`backend/nestjs/.env`)
 
-## Expanding the ESLint configuration
+Use Supabase DB URLs for Prisma and Supabase keys for auth/storage access.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+DATABASE_URL=postgresql://...
+DIRECT_URL=postgresql://...
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+REDIS_URL=redis://localhost:6379
+DJANGO_INTERNAL_API_URL=http://localhost:8000/admin-api
+INTERNAL_API_TOKEN=<same token configured in Django>
+STRIPE_API_KEY=...
+STRIPE_WEBHOOK_SECRET=...
+MUX_WEBHOOK_SECRET=...
+SENTRY_DSN=...
+SENTRY_TRACES_SAMPLE_RATE=0.1
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Django (`backend/django`)
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+```bash
+DATABASE_URL=postgresql://...
+REDIS_URL=redis://localhost:6379
+INTERNAL_API_TOKEN=<long-random-token>
+SENTRY_DSN=...
+SENTRY_TRACES_SAMPLE_RATE=0.1
+```
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Quick start
+
+```bash
+# from repo root
+bash scripts/bootstrap.sh
+```
+
+For a one-command local backend run (Django + NestJS + bridge smoke):
+
+```bash
+make local-up
+```
+
+Stop those local processes:
+
+```bash
+make local-down
+```
+
+Start/stop the frontend web app (Vite):
+
+```bash
+make web-up
+make web-down
+```
+
+Notes:
+
+- If `DATABASE_URL` is not set, bootstrap falls back to local Postgres (`docker-compose`).
+- Redis is always started locally for cache/pubsub/queues.
+- For external DB URLs (for example Supabase), schema mutation is skipped by default. Set `ALLOW_SCHEMA_PUSH=1` to run `prisma db push` and Django migrations in bootstrap.
+
+Then run frontend:
+
+```bash
+npm install
+npm run dev
+```
+
+## Backend runtime commands
+
+```bash
+# Infra helpers
+make up
+make down
+
+# NestJS + Prisma
+make nest-install
+make prisma-generate
+make prisma-push
+make nest-start
+
+# Django
+make django-install
+make django-migrate
+
+# Policy + smoke checks
+make check-boundaries
+make smoke-internal-bridge INTERNAL_API_TOKEN=<token>
+```
+
+## Service boundaries
+
+1. NestJS is the only public API surface for clients, webhooks, and realtime signaling.
+2. Django is internal-only for admin/analytics/ML workloads.
+3. Prisma is the migration owner for shared domain tables.
+4. BullMQ is used for low-latency app jobs; Celery is used for heavy/offline analytics jobs.
+5. CI enforces these boundaries via `scripts/check_service_boundaries.sh`.
+
+## Key endpoints
+
+- NestJS auth (Supabase-backed):
+  - `GET /auth/health`
+  - `GET /auth/me` (Bearer token required)
+- NestJS realtime signaling:
+  - `POST /realtime/signal`
+  - `GET /realtime/stream` (SSE)
+- NestJS webhooks:
+  - `POST /webhooks/stripe`
+  - `POST /webhooks/mux`
+- NestJS internal Django bridge:
+  - `GET /internal/admin/proxy-health`
+  - `GET /internal/admin/health`
+  - `GET /internal/admin/analytics/webhooks`
+  - `GET /internal/admin/analytics/user-roles`
+  - `X-Internal-Token` required at NestJS layer
+- Django admin/analytics:
+  - `GET /admin/`
+  - `GET /admin-api/health/` (internal-only; `X-Internal-Token` or staff session)
+  - `GET /admin-api/analytics/webhooks/` (internal-only; `X-Internal-Token` or staff session)
+  - `GET /admin-api/analytics/user-roles/` (internal-only; `X-Internal-Token` or staff session)
+
+## Workers
+
+```bash
+# NestJS webhook queue worker
+cd backend/nestjs
+npm run worker
+
+# Django Celery worker
+cd backend/django
+. .venv/bin/activate
+celery -A adminpanel worker -l info
 ```

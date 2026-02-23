@@ -1,4 +1,4 @@
-import { Body, Controller, Get, MessageEvent, Post, Sse } from '@nestjs/common';
+import { Body, Controller, Get, MessageEvent, Post, Query, Sse } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { RealtimeService } from './realtime.service';
 
@@ -25,7 +25,7 @@ export class RealtimeController {
   }
 
   @Sse('stream')
-  stream(): Observable<MessageEvent> {
-    return this.realtimeService.stream();
+  stream(@Query('channel') channel?: string): Observable<MessageEvent> {
+    return this.realtimeService.stream(channel);
   }
 }

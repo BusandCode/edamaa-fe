@@ -12,8 +12,8 @@ const SignIn: React.FC = () => {
 
   const handleSignIn = (): void => {
     console.log('Sign in clicked');
-    // Navigate to school dashboard
-    navigate('/dashboard');
+    // Land users on the premium learning home after successful sign-in.
+    navigate('/student-home');
   };
 
   const handleGoogleSignIn = (): void => {
