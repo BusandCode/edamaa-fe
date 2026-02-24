@@ -24,6 +24,32 @@ export class RealtimeController {
     return this.realtimeService.publish(channel, event, body.payload ?? null);
   }
 
+  @Get('call-events')
+  async callEvents(
+    @Query('channel') channel?: string,
+    @Query('event') event?: string,
+    @Query('studentId') studentId?: string,
+    @Query('reason') reason?: string | string[],
+    @Query('limit') limit?: string
+  ) {
+    const studentIdNumber = Number(studentId);
+    const parsedLimit = Number(limit);
+    const reasons = Array.isArray(reason) ? reason : reason ? [reason] : undefined;
+
+    const items = await this.realtimeService.listCallSignalEvents({
+      channel,
+      event,
+      studentId: Number.isFinite(studentIdNumber) ? studentIdNumber : undefined,
+      reasons,
+      limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+    });
+
+    return {
+      items,
+      count: items.length,
+    };
+  }
+
   @Sse('stream')
   stream(@Query('channel') channel?: string): Observable<MessageEvent> {
     return this.realtimeService.stream(channel);

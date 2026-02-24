@@ -221,6 +221,10 @@ const JoinClass = () => {
   };
 
   const handleConfirmJoin = () => {
+    if (!selectedClass) {
+      return;
+    }
+
     setIsLoading(true);
     
     setTimeout(() => {
@@ -228,7 +232,7 @@ const JoinClass = () => {
       setIsLoading(false);
       
       setTimeout(() => {
-        navigate('/student-dashboard');
+        navigate(`/live-class/${selectedClass.id}`, { state: { classItem: selectedClass } });
       }, 2000);
     }, 1000);
   };
@@ -250,7 +254,13 @@ const JoinClass = () => {
           <p className="text-gray-600 mb-4">
             You've been enrolled in <span className="font-semibold">{selectedClass.name}</span>
           </p>
-          <p className="text-sm text-gray-500">Redirecting to dashboard...</p>
+          <p className="text-sm text-gray-500">Launching live classroom...</p>
+          <button
+            onClick={() => navigate(`/live-class/${selectedClass.id}`, { state: { classItem: selectedClass } })}
+            className="mt-4 w-full rounded-lg bg-[#3D08BA] px-4 py-2 text-sm font-semibold text-white hover:bg-[#2D0690] transition-colors"
+          >
+            Enter Live Classroom Now
+          </button>
         </div>
       </div>
     );

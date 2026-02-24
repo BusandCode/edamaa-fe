@@ -82,11 +82,29 @@ const TutorDashboard = () => {
     setUpcomingClasses([...upcomingClasses, newClass]);
   };
 
+  const navigate = useNavigate();
+
   const handleGoLive = () => {
-    toast.info('Starting live session...');
+    const liveClassId = `live-${Date.now().toString().slice(-6)}`;
+    const classItem = {
+      id: liveClassId,
+      code: classroomId,
+      name: `${name}'s Live Classroom`,
+      subject: 'Interactive Session',
+      instructor: name,
+      instructorImage: profileSrc || undefined,
+      schedule: 'Live now',
+      students: students.length,
+      description:
+        'Real-time interactive classroom for live teaching, Q&A, and school-support gifting.',
+      level: 'Intermediate' as const,
+      duration: '90 mins',
+    };
+
+    toast.info('Opening live classroom...');
+    navigate(`/live-class/${liveClassId}?role=teacher`, { state: { classItem } });
   };
 
-  const navigate = useNavigate();
   const handleStudentListClick = () => navigate('/student-list');
   const handleCourseClick = () => navigate('/courses');
   const handleLogout = () => navigate('/login');

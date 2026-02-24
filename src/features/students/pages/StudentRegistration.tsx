@@ -3,6 +3,7 @@ import { IoMdCamera } from "react-icons/io";
 import Logo from '../../../components/common/Logo';
 import {languages} from '../../../components/ui/Language';
 import { useNavigate } from "react-router-dom";
+import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
 
 
 const StudentRegistration: React.FC = () => {
@@ -21,6 +22,16 @@ const StudentRegistration: React.FC = () => {
       alert('Please agree to the terms and conditions');
       return;
     }
+
+    // Persist a stable student identity so messaging/call routing can target this student id.
+    const currentIdentity = loadStudentIdentity();
+    const fullName = String(formData.get('fullName') || '').trim();
+    const phone = String(formData.get('phone') || '').trim();
+    saveStudentIdentity({
+      id: currentIdentity.id,
+      name: fullName || currentIdentity.name,
+      phone: phone || currentIdentity.phone,
+    });
     
     console.log('Student registration form submitted');
     

@@ -69,3 +69,26 @@ model WebhookEvent {
   processed  Boolean  @default(false)
   createdAt  DateTime @default(now())
 }
+
+// Stores call signaling events for call audit trails and missed-call analytics.
+// These rows are written by the realtime service and can be queried by admin/UIs.
+model CallSignalEvent {
+  id              Int      @id @default(autoincrement())
+  eventId         String?  @unique
+  channel         String
+  event           String
+  callId          String?
+  studentId       Int?
+  senderRole      String?
+  senderLabel     String?
+  mode            String?
+  reason          String?
+  durationSeconds Int?
+  payload         Json
+  publishedAt     DateTime
+  createdAt       DateTime @default(now())
+
+  @@index([channel, event, createdAt])
+  @@index([studentId, createdAt])
+  @@index([callId, createdAt])
+}

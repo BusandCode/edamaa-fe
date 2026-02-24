@@ -27,6 +27,7 @@ import Payments from './features/students/pages/Payments.tsx'
 import JoinClass from './features/students/pages/JoinClass.tsx'
 import StudentNotifications from './features/students/components/StudentNotifications.tsx'
 import ResourceLibrary from './features/students/pages/Resources.tsx'
+import LiveClassroom from './features/students/pages/LiveClassroom.tsx'
 //Import courses
 import CoursesList from './features/tutors/pages/courses/CoursesList.tsx'
 
@@ -80,6 +81,7 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/notifications" element={<StudentNotifications />} />
         {/* Join Class */}
         <Route path="/join-class" element={<JoinClass />} />
+        <Route path="/live-class/:classId" element={<LiveClassroom />} />
         {/* Resource Library */}
         <Route path="/resources" element={<ResourceLibrary />} />
         {/* Payments */}

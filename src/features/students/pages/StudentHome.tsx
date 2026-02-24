@@ -1,18 +1,27 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   BuildingOffice2Icon,
+  ChatBubbleLeftRightIcon,
   ClockIcon,
   FireIcon,
   MagnifyingGlassIcon,
+  PhoneIcon,
   PlayCircleIcon,
+  Squares2X2Icon,
+  UserCircleIcon,
   UserGroupIcon,
   VideoCameraIcon,
 } from '@heroicons/react/24/outline';
 import { BellIcon as BellSolidIcon } from '@heroicons/react/24/solid';
 import NewLogo from '../../../components/common/NewLogo';
 import StudentBottomNavigation from '../../../components/layout/student-layout/StudentBottomNavigation';
+import StudentCommunicationPanel, {
+  type CommunicationMode,
+  type IncomingCallInvite,
+} from '../../../components/communication/StudentCommunicationPanel';
 import { RECORDED_COURSES } from '../data/recordedCourses';
+import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
 
 type OnlineTutor = {
   id: number;
@@ -40,6 +49,17 @@ type LiveClass = {
   learners: number;
   startsIn: string;
   category: string;
+};
+
+type MissedCallReason = 'missed' | 'declined';
+
+type MissedCallEntry = {
+  id: string;
+  callId: string;
+  mode: 'audio' | 'video';
+  senderLabel: string;
+  at: string;
+  reason: MissedCallReason;
 };
 
 const onlineTutors: OnlineTutor[] = [
@@ -135,11 +155,81 @@ const liveClasses: LiveClass[] = [
 ];
 
 const quickFilters = ['All', 'Technology', 'Science', 'Arts', 'Social Studies', 'Exam Prep'];
+const SIGNAL_CHANNEL = 'signal:student-communication';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '');
+const MISSED_CALL_STORAGE_PREFIX = 'edamaa:student:missed-calls:';
+const MAX_MISSED_CALLS = 20;
+const INCOMING_CALL_TIMEOUT_MS = 30_000;
+
+const AVATAR_GRADIENTS: Array<[string, string]> = [
+  ['#3D08BA', '#5f2ce0'],
+  ['#F68C29', '#f9b26a'],
+  ['#1f6f78', '#34a0a4'],
+  ['#2f4858', '#4f6d7a'],
+];
+
+const buildFallbackAvatar = (fullName: string) => {
+  const cleanedName = fullName.trim() || 'Tutor';
+  const initials =
+    cleanedName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() || '')
+      .join('') || 'T';
+  const hash = cleanedName.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  const [startColor, endColor] = AVATAR_GRADIENTS[hash % AVATAR_GRADIENTS.length];
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+      <defs>
+        <linearGradient id="avatarGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="${startColor}" />
+          <stop offset="100%" stop-color="${endColor}" />
+        </linearGradient>
+      </defs>
+      <rect width="96" height="96" rx="48" fill="url(#avatarGradient)" />
+      <text
+        x="50%"
+        y="50%"
+        dominant-baseline="middle"
+        text-anchor="middle"
+        fill="#ffffff"
+        font-family="Arial, sans-serif"
+        font-size="34"
+        font-weight="700"
+      >
+        ${initials}
+      </text>
+    </svg>
+  `;
+
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+};
 
 const StudentHome = () => {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
+  const [isCommunicationOpen, setIsCommunicationOpen] = useState(false);
+  const [communicationMode, setCommunicationMode] = useState<CommunicationMode>('chat');
+  const [pendingIncomingCall, setPendingIncomingCall] = useState<IncomingCallInvite | null>(null);
+  const [incomingCallInvite, setIncomingCallInvite] = useState<IncomingCallInvite | null>(null);
+  const [missedCalls, setMissedCalls] = useState<MissedCallEntry[]>([]);
+  const [communicationNotice, setCommunicationNotice] = useState('');
+  const seenSignalIdsRef = useRef<Set<string>>(new Set());
+  const seenCallIdsRef = useRef<Set<string>>(new Set());
+  const incomingCallInviteRef = useRef<IncomingCallInvite | null>(null);
+  const ignoredCallIdsRef = useRef<Set<string>>(new Set());
+  const incomingCallTimeoutRef = useRef<number | null>(null);
+  const ringtoneIntervalRef = useRef<number | null>(null);
+  const ringtoneContextRef = useRef<AudioContext | null>(null);
+  const studentIdentity = useMemo(() => loadStudentIdentity(), []);
+  const missedCallStorageKey = useMemo(
+    () => `${MISSED_CALL_STORAGE_PREFIX}${studentIdentity.id}`,
+    [studentIdentity.id]
+  );
+  const missedCallsCount = missedCalls.length;
+  const recentMissedCalls = useMemo(() => missedCalls.slice(0, 3), [missedCalls]);
 
   const recommendedCourses = useMemo(() => {
     const source = RECORDED_COURSES.filter((course) =>
@@ -165,6 +255,420 @@ const StudentHome = () => {
   const onCoursesClick = () => navigate('/mycourses');
   const onAssignmentsClick = () => navigate('/assignments');
   const onPerformanceClick = () => navigate('/performance');
+  const sendRealtimeSignal = useCallback(
+    async (event: string, payload: Record<string, unknown>) => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/realtime/signal`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            channel: SIGNAL_CHANNEL,
+            event,
+            payload,
+          }),
+        });
+        return response.ok;
+      } catch {
+        return false;
+      }
+    },
+    []
+  );
+
+  const rememberIgnoredCallId = useCallback((callId: string) => {
+    if (!callId) {
+      return;
+    }
+    if (ignoredCallIdsRef.current.size > 200) {
+      ignoredCallIdsRef.current.clear();
+    }
+    ignoredCallIdsRef.current.add(callId);
+  }, []);
+
+  const recordMissedCall = useCallback((invite: IncomingCallInvite, reason: MissedCallReason) => {
+    const senderLabel =
+      typeof invite.senderLabel === 'string' && invite.senderLabel.trim()
+        ? invite.senderLabel.trim()
+        : 'Tutor / School support';
+
+    setMissedCalls((current) => {
+      if (current.some((entry) => entry.callId === invite.callId)) {
+        return current;
+      }
+
+      const nextEntry: MissedCallEntry = {
+        id: `${invite.callId}-${Date.now()}`,
+        callId: invite.callId,
+        mode: invite.mode,
+        senderLabel,
+        at: new Date().toISOString(),
+        reason,
+      };
+      return [nextEntry, ...current].slice(0, MAX_MISSED_CALLS);
+    });
+  }, []);
+
+  const playRingtonePulse = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const AudioContextCtor =
+      window.AudioContext ??
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+    if (!AudioContextCtor) {
+      return;
+    }
+
+    if (!ringtoneContextRef.current) {
+      ringtoneContextRef.current = new AudioContextCtor();
+    }
+
+    const context = ringtoneContextRef.current;
+    if (!context) {
+      return;
+    }
+
+    if (context.state === 'suspended') {
+      void context.resume().catch(() => undefined);
+    }
+
+    const scheduleTone = (frequency: number, offset: number) => {
+      const startAt = context.currentTime + offset;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(frequency, startAt);
+      gain.gain.setValueAtTime(0.0001, startAt);
+      gain.gain.exponentialRampToValueAtTime(0.13, startAt + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.24);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(startAt);
+      oscillator.stop(startAt + 0.25);
+    };
+
+    scheduleTone(780, 0.01);
+    scheduleTone(620, 0.33);
+  }, []);
+
+  const stopRingtone = useCallback(() => {
+    if (ringtoneIntervalRef.current !== null) {
+      window.clearInterval(ringtoneIntervalRef.current);
+      ringtoneIntervalRef.current = null;
+    }
+  }, []);
+
+  const startRingtone = useCallback(() => {
+    if (typeof window === 'undefined' || ringtoneIntervalRef.current !== null) {
+      return;
+    }
+    playRingtonePulse();
+    ringtoneIntervalRef.current = window.setInterval(() => {
+      playRingtonePulse();
+    }, 1800);
+  }, [playRingtonePulse]);
+
+  const openCommunication = (mode: CommunicationMode) => {
+    setCommunicationMode(mode);
+    setIncomingCallInvite(null);
+    setPendingIncomingCall(null);
+    setIsCommunicationOpen(true);
+  };
+
+  const acceptIncomingCall = () => {
+    if (!incomingCallInvite) {
+      return;
+    }
+
+    rememberIgnoredCallId(incomingCallInvite.callId);
+    setCommunicationMode(incomingCallInvite.mode);
+    setPendingIncomingCall(incomingCallInvite);
+    setIsCommunicationOpen(true);
+    setIncomingCallInvite(null);
+    setCommunicationNotice(`Connecting ${incomingCallInvite.mode} call...`);
+  };
+
+  const declineIncomingCall = useCallback(async () => {
+    if (!incomingCallInvite) {
+      return;
+    }
+
+    const invite = incomingCallInvite;
+    rememberIgnoredCallId(invite.callId);
+    recordMissedCall(invite, 'declined');
+    setIncomingCallInvite(null);
+    setPendingIncomingCall(null);
+    setCommunicationNotice('Incoming call declined.');
+
+    await sendRealtimeSignal('call.end', {
+      eventId: `call-end-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+      studentId: studentIdentity.id,
+      role: 'student',
+      senderLabel: 'Student',
+      callId: invite.callId,
+      mode: invite.mode,
+      endedAt: new Date().toISOString(),
+      reason: 'declined',
+    });
+  }, [incomingCallInvite, rememberIgnoredCallId, recordMissedCall, sendRealtimeSignal, studentIdentity.id]);
+
+  useEffect(() => {
+    // Keep a stable receiver profile so tutor/school and student panels route on the same student id.
+    saveStudentIdentity(studentIdentity);
+  }, [studentIdentity]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      const rawValue = window.localStorage.getItem(missedCallStorageKey);
+      if (!rawValue) {
+        setMissedCalls([]);
+        return;
+      }
+
+      const parsed = JSON.parse(rawValue) as unknown;
+      if (!Array.isArray(parsed)) {
+        setMissedCalls([]);
+        return;
+      }
+
+      const normalized: MissedCallEntry[] = parsed
+        .map((entry) => (entry && typeof entry === 'object' ? (entry as Partial<MissedCallEntry>) : null))
+        .filter((entry): entry is Partial<MissedCallEntry> => entry !== null)
+        .filter((entry) => typeof entry.callId === 'string' && (entry.mode === 'audio' || entry.mode === 'video'))
+        .map<MissedCallEntry>((entry) => {
+          const reason: MissedCallReason = entry.reason === 'declined' ? 'declined' : 'missed';
+          return {
+            id: typeof entry.id === 'string' ? entry.id : `${entry.callId}-${Date.now()}`,
+            callId: entry.callId as string,
+            mode: entry.mode as 'audio' | 'video',
+            senderLabel:
+              typeof entry.senderLabel === 'string' && entry.senderLabel.trim()
+                ? entry.senderLabel.trim()
+                : 'Tutor / School support',
+            at: typeof entry.at === 'string' ? entry.at : new Date().toISOString(),
+            reason,
+          };
+        })
+        .slice(0, MAX_MISSED_CALLS);
+
+      setMissedCalls(normalized);
+    } catch {
+      setMissedCalls([]);
+    }
+  }, [missedCallStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(missedCallStorageKey, JSON.stringify(missedCalls));
+    } catch {
+      // Storage can fail in private browsing contexts.
+    }
+  }, [missedCalls, missedCallStorageKey]);
+
+  useEffect(() => {
+    incomingCallInviteRef.current = incomingCallInvite;
+  }, [incomingCallInvite]);
+
+  useEffect(() => {
+    if (!communicationNotice) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setCommunicationNotice(''), 3500);
+    return () => window.clearTimeout(timer);
+  }, [communicationNotice]);
+
+  useEffect(() => {
+    if (incomingCallTimeoutRef.current !== null) {
+      window.clearTimeout(incomingCallTimeoutRef.current);
+      incomingCallTimeoutRef.current = null;
+    }
+
+    if (!incomingCallInvite || isCommunicationOpen) {
+      return;
+    }
+
+    incomingCallTimeoutRef.current = window.setTimeout(() => {
+      const activeInvite = incomingCallInviteRef.current;
+      if (!activeInvite || ignoredCallIdsRef.current.has(activeInvite.callId)) {
+        return;
+      }
+
+      rememberIgnoredCallId(activeInvite.callId);
+      recordMissedCall(activeInvite, 'missed');
+      setIncomingCallInvite((current) => (current?.callId === activeInvite.callId ? null : current));
+      setPendingIncomingCall((current) => (current?.callId === activeInvite.callId ? null : current));
+      setCommunicationNotice(`Missed ${activeInvite.mode} call from ${activeInvite.senderLabel || 'Tutor / School support'}.`);
+
+      void sendRealtimeSignal('call.end', {
+        eventId: `call-end-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+        studentId: studentIdentity.id,
+        role: 'student',
+        senderLabel: 'Student',
+        callId: activeInvite.callId,
+        mode: activeInvite.mode,
+        endedAt: new Date().toISOString(),
+        reason: 'missed',
+      });
+    }, INCOMING_CALL_TIMEOUT_MS);
+
+    return () => {
+      if (incomingCallTimeoutRef.current !== null) {
+        window.clearTimeout(incomingCallTimeoutRef.current);
+        incomingCallTimeoutRef.current = null;
+      }
+    };
+  }, [
+    incomingCallInvite,
+    isCommunicationOpen,
+    recordMissedCall,
+    rememberIgnoredCallId,
+    sendRealtimeSignal,
+    studentIdentity.id,
+  ]);
+
+  useEffect(() => {
+    if (incomingCallInvite && !isCommunicationOpen) {
+      startRingtone();
+      return;
+    }
+
+    stopRingtone();
+  }, [incomingCallInvite, isCommunicationOpen, startRingtone, stopRingtone]);
+
+  useEffect(() => {
+    return () => {
+      stopRingtone();
+
+      if (ringtoneContextRef.current) {
+        void ringtoneContextRef.current.close().catch(() => undefined);
+        ringtoneContextRef.current = null;
+      }
+    };
+  }, [stopRingtone]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const source = new EventSource(
+      `${API_BASE_URL}/realtime/stream?channel=${encodeURIComponent(SIGNAL_CHANNEL)}`
+    );
+
+    source.onmessage = (messageEvent) => {
+      let envelope: Record<string, unknown> | null = null;
+      try {
+        const parsed = JSON.parse(messageEvent.data) as unknown;
+        envelope = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+      } catch {
+        envelope = null;
+      }
+
+      if (!envelope) {
+        return;
+      }
+
+      const event = typeof envelope.event === 'string' ? envelope.event : '';
+      const payload =
+        envelope.payload && typeof envelope.payload === 'object'
+          ? (envelope.payload as Record<string, unknown>)
+          : null;
+
+      if (!event || !payload) {
+        return;
+      }
+
+      const payloadStudentId = Number(payload.studentId);
+      if (!Number.isFinite(payloadStudentId) || payloadStudentId !== studentIdentity.id) {
+        return;
+      }
+
+      const eventId = typeof payload.eventId === 'string' ? payload.eventId : '';
+      if (eventId) {
+        if (seenSignalIdsRef.current.has(eventId)) {
+          return;
+        }
+        if (seenSignalIdsRef.current.size > 1000) {
+          seenSignalIdsRef.current.clear();
+        }
+        seenSignalIdsRef.current.add(eventId);
+      }
+
+      if (event === 'call.start') {
+        if (isCommunicationOpen) {
+          return;
+        }
+
+        const senderRole = typeof payload.role === 'string' ? payload.role : '';
+        if (senderRole === 'student') {
+          return;
+        }
+
+        const mode = payload.mode === 'video' ? 'video' : 'audio';
+        const callId = typeof payload.callId === 'string' ? payload.callId : '';
+        const fromSessionId = typeof payload.sessionId === 'string' ? payload.sessionId : '';
+
+        if (!callId || !fromSessionId) {
+          return;
+        }
+
+        if (seenCallIdsRef.current.has(callId)) {
+          return;
+        }
+        if (seenCallIdsRef.current.size > 200) {
+          seenCallIdsRef.current.clear();
+        }
+        seenCallIdsRef.current.add(callId);
+
+        const senderLabel =
+          typeof payload.senderLabel === 'string' && payload.senderLabel.trim()
+            ? payload.senderLabel.trim()
+            : 'Tutor / School support';
+
+        setIncomingCallInvite({
+          callId,
+          fromSessionId,
+          mode,
+          senderLabel,
+          senderRole: senderRole === 'school' ? 'school' : 'tutor',
+        });
+        setCommunicationNotice(`Incoming ${mode} call from ${senderLabel}.`);
+        return;
+      }
+
+      if (event === 'call.end') {
+        const callId = typeof payload.callId === 'string' ? payload.callId : '';
+        if (!callId) {
+          return;
+        }
+
+        const activeInvite = incomingCallInviteRef.current;
+        if (activeInvite?.callId === callId && !ignoredCallIdsRef.current.has(callId)) {
+          rememberIgnoredCallId(callId);
+          recordMissedCall(activeInvite, 'missed');
+          setCommunicationNotice(`Missed ${activeInvite.mode} call from ${activeInvite.senderLabel || 'Tutor / School support'}.`);
+        }
+
+        setIncomingCallInvite((current) => (current?.callId === callId ? null : current));
+        setPendingIncomingCall((current) => (current?.callId === callId ? null : current));
+      }
+    };
+
+    return () => {
+      source.close();
+    };
+  }, [isCommunicationOpen, recordMissedCall, rememberIgnoredCallId, studentIdentity.id]);
 
   return (
     <div className="min-h-screen bg-linear-to-br from-gray-50 via-white to-gray-100">
@@ -181,10 +685,33 @@ const StudentHome = () => {
 
             <div className="flex items-center gap-2">
               <button
-                onClick={() => navigate('/student-dashboard')}
-                className="rounded-full border border-[#3D08BA]/25 bg-[#3D08BA]/6 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10 transition-colors"
+                onClick={() => openCommunication('audio')}
+                className="rounded-full border border-blue-200 bg-blue-50 p-2 hover:bg-blue-100 transition-colors"
+                aria-label="Open in-app call support"
+                title="Call Tutor/School"
               >
-                Student Dashboard
+                <PhoneIcon className="h-5 w-5 text-blue-700" />
+              </button>
+              <button
+                onClick={() => openCommunication('chat')}
+                className="relative rounded-full border border-emerald-200 bg-emerald-50 p-2 hover:bg-emerald-100 transition-colors"
+                aria-label="Open in-app message support"
+                title="Message Tutor/School"
+              >
+                <ChatBubbleLeftRightIcon className="h-5 w-5 text-emerald-700" />
+                {missedCallsCount > 0 && (
+                  <span className="absolute -top-1 -right-1 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                    {missedCallsCount > 9 ? '9+' : missedCallsCount}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => navigate('/student-dashboard')}
+                className="rounded-full border border-[#3D08BA]/25 bg-[#3D08BA]/6 p-2 hover:bg-[#3D08BA]/10 transition-colors"
+                aria-label="Open student dashboard"
+                title="Student Dashboard"
+              >
+                <Squares2X2Icon className="h-5 w-5 text-[#3D08BA]" />
               </button>
               <button
                 onClick={() => navigate('/notifications')}
@@ -198,9 +725,11 @@ const StudentHome = () => {
               </button>
               <button
                 onClick={() => navigate('/my-profile')}
-                className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                className="rounded-full border border-gray-200 bg-white p-2 hover:bg-gray-50 transition-colors"
+                aria-label="Open my profile"
+                title="My Profile"
               >
-                My Profile
+                <UserCircleIcon className="h-5 w-5 text-gray-700" />
               </button>
             </div>
           </div>
@@ -208,6 +737,12 @@ const StudentHome = () => {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24">
+        {communicationNotice && (
+          <div className="mb-4 rounded-xl border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-4 py-3 text-sm text-[#3D08BA]">
+            {communicationNotice}
+          </div>
+        )}
+
         <section className="relative overflow-hidden rounded-3xl bg-linear-to-r from-[#2e0a91] via-[#3D08BA] to-[#5f2ce0] p-6 sm:p-8 text-white shadow-xl">
           <div className="absolute -right-12 -top-10 h-44 w-44 rounded-full bg-white/10"></div>
           <div className="absolute -bottom-20 right-20 h-52 w-52 rounded-full bg-[#F68C29]/20"></div>
@@ -253,6 +788,63 @@ const StudentHome = () => {
                 <p className="text-[11px] uppercase tracking-wide text-white/70">My Streak</p>
                 <p className="mt-1 text-2xl font-bold">12d</p>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">Tutor & School Communication</h2>
+              <p className="mt-1 text-xs text-gray-600">
+                Chat, voice call, and video call are fully in-app. Your receiver id is <span className="font-semibold">#{studentIdentity.id}</span>.
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-700">
+                  Missed calls: {missedCallsCount}
+                </span>
+                {missedCallsCount > 0 && (
+                  <button
+                    onClick={() => setMissedCalls([])}
+                    className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50"
+                  >
+                    Clear history
+                  </button>
+                )}
+              </div>
+              {recentMissedCalls.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-600">
+                  {recentMissedCalls.map((entry) => (
+                    <span key={entry.id} className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1">
+                      {entry.mode === 'video' ? 'Video' : 'Audio'} • {entry.reason === 'declined' ? 'declined' : 'missed'} •{' '}
+                      {new Date(entry.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => openCommunication('chat')}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+              >
+                <ChatBubbleLeftRightIcon className="h-4 w-4" />
+                Message
+              </button>
+              <button
+                onClick={() => openCommunication('audio')}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+              >
+                <PhoneIcon className="h-4 w-4" />
+                Call
+              </button>
+              <button
+                onClick={() => openCommunication('video')}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2D0690]"
+              >
+                <VideoCameraIcon className="h-4 w-4" />
+                Video
+              </button>
             </div>
           </div>
         </section>
@@ -316,7 +908,17 @@ const StudentHome = () => {
                 <div key={tutor.id} className="flex items-center justify-between rounded-xl border border-gray-200 p-3">
                   <div className="flex items-center gap-3">
                     <div className="relative">
-                      <img src={tutor.avatar} alt={tutor.name} className="h-11 w-11 rounded-full border border-gray-200" />
+                      <img
+                        src={tutor.avatar || buildFallbackAvatar(tutor.name)}
+                        alt={tutor.name}
+                        className="h-11 w-11 rounded-full border border-gray-200"
+                        loading="lazy"
+                        // Fallback keeps avatars visible if external avatar providers are unavailable.
+                        onError={(event) => {
+                          event.currentTarget.onerror = null;
+                          event.currentTarget.src = buildFallbackAvatar(tutor.name);
+                        }}
+                      />
                       <span className="absolute -right-0.5 -bottom-0.5 h-3.5 w-3.5 rounded-full border-2 border-white bg-green-500"></span>
                     </div>
                     <div>
@@ -460,6 +1062,56 @@ const StudentHome = () => {
         onAssignmentsClick={onAssignmentsClick}
         onPerformanceClick={onPerformanceClick}
       />
+
+      {incomingCallInvite && !isCommunicationOpen && (
+        <div className="fixed bottom-24 right-4 z-50 w-[min(92vw,360px)] rounded-2xl border border-blue-200 bg-white/95 p-4 shadow-2xl backdrop-blur-md">
+          <div className="flex items-start gap-3">
+            <div className="relative mt-0.5">
+              <span className="absolute inset-0 h-10 w-10 animate-ping rounded-full bg-blue-300/60"></span>
+              <span className="relative inline-flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-blue-700">
+                <PhoneIcon className="h-5 w-5" />
+              </span>
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-gray-900">Incoming {incomingCallInvite.mode} call</p>
+              <p className="mt-0.5 text-xs text-gray-600 truncate">From {incomingCallInvite.senderLabel || 'Tutor / School support'}</p>
+              <p className="mt-1 text-[11px] text-gray-500">Student receiver #{studentIdentity.id}</p>
+
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    void declineIncomingCall();
+                  }}
+                  className="inline-flex items-center justify-center rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
+                >
+                  Decline
+                </button>
+                <button
+                  onClick={acceptIncomingCall}
+                  className="inline-flex items-center justify-center rounded-lg bg-[#3D08BA] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#2D0690]"
+                >
+                  Accept
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isCommunicationOpen && (
+        <StudentCommunicationPanel
+          student={studentIdentity}
+          role="student"
+          initialMode={communicationMode}
+          initialIncomingCall={pendingIncomingCall}
+          onClose={() => {
+            setIsCommunicationOpen(false);
+            setPendingIncomingCall(null);
+          }}
+          onNotice={setCommunicationNotice}
+        />
+      )}
     </div>
   );
 };

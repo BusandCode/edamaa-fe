@@ -46,6 +46,29 @@ SENTRY_DSN=...
 SENTRY_TRACES_SAMPLE_RATE=0.1
 ```
 
+### Frontend (`.env.local`)
+
+```bash
+# NestJS API base for client requests/signaling
+VITE_API_BASE_URL=http://127.0.0.1:3001
+
+# Optional: full ICE server list JSON (preferred for production)
+# Supports either array form:
+# VITE_WEBRTC_ICE_SERVERS_JSON=[{"urls":"stun:stun.l.google.com:19302"},{"urls":["turn:turn.example.com:3478"],"username":"user","credential":"pass"}]
+# or object form:
+# VITE_WEBRTC_ICE_SERVERS_JSON={"iceServers":[{"urls":"stun:stun.l.google.com:19302"}]}
+
+# Optional: shorthand TURN configuration (used when JSON config is not provided)
+VITE_TURN_URLS=turn:turn.example.com:3478,turns:turn.example.com:5349
+VITE_TURN_USERNAME=<turn-username>
+VITE_TURN_CREDENTIAL=<turn-credential>
+```
+
+Notes:
+
+- If no TURN config is set, the app falls back to public STUN (`stun.l.google.com:19302`).
+- After changing `.env.local`, restart `npm run dev`.
+
 ## Quick start
 
 ```bash
@@ -123,6 +146,7 @@ make smoke-internal-bridge INTERNAL_API_TOKEN=<token>
 - NestJS realtime signaling:
   - `POST /realtime/signal`
   - `GET /realtime/stream` (SSE)
+  - `GET /realtime/call-events` (persisted call signal history; supports `reason`, `studentId`, `limit`)
 - NestJS webhooks:
   - `POST /webhooks/stripe`
   - `POST /webhooks/mux`

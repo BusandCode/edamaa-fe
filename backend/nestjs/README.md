@@ -52,6 +52,12 @@ npx prisma generate
 npx prisma db push
 ```
 
+If `prisma db push` cannot run in your environment, apply the SQL manually:
+
+```bash
+psql "$DATABASE_URL" -f prisma/manual/20260224_add_call_signal_event.sql
+```
+
 Start API:
 
 ```bash
@@ -63,6 +69,12 @@ Start worker:
 ```bash
 npm run worker
 ```
+
+Realtime endpoints:
+
+- `POST /realtime/signal`
+- `GET /realtime/stream?channel=signal:student-communication`
+- `GET /realtime/call-events` (filters: `channel`, `event`, `studentId`, repeated `reason`, `limit`)
 
 Internal Django admin bridge (`X-Internal-Token` required):
 

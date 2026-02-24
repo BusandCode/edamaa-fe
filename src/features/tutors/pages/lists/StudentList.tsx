@@ -5,6 +5,7 @@ import { students } from './students';
 import StudentCommunicationPanel, {
   type CommunicationMode,
 } from '../../../../components/communication/StudentCommunicationPanel';
+import useMissedCallInbox from '../../../shared/hooks/useMissedCallInbox';
 
 type StudentRecord = (typeof students)[number];
 
@@ -14,6 +15,28 @@ const StudentList = () => {
   const [selectedStudent, setSelectedStudent] = useState<StudentRecord | null>(null);
   const [communicationMode, setCommunicationMode] = useState<CommunicationMode>('chat');
   const [actionNotice, setActionNotice] = useState('');
+  const studentRoster = useMemo(
+    () =>
+      students.map((student) => ({
+        id: Number(student.id),
+        name: student.name,
+      })),
+    []
+  );
+
+  const {
+    missedCallsCount,
+    missedCountByStudentId,
+    recentMissedCalls,
+    clearMissedCalls,
+  } = useMissedCallInbox({
+    storageKey: 'edamaa:tutor:missed-calls',
+    students: studentRoster,
+    onNewMissedCall: (entry) => {
+      const statusText = entry.reason === 'declined' ? 'declined' : 'missed';
+      setActionNotice(`${entry.studentName} ${statusText} your ${entry.mode} call.`);
+    },
+  });
 
   const filteredStudents = useMemo(
     () =>
@@ -55,6 +78,29 @@ const StudentList = () => {
             {actionNotice}
           </div>
         )}
+
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-red-700">Missed Call Inbox: {missedCallsCount}</p>
+            {missedCallsCount > 0 && (
+              <button
+                onClick={clearMissedCalls}
+                className="rounded-full border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-700 hover:bg-red-100"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          {recentMissedCalls.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-red-800">
+              {recentMissedCalls.map((entry) => (
+                <span key={entry.id} className="rounded-full border border-red-200 bg-white px-2.5 py-1">
+                  {entry.studentName} • {entry.mode} • {entry.reason}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div className="relative mb-5">
           <input
@@ -99,44 +145,52 @@ const StudentList = () => {
         </div>
 
         <div className="space-y-3">
-          {filteredStudents.map((student, index) => (
-            <div
-              key={student.id}
-              className="grid grid-cols-2 md:grid-cols-7 items-center bg-pink-50 rounded-lg px-4 py-3 text-sm"
-            >
-              <span>{index + 1}.</span>
+          {filteredStudents.map((student, index) => {
+            const studentMissedCalls = missedCountByStudentId[Number(student.id)] || 0;
+            return (
+              <div
+                key={student.id}
+                className="grid grid-cols-2 md:grid-cols-7 items-center bg-pink-50 rounded-lg px-4 py-3 text-sm"
+              >
+                <span>{index + 1}.</span>
 
-              <div className="flex items-center gap-2">
-                <img src={student.avatar} alt={student.name} className="w-6 h-6 rounded-full" />
-                <span>{student.name}</span>
+                <div className="flex items-center gap-2">
+                  <img src={student.avatar} alt={student.name} className="w-6 h-6 rounded-full" />
+                  <span>{student.name}</span>
+                </div>
+
+                <span>{student.class}</span>
+                <span>{student.dept}</span>
+                <span>{student.phone}</span>
+                <span>{student.tutor}</span>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    className="relative cursor-pointer text-blue-600 hover:text-blue-700"
+                    onClick={() => openCommunication(student, 'audio')}
+                    title={`Call ${student.name}`}
+                  >
+                    <FaPhone />
+                    {studentMissedCalls > 0 && (
+                      <span className="absolute -top-2 -right-2 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                        {studentMissedCalls > 9 ? '9+' : studentMissedCalls}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    className="cursor-pointer text-green-600 hover:text-green-700"
+                    onClick={() => openCommunication(student, 'chat')}
+                    title={`Chat ${student.name}`}
+                  >
+                    <FaCommentDots />
+                  </button>
+                  <button className="cursor-pointer text-gray-500 hover:text-gray-600">
+                    <FaTimes />
+                  </button>
+                </div>
               </div>
-
-              <span>{student.class}</span>
-              <span>{student.dept}</span>
-              <span>{student.phone}</span>
-              <span>{student.tutor}</span>
-
-              <div className="flex items-center gap-3">
-                <button
-                  className="cursor-pointer text-blue-600 hover:text-blue-700"
-                  onClick={() => openCommunication(student, 'audio')}
-                  title={`Call ${student.name}`}
-                >
-                  <FaPhone />
-                </button>
-                <button
-                  className="cursor-pointer text-green-600 hover:text-green-700"
-                  onClick={() => openCommunication(student, 'chat')}
-                  title={`Chat ${student.name}`}
-                >
-                  <FaCommentDots />
-                </button>
-                <button className="cursor-pointer text-gray-500 hover:text-gray-600">
-                  <FaTimes />
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="text-center mt-6 text-sm font-medium cursor-pointer">View More</div>

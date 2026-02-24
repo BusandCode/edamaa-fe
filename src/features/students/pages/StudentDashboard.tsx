@@ -1,4 +1,4 @@
-import { useState} from 'react';
+import { useMemo, useState } from 'react';
 import NewLogo from '../../../components/common/NewLogo';
 import RecordClasses from "../../tutors/components/RecordClasses";
 import { useNavigate } from 'react-router-dom';
@@ -9,6 +9,7 @@ import {
   PlusIcon,
   Cog6ToothIcon,
   AcademicCapIcon,
+  HomeIcon,
   QuestionMarkCircleIcon,
   ArrowRightOnRectangleIcon,
 } from '@heroicons/react/24/outline';
@@ -25,13 +26,15 @@ import PerformanceStats from '../components/PerformanceStats';
 import Announcements from '../components/Announcements';
 import QuickAccessGrid from "../components/QuickAccess";
 import ProgressOverview from '../components/ProgressOverview';
+import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
 
 const StudentDashboard = () => {
   const navigate = useNavigate();
+  const initialStudentIdentity = useMemo(() => loadStudentIdentity(), []);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [profileSrc] = useState(null);
-  const [name, setName] = useState('Adetokunbo Andrew');
+  const [name, setName] = useState(initialStudentIdentity.name);
   const [username, setUsername] = useState('andrew123');
   const [email, setEmail] = useState('andrew@example.com');
   const [description, setDescription] = useState(
@@ -52,6 +55,7 @@ const StudentDashboard = () => {
     setUsername(updatedProfile.username);
     setEmail(updatedProfile.email);
     setDescription(updatedProfile.bio);
+    saveStudentIdentity({ name: updatedProfile.name });
     // setProfileSrc(updatedProfile.profileImage);
   };
 
@@ -139,6 +143,16 @@ const StudentDashboard = () => {
 
             {/* Right Side - Notification & Menu */}
             <div className="flex items-center gap-2 sm:gap-3">
+              <button
+                onClick={() => navigate('/student-home')}
+                className="shrink-0 inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-full border border-[#3D08BA]/25 text-[#3D08BA] hover:bg-[#3D08BA]/5 transition-colors"
+                aria-label="Back to student home"
+                title="Back to Student Home"
+              >
+                <HomeIcon className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs font-semibold">Student Home</span>
+              </button>
+
               {/* Notification Bell */}
               <button 
                 onClick={handleNotificationClick} 

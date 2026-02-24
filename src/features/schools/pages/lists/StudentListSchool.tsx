@@ -13,6 +13,7 @@ import NavBar from '../../../../components/layout/school-layout/NavBar';
 import StudentCommunicationPanel, {
   type CommunicationMode,
 } from '../../../../components/communication/StudentCommunicationPanel';
+import useMissedCallInbox from '../../../shared/hooks/useMissedCallInbox';
 
 type StudentRecord = (typeof students)[number];
 
@@ -24,6 +25,28 @@ const StudentList = () => {
   const [selectedStudent, setSelectedStudent] = useState<StudentRecord | null>(null);
   const [communicationMode, setCommunicationMode] = useState<CommunicationMode>('chat');
   const [actionNotice, setActionNotice] = useState('');
+  const studentRoster = useMemo(
+    () =>
+      students.map((student) => ({
+        id: Number(student.id),
+        name: student.name,
+      })),
+    []
+  );
+
+  const {
+    missedCallsCount,
+    missedCountByStudentId,
+    recentMissedCalls,
+    clearMissedCalls,
+  } = useMissedCallInbox({
+    storageKey: 'edamaa:school:missed-calls',
+    students: studentRoster,
+    onNewMissedCall: (entry) => {
+      const statusText = entry.reason === 'declined' ? 'declined' : 'missed';
+      setActionNotice(`${entry.studentName} ${statusText} your ${entry.mode} call.`);
+    },
+  });
 
   const filteredStudents = useMemo(
     () =>
@@ -132,6 +155,29 @@ const StudentList = () => {
           </p>
         </div>
 
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-red-700">Missed Call Inbox: {missedCallsCount}</p>
+            {missedCallsCount > 0 && (
+              <button
+                onClick={clearMissedCalls}
+                className="rounded-full border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-700 hover:bg-red-100"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          {recentMissedCalls.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-red-800">
+              {recentMissedCalls.map((entry) => (
+                <span key={entry.id} className="rounded-full border border-red-200 bg-white px-2.5 py-1">
+                  {entry.studentName} • {entry.mode} • {entry.reason}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="hidden md:block bg-white rounded-xl shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -148,26 +194,93 @@ const StudentList = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {filteredStudents.map((student, index) => (
-                  <tr key={student.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-4 text-sm text-gray-700">{index + 1}</td>
-                    <td className="px-4 py-4">
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={student.avatar}
-                          alt={student.name}
-                          className="w-10 h-10 rounded-full border-2 border-gray-200"
-                        />
-                        <span className="text-sm font-medium text-gray-900">{student.name}</span>
+                {filteredStudents.map((student, index) => {
+                  const studentMissedCalls = missedCountByStudentId[Number(student.id)] || 0;
+                  return (
+                    <tr key={student.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-4 text-sm text-gray-700">{index + 1}</td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={student.avatar}
+                            alt={student.name}
+                            className="w-10 h-10 rounded-full border-2 border-gray-200"
+                          />
+                          <span className="text-sm font-medium text-gray-900">{student.name}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-4 text-sm text-gray-700">{student.class}</td>
+                      <td className="px-4 py-4 text-sm text-gray-700">{student.dept}</td>
+                      <td className="px-4 py-4 text-sm text-gray-700">{student.phone}</td>
+                      <td className="px-4 py-4 text-sm text-gray-700">{student.tutor}</td>
+                      <td className="px-4 py-4">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+                            student.status === 'Active' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                          }`}
+                        >
+                          <div
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              student.status === 'Active' ? 'bg-green-500' : 'bg-yellow-500'
+                            }`}
+                          ></div>
+                          {student.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center justify-center gap-3">
+                          <button className="text-[#3D08BA] hover:text-[#2D0690] transition-colors" title="View">
+                            <FaEye size={16} />
+                          </button>
+                          <button
+                            onClick={() => openCommunication(student, 'audio')}
+                            className="relative text-blue-500 hover:text-blue-600 transition-colors"
+                            title={`Call ${student.name}`}
+                          >
+                            <FaPhone size={14} />
+                            {studentMissedCalls > 0 && (
+                              <span className="absolute -top-2 -right-2 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                                {studentMissedCalls > 9 ? '9+' : studentMissedCalls}
+                              </span>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => openCommunication(student, 'chat')}
+                            className="text-green-500 hover:text-green-600 transition-colors"
+                            title={`Chat ${student.name}`}
+                          >
+                            <FaCommentDots size={14} />
+                          </button>
+                          <button className="text-gray-500 hover:text-gray-600 transition-colors" title="Edit">
+                            <FaEdit size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="md:hidden space-y-3">
+          {filteredStudents.map((student) => {
+            const studentMissedCalls = missedCountByStudentId[Number(student.id)] || 0;
+            return (
+              <div key={student.id} className="bg-white rounded-xl shadow-sm p-4 hover:shadow-md transition-shadow">
+                <div className="flex items-start gap-3 mb-3">
+                  <img src={student.avatar} alt={student.name} className="w-12 h-12 rounded-full border-2 border-gray-200" />
+                  <div className="flex-1">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h3 className="font-semibold text-gray-900">{student.name}</h3>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {student.class} • {student.dept}
+                        </p>
                       </div>
-                    </td>
-                    <td className="px-4 py-4 text-sm text-gray-700">{student.class}</td>
-                    <td className="px-4 py-4 text-sm text-gray-700">{student.dept}</td>
-                    <td className="px-4 py-4 text-sm text-gray-700">{student.phone}</td>
-                    <td className="px-4 py-4 text-sm text-gray-700">{student.tutor}</td>
-                    <td className="px-4 py-4">
                       <span
-                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium ${
                           student.status === 'Active' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
                         }`}
                       >
@@ -178,97 +291,46 @@ const StudentList = () => {
                         ></div>
                         {student.status}
                       </span>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex items-center justify-center gap-3">
-                        <button className="text-[#3D08BA] hover:text-[#2D0690] transition-colors" title="View">
-                          <FaEye size={16} />
-                        </button>
-                        <button
-                          onClick={() => openCommunication(student, 'audio')}
-                          className="text-blue-500 hover:text-blue-600 transition-colors"
-                          title={`Call ${student.name}`}
-                        >
-                          <FaPhone size={14} />
-                        </button>
-                        <button
-                          onClick={() => openCommunication(student, 'chat')}
-                          className="text-green-500 hover:text-green-600 transition-colors"
-                          title={`Chat ${student.name}`}
-                        >
-                          <FaCommentDots size={14} />
-                        </button>
-                        <button className="text-gray-500 hover:text-gray-600 transition-colors" title="Edit">
-                          <FaEdit size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="md:hidden space-y-3">
-          {filteredStudents.map((student) => (
-            <div key={student.id} className="bg-white rounded-xl shadow-sm p-4 hover:shadow-md transition-shadow">
-              <div className="flex items-start gap-3 mb-3">
-                <img src={student.avatar} alt={student.name} className="w-12 h-12 rounded-full border-2 border-gray-200" />
-                <div className="flex-1">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="font-semibold text-gray-900">{student.name}</h3>
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        {student.class} • {student.dept}
-                      </p>
                     </div>
-                    <span
-                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium ${
-                        student.status === 'Active' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
-                      }`}
-                    >
-                      <div
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          student.status === 'Active' ? 'bg-green-500' : 'bg-yellow-500'
-                        }`}
-                      ></div>
-                      {student.status}
-                    </span>
                   </div>
                 </div>
-              </div>
 
-              <div className="space-y-2 mb-3 text-sm">
-                <div className="flex items-center gap-2 text-gray-600">
-                  <FaPhone size={12} className="text-gray-400" />
-                  <span>{student.phone}</span>
+                <div className="space-y-2 mb-3 text-sm">
+                  <div className="flex items-center gap-2 text-gray-600">
+                    <FaPhone size={12} className="text-gray-400" />
+                    <span>{student.phone}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-gray-600">
+                    <FaUserGraduate size={12} className="text-gray-400" />
+                    <span>Tutor: {student.tutor}</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 text-gray-600">
-                  <FaUserGraduate size={12} className="text-gray-400" />
-                  <span>Tutor: {student.tutor}</span>
-                </div>
-              </div>
 
-              <div className="flex items-center gap-2 pt-3 border-t border-gray-100">
-                <button className="flex-1 bg-[#3D08BA] text-white py-2 rounded-lg text-sm font-medium hover:bg-[#2D0690] transition-colors">
-                  View Profile
-                </button>
-                <button
-                  onClick={() => openCommunication(student, 'audio')}
-                  className="p-2 border border-gray-300 rounded-lg text-blue-500 hover:bg-blue-50 transition-colors"
-                >
-                  <FaPhone size={14} />
-                </button>
-                <button
-                  onClick={() => openCommunication(student, 'chat')}
-                  className="p-2 border border-gray-300 rounded-lg text-green-500 hover:bg-green-50 transition-colors"
-                >
-                  <FaCommentDots size={14} />
-                </button>
+                <div className="flex items-center gap-2 pt-3 border-t border-gray-100">
+                  <button className="flex-1 bg-[#3D08BA] text-white py-2 rounded-lg text-sm font-medium hover:bg-[#2D0690] transition-colors">
+                    View Profile
+                  </button>
+                  <button
+                    onClick={() => openCommunication(student, 'audio')}
+                    className="relative p-2 border border-gray-300 rounded-lg text-blue-500 hover:bg-blue-50 transition-colors"
+                  >
+                    <FaPhone size={14} />
+                    {studentMissedCalls > 0 && (
+                      <span className="absolute -top-2 -right-2 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                        {studentMissedCalls > 9 ? '9+' : studentMissedCalls}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => openCommunication(student, 'chat')}
+                    className="p-2 border border-gray-300 rounded-lg text-green-500 hover:bg-green-50 transition-colors"
+                  >
+                    <FaCommentDots size={14} />
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {filteredStudents.length === 0 && (
