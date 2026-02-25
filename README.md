@@ -30,11 +30,18 @@ REDIS_URL=redis://localhost:6379
 DJANGO_INTERNAL_API_URL=http://localhost:8000/admin-api
 INTERNAL_API_TOKEN=<same token configured in Django>
 STRIPE_API_KEY=...
+STRIPE_PUBLISHABLE_KEY=...
+STRIPE_TUTOR_SUBSCRIPTION_PRICE_ID=price_...
+STRIPE_SCHOOL_SUBSCRIPTION_PRICE_ID=price_...
 STRIPE_WEBHOOK_SECRET=...
 MUX_WEBHOOK_SECRET=...
 SENTRY_DSN=...
 SENTRY_TRACES_SAMPLE_RATE=0.1
 ```
+
+Startup note:
+- NestJS API and worker automatically load `backend/nestjs/.env` on boot.
+- Manual `source backend/nestjs/.env` is no longer required for local runs.
 
 ### Django (`backend/django`)
 
@@ -52,6 +59,10 @@ SENTRY_TRACES_SAMPLE_RATE=0.1
 # NestJS API base for client requests/signaling
 VITE_API_BASE_URL=http://127.0.0.1:3001
 
+# Supabase browser auth (required for cloud sign-in/sign-up)
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_ANON_KEY=<public-anon-key>
+
 # Optional: full ICE server list JSON (preferred for production)
 # Supports either array form:
 # VITE_WEBRTC_ICE_SERVERS_JSON=[{"urls":"stun:stun.l.google.com:19302"},{"urls":["turn:turn.example.com:3478"],"username":"user","credential":"pass"}]
@@ -67,6 +78,7 @@ VITE_TURN_CREDENTIAL=<turn-credential>
 Notes:
 
 - If no TURN config is set, the app falls back to public STUN (`stun.l.google.com:19302`).
+- If Supabase keys are missing in local development, sign-in falls back to local dev mode for UI testing.
 - After changing `.env.local`, restart `npm run dev`.
 
 ## Quick start
@@ -143,6 +155,16 @@ make smoke-internal-bridge INTERNAL_API_TOKEN=<token>
 - NestJS auth (Supabase-backed):
   - `GET /auth/health`
   - `GET /auth/me` (Bearer token required)
+- NestJS payments (Supabase auth required):
+  - `GET /payments/me/dashboard`
+  - `POST /payments/me/methods/setup-intent`
+  - `POST /payments/me/methods/stripe/confirm`
+  - `POST /payments/me/transactions/:transactionId/pay`
+  - `GET /payments/me/transactions/:transactionId/receipt`
+- NestJS subscriptions (Supabase auth required):
+  - `GET /subscriptions/me/status?actor=tutor|school`
+  - `POST /subscriptions/me/checkout`
+  - `POST /subscriptions/me/sync`
 - NestJS realtime signaling:
   - `POST /realtime/signal`
   - `GET /realtime/stream` (SSE)

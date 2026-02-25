@@ -1,9 +1,26 @@
-import { useState } from 'react';
-import { FaSearch, FaCheckCircle, FaChartLine, FaCalendarAlt, FaVideo, FaIdCard, FaUsers, FaFileAlt, FaCertificate, FaBook, FaCamera } from 'react-icons/fa';import NewLogo from '../../../components/common/NewLogo';
+import { useEffect, useState } from 'react';
+import {
+  FaSearch,
+  FaCheckCircle,
+  FaChartLine,
+  FaCalendarAlt,
+  FaVideo,
+  FaIdCard,
+  FaUsers,
+  FaFileAlt,
+  FaCertificate,
+  FaBook,
+  FaCamera,
+} from 'react-icons/fa';
+import NewLogo from '../../../components/common/NewLogo';
 import QuickActionButton from '../components/QuickActionButton';
 import RecentActivity from '../components/RecentActivity';
 import { useNavigate } from 'react-router-dom';
 import NavBar from '../../../components/layout/school-layout/NavBar';
+import {
+  fetchTeachingSubscriptionState,
+  type TeachingSubscriptionState,
+} from '../../subscriptions/utils/teachingSubscriptionApi';
 
 
 
@@ -85,6 +102,32 @@ const UpcomingEvents = () => {
 
 const SchoolDashboard = () => {
   const [profileImage, setProfileImage] = useState<string>('');
+  const [subscriptionState, setSubscriptionState] = useState<TeachingSubscriptionState | null>(null);
+  const [isSubscriptionLoading, setIsSubscriptionLoading] = useState(false);
+  const [gateNotice, setGateNotice] = useState('');
+  const navigate = useNavigate();
+  const isSubscriptionActive = Boolean(subscriptionState?.isActive);
+
+  const loadSubscription = async () => {
+    setIsSubscriptionLoading(true);
+    try {
+      const payload = await fetchTeachingSubscriptionState('school');
+      setSubscriptionState(payload);
+    } catch {
+      setSubscriptionState(null);
+    } finally {
+      setIsSubscriptionLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadSubscription();
+  }, []);
+
+  const goToSubscription = (message: string) => {
+    setGateNotice(message);
+    navigate('/subscription?actor=school');
+  };
 
   const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -96,10 +139,50 @@ const SchoolDashboard = () => {
       reader.readAsDataURL(file);
     }
   };
-  const navigate = useNavigate();
   const handleStudentListClick = () => {
     navigate('/student-list-school');
-  }
+  };
+
+  const handleLiveClassesClick = () => {
+    if (!isSubscriptionActive) {
+      goToSubscription('Live classes are unlocked when your school activates Edamaa Pro.');
+      return;
+    }
+
+    const liveClassId = `school-live-${Date.now().toString().slice(-6)}`;
+    const classItem = {
+      id: liveClassId,
+      code: 'SCH101',
+      name: "God'swill School Live Class",
+      subject: 'School Session',
+      instructor: "God'swill School",
+      schedule: 'Live now',
+      students: 40,
+      description: 'Live class room managed by school administrators and tutors.',
+      level: 'Intermediate' as const,
+      duration: '90 mins',
+    };
+
+    navigate(`/live-class/${liveClassId}?role=teacher&actor=school`, { state: { classItem } });
+  };
+
+  const handleScheduleClick = () => {
+    if (!isSubscriptionActive) {
+      goToSubscription('Scheduling unlimited offline classes requires an active school subscription.');
+      return;
+    }
+
+    setGateNotice('Schedule workspace is connected. Add your preferred scheduler flow next.');
+  };
+
+  const handleWaecPrepClick = () => {
+    if (!isSubscriptionActive) {
+      goToSubscription('Premium WAEC prep delivery is available on Edamaa Pro.');
+      return;
+    }
+
+    setGateNotice('WAEC premium module is enabled for your school account.');
+  };
 
   return (
     <div className='min-h-screen bg-gray-50 pb-20'>
@@ -168,27 +251,53 @@ const SchoolDashboard = () => {
               <p className='text-sm text-gray-600 mt-1'>A WAEC accredited tutorial center focused on Science and Technology</p>
             </div>
           </div>
+          <div className='mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3'>
+            {isSubscriptionLoading ? (
+              <p className='text-xs text-gray-600'>Checking school subscription access...</p>
+            ) : isSubscriptionActive ? (
+              <>
+                <p className='text-xs text-emerald-700 font-semibold'>
+                  Edamaa Pro active: live teaching and unlimited offline classes are enabled.
+                </p>
+                <button
+                  onClick={() => navigate('/edamaa3d-verified?actor=school')}
+                  className='rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100'
+                >
+                  View Edamaa3D Verify
+                </button>
+              </>
+            ) : (
+              <>
+                <p className='text-xs text-[#3D08BA] font-semibold'>
+                  Free mode active: live classes are locked until subscription is active.
+                </p>
+                <button
+                  onClick={() => navigate('/subscription?actor=school')}
+                  className='rounded-lg bg-[#3D08BA] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#2c0691]'
+                >
+                  Upgrade School Plan
+                </button>
+              </>
+            )}
+          </div>
         </div>
+
+        {gateNotice && (
+          <p className='mb-6 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700'>
+            {gateNotice}
+          </p>
+        )}
+
         {/* Quick Actions */}
         <div className='mb-6'>
           <h3 className='text-base font-bold text-gray-900 mb-4'>Quick Actions</h3>
           <div className='grid grid-cols-3 gap-3'>
             <QuickActionButton icon={FaIdCard} label="Student Lists" onClick={handleStudentListClick}/>
-            <QuickActionButton icon={FaUsers} label="Tutors Lists" onClick={function (): void {
-              throw new Error('Function not implemented.');
-            } } />
-            <QuickActionButton icon={FaCertificate} label="WAEC Prep" badge="NEW" onClick={function (): void {
-              throw new Error('Function not implemented.');
-            } } />
-            <QuickActionButton icon={FaChartLine} label="Revenue" onClick={function (): void {
-              throw new Error('Function not implemented.');
-            } } />
-            <QuickActionButton icon={FaCalendarAlt} label="Schedule" onClick={function (): void {
-              throw new Error('Function not implemented.');
-            } } />
-            <QuickActionButton icon={FaVideo} label="Live Classes" badge="8" onClick={function (): void {
-              throw new Error('Function not implemented.');
-            } } />
+            <QuickActionButton icon={FaUsers} label="Tutors Lists" onClick={() => setGateNotice('Tutor directory workflow can be wired next.')} />
+            <QuickActionButton icon={FaCertificate} label="WAEC Prep" badge="NEW" onClick={handleWaecPrepClick} />
+            <QuickActionButton icon={FaChartLine} label="Revenue" onClick={() => setGateNotice('Revenue dashboard is available in the finance module.')} />
+            <QuickActionButton icon={FaCalendarAlt} label="Schedule" onClick={handleScheduleClick} />
+            <QuickActionButton icon={FaVideo} label="Live Classes" badge="8" onClick={handleLiveClassesClick} />
           </div>
         </div>
 
@@ -213,7 +322,10 @@ const SchoolDashboard = () => {
             <div className='bg-linear-to-r from-[#3D08BA] to-[#5010E0] rounded-2xl p-5 text-white relative overflow-hidden'>
               <h4 className='text-base font-bold mb-2'>Past Questions & Mock Exams</h4>
               <p className='text-xs mb-4 max-w-md'>Access official WAEC past questions, marking schemes and mock examinations to help students prepare effectively</p>
-              <button className='bg-white text-[#3D08BA] px-5 py-2 rounded-lg font-semibold text-xs hover:bg-gray-100 transition-colors'>
+              <button
+                onClick={handleWaecPrepClick}
+                className='bg-white text-[#3D08BA] px-5 py-2 rounded-lg font-semibold text-xs hover:bg-gray-100 transition-colors'
+              >
                 Start Mock Test
               </button>
             </div>

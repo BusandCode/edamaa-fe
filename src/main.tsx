@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import './index.css'
 import App from './App.tsx'
+import ProtectedRoute from './components/auth/ProtectedRoute.tsx'
 
 // Import page components
 import SignUp from './features/auth/SignUp.tsx'
@@ -37,6 +38,8 @@ import CourseLearning from './features/students/pages/CourseLearning.tsx'
 
 //Import performance stats
 import  Performancestats  from './features/students/pages/Performancestats.tsx'
+import SubscriptionPlans from './features/subscriptions/pages/SubscriptionPlans.tsx'
+import Edamaa3DVerified from './features/subscriptions/pages/Edamaa3DVerified.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -86,8 +89,11 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/resources" element={<ResourceLibrary />} />
         {/* Payments */}
         <Route path="/payments" element={<Payments />} />
+        {/* Subscription */}
+        <Route path="/subscription" element={<SubscriptionPlans />} />
+        <Route path="/edamaa3d-verified" element={<Edamaa3DVerified />} />
         {/* Payments */}
-        <Route path="/performance" element={<Performancestats />} />
+        <Route path="/performance" element={<ProtectedRoute><Performancestats /></ProtectedRoute>} />
       </Routes>
     </Router>
   </StrictMode>

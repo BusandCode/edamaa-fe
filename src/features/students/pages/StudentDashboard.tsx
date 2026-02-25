@@ -27,6 +27,7 @@ import Announcements from '../components/Announcements';
 import QuickAccessGrid from "../components/QuickAccess";
 import ProgressOverview from '../components/ProgressOverview';
 import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
+import { signOutEverywhere } from '../../../utils/signOut';
 
 const StudentDashboard = () => {
   const navigate = useNavigate();
@@ -85,10 +86,9 @@ const StudentDashboard = () => {
     navigate('/resources');
   };
 
-  const handleLogout = () => {
-    // Add your logout logic here
-    console.log('Logging out...');
-    navigate('/login');
+  const handleLogout = async () => {
+    await signOutEverywhere();
+    navigate('/signin', { replace: true });
   };
 
   // Menu items configuration

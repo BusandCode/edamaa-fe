@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FaSearch, FaBook, FaUserGraduate, FaMoneyBillWave, FaHome, FaClock, FaCalendar, FaCopy, FaVideo, FaPlus } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import NewLogo from '../../../components/common/NewLogo';
@@ -13,12 +13,20 @@ import {
   PlusIcon,
   Cog6ToothIcon,
   QuestionMarkCircleIcon,
+  CheckBadgeIcon,
+  ShieldCheckIcon,
   ArrowRightOnRectangleIcon,
 } from '@heroicons/react/24/outline';
 import { BellIcon as BellSolidIcon } from '@heroicons/react/24/solid';
 import { HiOutlineMenu, HiOutlineX } from 'react-icons/hi';
+import { signOutEverywhere } from '../../../utils/signOut';
+import {
+  fetchTeachingSubscriptionState,
+  type TeachingSubscriptionState,
+} from '../../subscriptions/utils/teachingSubscriptionApi';
 
 const TutorDashboard = () => {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('classroom');
   const [showProfile, setShowProfile] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
@@ -30,6 +38,8 @@ const TutorDashboard = () => {
   const [email, setEmail] = useState('abdulrahman@example.com');
   const [description, setDescription] = useState('Experienced tutor specializing in mathematics and science. Passionate about helping students achieve their academic goals and fostering a love for learning.');
   const [showMobileSearch, setShowMobileSearch] = useState(false);
+  const [subscriptionState, setSubscriptionState] = useState<TeachingSubscriptionState | null>(null);
+  const [isSubscriptionLoading, setIsSubscriptionLoading] = useState(false);
 
   const handleProfileUpdate = (updatedProfile: {
     name: string;
@@ -67,6 +77,29 @@ const TutorDashboard = () => {
   ]);
 
   const classroomId = '224091556';
+  const isSubscriptionActive = Boolean(subscriptionState?.isActive);
+  const offlineScheduleLimit = subscriptionState?.features.maxScheduledOfflineClasses ?? 1;
+
+  const openSubscriptionPage = (message: string) => {
+    toast.info(message);
+    navigate('/subscription?actor=tutor');
+  };
+
+  const loadSubscriptionState = async () => {
+    setIsSubscriptionLoading(true);
+    try {
+      const payload = await fetchTeachingSubscriptionState('tutor');
+      setSubscriptionState(payload);
+    } catch {
+      setSubscriptionState(null);
+    } finally {
+      setIsSubscriptionLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadSubscriptionState();
+  }, []);
 
   const copyToClipboard = async () => {
     try {
@@ -79,12 +112,33 @@ const TutorDashboard = () => {
   };
 
   const handleScheduleClass = (newClass: NewClassData) => {
-    setUpcomingClasses([...upcomingClasses, newClass]);
+    if (!isSubscriptionActive && upcomingClasses.length >= offlineScheduleLimit) {
+      openSubscriptionPage(
+        `Free mode allows up to ${offlineScheduleLimit} scheduled offline class. Upgrade to unlock unlimited scheduling.`
+      );
+      return;
+    }
+
+    setUpcomingClasses((previous) => [...previous, newClass]);
   };
 
-  const navigate = useNavigate();
+  const handleOpenScheduleClass = () => {
+    if (!isSubscriptionActive && upcomingClasses.length >= offlineScheduleLimit) {
+      openSubscriptionPage(
+        `Free mode allows up to ${offlineScheduleLimit} scheduled offline class. Upgrade to schedule more.`
+      );
+      return;
+    }
+
+    setShowScheduleModal(true);
+  };
 
   const handleGoLive = () => {
+    if (!isSubscriptionActive) {
+      openSubscriptionPage('Live classes are unlocked when you activate Edamaa Pro.');
+      return;
+    }
+
     const liveClassId = `live-${Date.now().toString().slice(-6)}`;
     const classItem = {
       id: liveClassId,
@@ -106,8 +160,45 @@ const TutorDashboard = () => {
   };
 
   const handleStudentListClick = () => navigate('/student-list');
-  const handleCourseClick = () => navigate('/courses');
-  const handleLogout = () => navigate('/login');
+  const handleCourseClick = () => {
+    if (!isSubscriptionActive) {
+      openSubscriptionPage(
+        'Offline class tools are limited in free mode. Upgrade to Edamaa Pro for full access.'
+      );
+      return;
+    }
+
+    navigate('/courses');
+  };
+
+  const handleStartClass = (classItem: NewClassData) => {
+    if (!isSubscriptionActive) {
+      openSubscriptionPage('Start Class is available after activating Edamaa Pro.');
+      return;
+    }
+
+    const liveClassId = `live-${String(classItem.id)}`;
+    const classState = {
+      id: liveClassId,
+      code: classroomId,
+      name: classItem.title,
+      subject: 'Scheduled Session',
+      instructor: name,
+      instructorImage: profileSrc || undefined,
+      schedule: `${classItem.date} ${classItem.time}`,
+      students: classItem.students,
+      description: 'Scheduled tutor session with live instruction and interactive collaboration.',
+      level: 'Intermediate' as const,
+      duration: '60 mins',
+    };
+
+    navigate(`/live-class/${liveClassId}?role=teacher`, { state: { classItem: classState } });
+  };
+
+  const handleLogout = async () => {
+    await signOutEverywhere();
+    navigate('/signin', { replace: true });
+  };
 
   // Menu items
   const menuItems = [
@@ -130,6 +221,16 @@ const TutorDashboard = () => {
       icon: QuestionMarkCircleIcon,
       label: 'Help & Support',
       onClick: () => navigate('/help')
+    },
+    {
+      icon: ShieldCheckIcon,
+      label: 'Subscription',
+      onClick: () => navigate('/subscription?actor=tutor'),
+    },
+    {
+      icon: CheckBadgeIcon,
+      label: 'Edamaa3D Verify',
+      onClick: () => navigate('/edamaa3d-verified?actor=tutor'),
     },
   ];
 
@@ -296,6 +397,45 @@ const TutorDashboard = () => {
 
       {/* MAIN CONTENT */}
       <main className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 pb-24 md:pb-8">
+        <div className="mb-5 sm:mb-6 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          {isSubscriptionLoading ? (
+            <p className="text-sm text-gray-600">Checking your Edamaa Pro access...</p>
+          ) : isSubscriptionActive ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-emerald-700">Edamaa Pro active</p>
+                <p className="text-xs text-gray-600">
+                  Live classes and unlimited offline scheduling are enabled.
+                  {subscriptionState?.currentPeriodEndLabel
+                    ? ` Renewal date: ${subscriptionState.currentPeriodEndLabel}.`
+                    : ''}
+                </p>
+              </div>
+              <button
+                onClick={() => navigate('/edamaa3d-verified?actor=tutor')}
+                className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+              >
+                View Edamaa3D Verify
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-[#3D08BA]">Free mode active</p>
+                <p className="text-xs text-gray-600">
+                  Live classes are locked. Offline class scheduling is limited to {offlineScheduleLimit}{' '}
+                  class.
+                </p>
+              </div>
+              <button
+                onClick={() => navigate('/subscription?actor=tutor')}
+                className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2c0691]"
+              >
+                Upgrade to Edamaa Pro
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Stats Cards */}
         <div className="grid grid-cols-3 gap-3 sm:gap-4 mb-5 sm:mb-6">
@@ -393,6 +533,7 @@ const TutorDashboard = () => {
                       <motion.button
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
+                        onClick={() => handleStartClass(classItem)}
                         className="bg-[#F68C29] text-white px-4 py-1.5 rounded-lg font-semibold hover:bg-[#e07d20] transition-colors text-xs sm:text-sm shadow-md"
                       >
                         Start Class
@@ -447,7 +588,7 @@ const TutorDashboard = () => {
                     <h4 className="text-xl sm:text-2xl font-bold text-white mb-2">Schedule Live Class</h4>
                     <p className="text-white/90 mb-6 text-sm sm:text-base">Plan and schedule a live session for later</p>
                     <button
-                      onClick={() => setShowScheduleModal(true)}
+                      onClick={handleOpenScheduleClass}
                       className="bg-white text-[#F68C29] px-6 sm:px-8 py-3 rounded-xl font-bold hover:shadow-lg active:scale-95 transition-all duration-200 text-sm sm:text-base w-full sm:w-auto flex items-center justify-center gap-2 shadow-md"
                     >
                       <FaPlus className="text-sm" />

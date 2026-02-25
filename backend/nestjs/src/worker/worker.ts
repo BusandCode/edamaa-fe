@@ -10,6 +10,9 @@
 import { Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import { PrismaClient } from '@prisma/client';
+import { loadBackendEnv } from '../config/load-env';
+
+loadBackendEnv();
 
 // Use REDIS_URL env var in production; fall back to localhost in dev.
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';

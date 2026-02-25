@@ -4,6 +4,8 @@ import Logo from '../../../components/common/Logo';
 import {languages} from '../../../components/ui/Language';
 import { useNavigate } from "react-router-dom";
 import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
+import { persistLocalDevAuthSession, persistSupabaseSession } from '../../../utils/authSession';
+import { getSupabaseBrowserClient, isSupabaseBrowserConfigured } from '../../../utils/supabaseClient';
 
 
 const StudentRegistration: React.FC = () => {
@@ -11,7 +13,7 @@ const StudentRegistration: React.FC = () => {
 
   const navigate = useNavigate();
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
 
     event.preventDefault();
     
@@ -23,20 +25,73 @@ const StudentRegistration: React.FC = () => {
       return;
     }
 
+    const fullName = String(formData.get('fullName') || '').trim();
+    const email = String(formData.get('email') || '').trim().toLowerCase();
+    const phone = String(formData.get('phone') || '').trim();
+    const password = String(formData.get('password') || '');
+    const confirmPassword = String(formData.get('confirmPassword') || '');
+
+    if (!fullName) {
+      alert('Please enter your full name so we can personalize your account.');
+      return;
+    }
+
+    if (!email) {
+      alert('Please enter your email address to create your account.');
+      return;
+    }
+
+    if (!password || password.length < 6) {
+      alert('Please choose a password with at least 6 characters.');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      alert('Password confirmation does not match. Please re-enter it.');
+      return;
+    }
+
+    if (isSupabaseBrowserConfigured()) {
+      const supabase = getSupabaseBrowserClient();
+      if (!supabase) {
+        alert('Sign-up service is unavailable right now. Please refresh and try again.');
+        return;
+      }
+
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+          },
+        },
+      });
+
+      if (error) {
+        alert(error.message || 'Unable to create your account right now.');
+        return;
+      }
+
+      persistSupabaseSession(data.session ?? null);
+    } else if (import.meta.env.DEV && email) {
+      // Keep local development smooth even before Supabase keys are configured.
+      persistLocalDevAuthSession(email);
+    }
+
     // Persist a stable student identity so messaging/call routing can target this student id.
     const currentIdentity = loadStudentIdentity();
-    const fullName = String(formData.get('fullName') || '').trim();
-    const phone = String(formData.get('phone') || '').trim();
     saveStudentIdentity({
       id: currentIdentity.id,
       name: fullName || currentIdentity.name,
       phone: phone || currentIdentity.phone,
     });
+    window.localStorage.setItem('edamaa_student_display_name', fullName || currentIdentity.name);
     
     console.log('Student registration form submitted');
     
     // Send new students to the premium home, where they can open Student Dashboard from the header button.
-    alert('Registration successful! Redirecting to learning home...');
+    alert('Registration successful! Redirecting to your learning home...');
     navigate('/student-home');
   }
 

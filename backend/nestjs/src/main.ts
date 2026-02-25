@@ -9,6 +9,9 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import * as express from 'express';
 import { mountQueuesUI } from './monitor/queues.ui';
+import { loadBackendEnv } from './config/load-env';
+
+loadBackendEnv();
 
 function initSentry() {
   const dsn = process.env.SENTRY_DSN;

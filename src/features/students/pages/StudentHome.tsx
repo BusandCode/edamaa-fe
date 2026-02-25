@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  ArrowRightOnRectangleIcon,
   BuildingOffice2Icon,
   ChatBubbleLeftRightIcon,
   ClockIcon,
@@ -20,6 +21,7 @@ import StudentCommunicationPanel, {
   type CommunicationMode,
   type IncomingCallInvite,
 } from '../../../components/communication/StudentCommunicationPanel';
+import { signOutEverywhere } from '../../../utils/signOut';
 import { RECORDED_COURSES } from '../data/recordedCourses';
 import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
 
@@ -216,6 +218,7 @@ const StudentHome = () => {
   const [incomingCallInvite, setIncomingCallInvite] = useState<IncomingCallInvite | null>(null);
   const [missedCalls, setMissedCalls] = useState<MissedCallEntry[]>([]);
   const [communicationNotice, setCommunicationNotice] = useState('');
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const seenSignalIdsRef = useRef<Set<string>>(new Set());
   const seenCallIdsRef = useRef<Set<string>>(new Set());
   const incomingCallInviteRef = useRef<IncomingCallInvite | null>(null);
@@ -255,6 +258,20 @@ const StudentHome = () => {
   const onCoursesClick = () => navigate('/mycourses');
   const onAssignmentsClick = () => navigate('/assignments');
   const onPerformanceClick = () => navigate('/performance');
+  const handleSignOut = useCallback(async () => {
+    if (isSigningOut) {
+      return;
+    }
+
+    setIsSigningOut(true);
+    try {
+      await signOutEverywhere();
+      navigate('/signin', { replace: true });
+    } finally {
+      setIsSigningOut(false);
+    }
+  }, [isSigningOut, navigate]);
+
   const sendRealtimeSignal = useCallback(
     async (event: string, payload: Record<string, unknown>) => {
       try {
@@ -730,6 +747,17 @@ const StudentHome = () => {
                 title="My Profile"
               >
                 <UserCircleIcon className="h-5 w-5 text-gray-700" />
+              </button>
+              <button
+                onClick={handleSignOut}
+                disabled={isSigningOut}
+                className={`rounded-full border border-red-200 bg-red-50 p-2 transition-colors ${
+                  isSigningOut ? 'cursor-not-allowed opacity-60' : 'hover:bg-red-100'
+                }`}
+                aria-label="Sign out"
+                title={isSigningOut ? 'Signing out...' : 'Sign out'}
+              >
+                <ArrowRightOnRectangleIcon className="h-5 w-5 text-red-600" />
               </button>
             </div>
           </div>

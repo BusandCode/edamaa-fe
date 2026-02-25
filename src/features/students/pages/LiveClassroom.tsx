@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
+  ClockIcon,
   ArrowLeftIcon,
   BookmarkIcon,
   ChatBubbleLeftRightIcon,
@@ -24,6 +25,10 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { buildRtcConfiguration } from '../../../utils/rtc';
+import {
+  fetchTeachingSubscriptionState,
+  type TeachingActor,
+} from '../../subscriptions/utils/teachingSubscriptionApi';
 
 type ClassLevel = 'Beginner' | 'Intermediate' | 'Advanced';
 type RoomRole = 'teacher' | 'student';
@@ -163,6 +168,24 @@ type IncomingStageInvite = {
   sentAt: string;
 };
 
+type LiveTaskKind = 'classwork' | 'assignment';
+
+type LiveTaskPlan = {
+  id: string;
+  kind: LiveTaskKind;
+  title: string;
+  releaseAfterMinutes: number;
+  durationMinutes?: number;
+  content: string;
+  checklist: string[];
+};
+
+type LiveTaskRuntime = LiveTaskPlan & {
+  startAtMs: number;
+  endAtMs?: number;
+  remainingMs?: number;
+};
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '');
 
 const RTC_CONFIGURATION: RTCConfiguration = buildRtcConfiguration();
@@ -178,6 +201,7 @@ const AVATAR_GRADIENTS: Array<[string, string]> = [
 const GIFTING_STORAGE_KEY = 'edamaa_live_total_gifted_coins';
 const GIFT_PIN_STORAGE_KEY = 'edamaa_live_pinned_gifts';
 const GIFT_COIN_ICON_URL = '/gifts/coin.svg';
+const LIVE_CLASS_END_STORAGE_KEY = 'edamaa_live_class_last_ended_at';
 
 const COIN_PACKS: CoinPack[] = [
   { id: 'starter', label: 'Starter', coins: 120, bonusCoins: 0, priceLabel: '$1.99' },
@@ -234,6 +258,36 @@ const DEFAULT_CLASS: ClassDetails = {
   duration: '90 mins',
 };
 
+const LIVE_TASK_PLAN: LiveTaskPlan[] = [
+  {
+    id: 'live-classwork-checkpoint-1',
+    kind: 'classwork',
+    title: 'Live Classwork: Lesson Checkpoint',
+    releaseAfterMinutes: 8,
+    durationMinutes: 20,
+    content:
+      'Answer the checkpoint questions based on this lecture. Submit during class time to get your instant score.',
+    checklist: [
+      'Open classwork before timer ends.',
+      'Answer every question.',
+      'Submit once to see score immediately.',
+    ],
+  },
+  {
+    id: 'live-assignment-followup-1',
+    kind: 'assignment',
+    title: 'Post-Class Assignment: Key Lesson Reflection',
+    releaseAfterMinutes: 0,
+    content:
+      'Summarize what you learned in this class and submit practical examples that show your understanding.',
+    checklist: [
+      'Write a short structured reflection.',
+      'Include at least 2 key ideas from the lecture.',
+      'Upload your file or add a submission link.',
+    ],
+  },
+];
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const formatClockTime = (isoDate: string) =>
@@ -241,6 +295,17 @@ const formatClockTime = (isoDate: string) =>
     hour: '2-digit',
     minute: '2-digit',
   });
+
+const formatCountdown = (remainingMs: number) => {
+  if (remainingMs <= 0) {
+    return '00:00';
+  }
+
+  const totalSeconds = Math.floor(remainingMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+};
 
 const buildFallbackAvatar = (fullName: string) => {
   const name = fullName.trim() || 'Student';
@@ -319,6 +384,7 @@ const LiveClassroom = () => {
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const roomRole: RoomRole = searchParams.get('role') === 'teacher' ? 'teacher' : 'student';
   const isTeacher = roomRole === 'teacher';
+  const teacherActor: TeachingActor = searchParams.get('actor') === 'school' ? 'school' : 'tutor';
 
   const liveClass = useMemo(() => normalizeClass(classFromState, classId), [classFromState, classId]);
   const teacherId = useMemo(() => `teacher-${liveClass.id}`, [liveClass.id]);
@@ -340,6 +406,8 @@ const LiveClassroom = () => {
   const knownPeerClientsRef = useRef<Map<string, { participantId: string; role: RoomRole }>>(new Map());
   const giftComboTimerRef = useRef<number | null>(null);
   const pendingGiftComboRef = useRef<{ giftId: string; recipientId: string; quantity: number } | null>(null);
+  const sessionStartMsRef = useRef<number>(Date.now());
+  const announcedClassworkIdsRef = useRef<Set<string>>(new Set());
   const latestPresenceRef = useRef({
     participant: null as Participant | null,
     role: roomRole as RoomRole,
@@ -423,6 +491,17 @@ const LiveClassroom = () => {
   const [likesCount, setLikesCount] = useState(0);
   const [streamStatus, setStreamStatus] = useState<'connecting' | 'live' | 'ended'>('connecting');
   const [notice, setNotice] = useState('Connecting to live classroom...');
+  const [isTeacherSubscriptionChecking, setIsTeacherSubscriptionChecking] = useState(isTeacher);
+  const [isTeacherSubscriptionLocked, setIsTeacherSubscriptionLocked] = useState(false);
+  const [teacherSubscriptionLockReason, setTeacherSubscriptionLockReason] = useState('');
+  const [liveNowMs, setLiveNowMs] = useState(() => Date.now());
+  const [classEndedAtIso, setClassEndedAtIso] = useState<string | null>(() => {
+    if (typeof window === 'undefined') {
+      return null;
+    }
+    return window.localStorage.getItem(LIVE_CLASS_END_STORAGE_KEY);
+  });
+  const [activeClassworkPromptId, setActiveClassworkPromptId] = useState<string | null>(null);
 
   const [chatInput, setChatInput] = useState('');
   const [chatReplyTarget, setChatReplyTarget] = useState<{
@@ -595,6 +674,61 @@ const LiveClassroom = () => {
       .sort((left, right) => right.total - left.total)
       .slice(0, 4);
   }, [giftFeed]);
+
+  const liveClassworkTasks = useMemo<LiveTaskRuntime[]>(() => {
+    const sessionStartMs = sessionStartMsRef.current;
+
+    return LIVE_TASK_PLAN.filter((task) => task.kind === 'classwork').map((task) => {
+      const startAtMs = sessionStartMs + task.releaseAfterMinutes * 60_000;
+      const endAtMs = startAtMs + (task.durationMinutes || 0) * 60_000;
+      return {
+        ...task,
+        startAtMs,
+        endAtMs,
+        remainingMs: endAtMs - liveNowMs,
+      };
+    });
+  }, [liveNowMs]);
+
+  const activeLiveClasswork = useMemo(() => {
+    if (streamStatus === 'ended') {
+      return null;
+    }
+
+    return (
+      liveClassworkTasks.find(
+        (task) => task.remainingMs !== undefined && liveNowMs >= task.startAtMs && task.remainingMs > 0
+      ) || null
+    );
+  }, [liveClassworkTasks, liveNowMs, streamStatus]);
+
+  const nextLiveClasswork = useMemo(() => {
+    if (streamStatus === 'ended') {
+      return null;
+    }
+
+    return (
+      liveClassworkTasks
+        .filter((task) => liveNowMs < task.startAtMs)
+        .sort((left, right) => left.startAtMs - right.startAtMs)[0] || null
+    );
+  }, [liveClassworkTasks, liveNowMs, streamStatus]);
+
+  const postClassAssignments = useMemo(
+    () => LIVE_TASK_PLAN.filter((task) => task.kind === 'assignment'),
+    []
+  );
+  const shouldShowPostClassAssignmentContent = streamStatus === 'ended' || !!classEndedAtIso;
+
+  const markClassEnded = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const endedAtIso = new Date().toISOString();
+    window.localStorage.setItem(LIVE_CLASS_END_STORAGE_KEY, endedAtIso);
+    setClassEndedAtIso(endedAtIso);
+  }, []);
 
   const rememberEventId = useCallback((eventId: string) => {
     if (!eventId) {
@@ -932,6 +1066,56 @@ const LiveClassroom = () => {
   );
 
   useEffect(() => {
+    if (!isTeacher) {
+      setIsTeacherSubscriptionChecking(false);
+      setIsTeacherSubscriptionLocked(false);
+      setTeacherSubscriptionLockReason('');
+      return;
+    }
+
+    let mounted = true;
+    const checkTeachingSubscription = async () => {
+      setIsTeacherSubscriptionChecking(true);
+      try {
+        const status = await fetchTeachingSubscriptionState(teacherActor);
+        if (!mounted) {
+          return;
+        }
+
+        if (status.isActive) {
+          setIsTeacherSubscriptionLocked(false);
+          setTeacherSubscriptionLockReason('');
+        } else {
+          setIsTeacherSubscriptionLocked(true);
+          setTeacherSubscriptionLockReason(
+            'Your teaching subscription is inactive. Activate Edamaa Pro to host live classes.'
+          );
+        }
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Sign in with your authenticated account to host live classes.';
+        setIsTeacherSubscriptionLocked(true);
+        setTeacherSubscriptionLockReason(message);
+      } finally {
+        if (mounted) {
+          setIsTeacherSubscriptionChecking(false);
+        }
+      }
+    };
+
+    void checkTeachingSubscription();
+    return () => {
+      mounted = false;
+    };
+  }, [isTeacher, teacherActor]);
+
+  useEffect(() => {
     if (stageRemoteVideoRef.current) {
       stageRemoteVideoRef.current.srcObject = remoteTeacherStream;
       if (remoteTeacherStream) {
@@ -979,6 +1163,43 @@ const LiveClassroom = () => {
     const timer = window.setTimeout(() => setNotice(''), 3200);
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setLiveNowMs(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === LIVE_CLASS_END_STORAGE_KEY) {
+        setClassEndedAtIso(event.newValue);
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
+  useEffect(() => {
+    if (!activeLiveClasswork || isTeacher) {
+      return;
+    }
+
+    if (announcedClassworkIdsRef.current.has(activeLiveClasswork.id)) {
+      return;
+    }
+
+    announcedClassworkIdsRef.current.add(activeLiveClasswork.id);
+    setActiveClassworkPromptId(activeLiveClasswork.id);
+    setNotice(`${activeLiveClasswork.title} is now open.`);
+  }, [activeLiveClasswork, isTeacher]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1353,6 +1574,7 @@ const LiveClassroom = () => {
           setStreamStatus('ended');
           setRemoteTeacherStream(null);
           closeAllPeerConnections();
+          markClassEnded();
           setNotice('Tutor ended the live stream.');
         }
 
@@ -1643,6 +1865,7 @@ const LiveClassroom = () => {
     isTeacher,
     liveClass.instructor,
     liveClass.name,
+    markClassEnded,
     onStageParticipantIds,
     publishSignal,
     rememberEventId,
@@ -2189,22 +2412,27 @@ const LiveClassroom = () => {
     setStreamStatus('ended');
     stopLocalStream();
     closeAllPeerConnections();
-    navigate(isTeacher ? '/tutor-dashboard' : '/join-class');
+    navigate(isTeacher ? (teacherActor === 'school' ? '/school-dashboard' : '/tutor-dashboard') : '/join-class');
   };
 
   const handleClassroomExit = () => {
     // Keep one exit flow, but present host/student intent clearly in the UI.
     if (isTeacher) {
+      // Persist class-end timestamp so post-class assignments can auto-release on the assignments page.
+      markClassEnded();
       setNotice('Ending class for all participants...');
     }
     leaveClassroom();
   };
 
   const exitButtonLabel = isTeacher ? 'End Class' : 'Leave Class';
+  const teacherExitRoute = teacherActor === 'school' ? '/school-dashboard' : '/tutor-dashboard';
 
   const teacher = participants.find((participant) => participant.id === teacherId) || teacherPlaceholder;
   const shouldShowTeacherLocalVideo = isTeacher && cameraOn && !!localStreamRef.current;
   const shouldShowTeacherRemoteVideo = !isTeacher && !!remoteTeacherStream;
+  const promptedLiveClasswork =
+    activeLiveClasswork && activeClassworkPromptId === activeLiveClasswork.id ? activeLiveClasswork : null;
 
   return (
     <div className="min-h-screen bg-linear-to-br from-[#080812] via-[#0f1024] to-[#15173a] text-white">
@@ -2212,7 +2440,7 @@ const LiveClassroom = () => {
         <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between px-3 py-3 sm:px-6">
           <div className="flex items-center gap-3 min-w-0">
             <button
-              onClick={() => navigate(isTeacher ? '/tutor-dashboard' : '/join-class')}
+              onClick={() => navigate(isTeacher ? teacherExitRoute : '/join-class')}
               className="inline-flex items-center justify-center rounded-full border border-white/20 bg-white/5 p-2 hover:bg-white/10 transition-colors"
               aria-label="Back to class list"
               title="Back"
@@ -2241,6 +2469,42 @@ const LiveClassroom = () => {
           </div>
         </div>
       </header>
+
+      {isTeacher && isTeacherSubscriptionChecking && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-4">
+          <div className="w-full max-w-md rounded-2xl border border-white/20 bg-[#121436] p-5 text-center">
+            <p className="text-sm font-semibold text-white">Checking your teaching subscription...</p>
+            <p className="mt-1 text-xs text-white/70">
+              Please wait while Edamaa validates your live-class access.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {isTeacher && !isTeacherSubscriptionChecking && isTeacherSubscriptionLocked && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 px-4">
+          <div className="w-full max-w-lg rounded-2xl border border-white/20 bg-[#121436] p-5">
+            <h2 className="text-lg font-bold text-white">Live Class Access Locked</h2>
+            <p className="mt-2 text-sm text-white/80">
+              {teacherSubscriptionLockReason || 'Activate Edamaa Pro to host live classes.'}
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => navigate(`/subscription?actor=${teacherActor}`)}
+                className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2c0691]"
+              >
+                Open Subscription
+              </button>
+              <button
+                onClick={() => navigate(teacherExitRoute)}
+                className="rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-xs font-semibold text-white hover:bg-white/10"
+              >
+                Back to Dashboard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {giftNotifications.length > 0 && (
         <div className="pointer-events-none fixed right-3 top-20 z-50 w-[min(90vw,360px)] space-y-2">
@@ -2300,8 +2564,8 @@ const LiveClassroom = () => {
         </div>
       )}
 
-      <main className="mx-auto grid w-full max-w-[1400px] gap-4 px-3 py-4 pb-24 sm:px-6 xl:grid-cols-[1fr_360px]">
-        <section className="space-y-4">
+      <main className="mx-auto grid w-full max-w-[1400px] gap-5 px-3 py-5 pb-24 sm:px-6 xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
+        <section className="space-y-5">
           <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#0a0b1f] shadow-2xl shadow-[#090b2f]/40">
             <div className="relative aspect-video overflow-hidden bg-linear-to-br from-[#26155f] via-[#191c4b] to-[#1a2a61]">
               <div className="absolute -left-14 -top-16 h-48 w-48 rounded-full bg-[#F68C29]/20 blur-3xl"></div>
@@ -2480,6 +2744,29 @@ const LiveClassroom = () => {
                 Learner mode: stream controls are managed by the tutor. Use Raise Hand to request interaction.
               </div>
             )}
+
+            {/* Session snapshot keeps the key classroom metrics visible without opening side panels. */}
+            <div className="grid grid-cols-2 gap-2 border-t border-white/10 bg-white/[0.03] p-3 sm:grid-cols-4">
+              <article className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-white/55">Audience</p>
+                <p className="mt-1 text-sm font-semibold text-white">{viewerCount}</p>
+              </article>
+              <article className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-white/55">On Stage</p>
+                <p className="mt-1 text-sm font-semibold text-white">{onStageParticipants.length}</p>
+              </article>
+              <article className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-white/55">Reactions</p>
+                <p className="mt-1 text-sm font-semibold text-white">{likesCount.toLocaleString()} likes</p>
+              </article>
+              <article className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-white/55">Wallet</p>
+                <p className="mt-1 inline-flex items-center gap-1 text-sm font-semibold text-white">
+                  <img src={GIFT_COIN_ICON_URL} alt="Coin" className="h-3.5 w-3.5" />
+                  {coinBalance.toLocaleString()}
+                </p>
+              </article>
+            </div>
           </div>
 
           {mediaError && (
@@ -2494,7 +2781,87 @@ const LiveClassroom = () => {
             </div>
           )}
 
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 sm:p-4">
+          {!isTeacher && activeLiveClasswork && (
+            <div className="rounded-2xl border border-cyan-300/35 bg-cyan-500/10 p-3 sm:p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold text-cyan-100 sm:text-base">{activeLiveClasswork.title}</h2>
+                <span className="inline-flex items-center gap-1 rounded-full border border-cyan-300/40 bg-cyan-400/20 px-2.5 py-1 text-[11px] font-semibold text-cyan-100">
+                  <ClockIcon className="h-3.5 w-3.5" />
+                  {formatCountdown(activeLiveClasswork.remainingMs || 0)} left
+                </span>
+              </div>
+              <p className="mt-2 text-xs leading-relaxed text-cyan-50/95 sm:text-sm">{activeLiveClasswork.content}</p>
+              <ul className="mt-2 space-y-1 text-[11px] text-cyan-100/90 sm:text-xs">
+                {activeLiveClasswork.checklist.map((item) => (
+                  <li key={`${activeLiveClasswork.id}-${item}`} className="flex items-start gap-2">
+                    <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-cyan-200"></span>
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => navigate('/assignments')}
+                  className="inline-flex items-center gap-2 rounded-lg bg-cyan-400/20 px-3 py-1.5 text-xs font-semibold text-cyan-50 transition-colors hover:bg-cyan-400/30"
+                >
+                  Open Classwork
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!isTeacher && !activeLiveClasswork && nextLiveClasswork && streamStatus !== 'ended' && (
+            <div className="rounded-xl border border-white/15 bg-white/[0.04] px-3 py-2 text-xs text-white/80">
+              Next classwork starts in{' '}
+              <span className="font-semibold text-cyan-100">
+                {formatCountdown(nextLiveClasswork.startAtMs - liveNowMs)}
+              </span>
+              . Stay in class to complete it live.
+            </div>
+          )}
+
+          {shouldShowPostClassAssignmentContent && postClassAssignments.length > 0 && (
+            <div className="rounded-2xl border border-emerald-300/30 bg-emerald-500/10 p-3 sm:p-4">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h2 className="text-sm font-semibold text-emerald-100 sm:text-base">Post-Class Assignments</h2>
+                <span className="rounded-full border border-emerald-300/35 bg-emerald-300/20 px-2.5 py-1 text-[11px] font-semibold text-emerald-100">
+                  Now available
+                </span>
+              </div>
+              <div className="space-y-3">
+                {postClassAssignments.map((assignment) => (
+                  <article
+                    key={assignment.id}
+                    className="rounded-xl border border-emerald-200/30 bg-black/20 p-3 text-xs text-emerald-50/95 sm:text-sm"
+                  >
+                    <h3 className="text-sm font-semibold text-emerald-100">{assignment.title}</h3>
+                    <p className="mt-1 leading-relaxed">{assignment.content}</p>
+                    <ul className="mt-2 space-y-1 text-[11px] text-emerald-100/90 sm:text-xs">
+                      {assignment.checklist.map((item) => (
+                        <li key={`${assignment.id}-${item}`} className="flex items-start gap-2">
+                          <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-200"></span>
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </article>
+                ))}
+              </div>
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => navigate('/assignments')}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-400/20 px-3 py-1.5 text-xs font-semibold text-emerald-50 transition-colors hover:bg-emerald-400/30"
+                >
+                  Open Assignments
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 sm:p-4">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold sm:text-base">Participants ({activeParticipants.length})</h2>
               <span className="text-[11px] text-white/65">Zoom-style classroom grid</span>
@@ -2554,9 +2921,9 @@ const LiveClassroom = () => {
                 </article>
               ))}
             </div>
-          </div>
+            </div>
 
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 sm:p-4">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 sm:p-4">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold sm:text-base">Live Stage</h2>
               <span className="text-[11px] text-white/65">{onStageParticipants.length} on stage</span>
@@ -2684,10 +3051,18 @@ const LiveClassroom = () => {
                 )}
               </div>
             )}
+            </div>
           </div>
         </section>
 
-        <aside className="space-y-4">
+        <aside className="space-y-4 xl:sticky xl:top-20 xl:max-h-[calc(100vh-6rem)] xl:overflow-y-auto xl:pr-1">
+          <div className="rounded-2xl border border-white/10 bg-linear-to-r from-[#0f122a] via-[#161b37] to-[#1d1733] px-3 py-2.5">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-white/55">Engagement Hub</p>
+            <p className="mt-1 text-xs text-white/80">
+              Manage chat, gifting, and room interactions from this panel.
+            </p>
+          </div>
+
           <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.05]">
             <div className="border-b border-white/10 bg-linear-to-r from-[#111429] via-[#1a1f3d] to-[#221735] p-3">
               <div className="flex items-start justify-between gap-3">
@@ -2937,7 +3312,7 @@ const LiveClassroom = () => {
               <span className="text-[11px] text-white/65">{chatMessages.length} msgs</span>
             </div>
 
-            <div ref={chatBodyRef} className="h-64 overflow-y-auto rounded-xl border border-white/10 bg-black/25 p-3">
+            <div ref={chatBodyRef} className="h-72 overflow-y-auto rounded-xl border border-white/10 bg-black/25 p-3">
               {chatMessages.length === 0 ? (
                 <p className="text-xs text-white/60">No messages yet.</p>
               ) : (
@@ -3074,6 +3449,46 @@ const LiveClassroom = () => {
           </div>
         </aside>
       </main>
+
+      {promptedLiveClasswork && !isTeacher && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 px-4">
+          <div className="w-[min(94vw,460px)] rounded-2xl border border-white/20 bg-[#101231] p-4 shadow-2xl">
+            <h3 className="text-base font-semibold text-white">{promptedLiveClasswork.title}</h3>
+            <p className="mt-2 text-sm text-white/80">{promptedLiveClasswork.content}</p>
+            <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-cyan-400/20 px-2.5 py-1 text-[11px] font-semibold text-cyan-100">
+              <ClockIcon className="h-3.5 w-3.5" />
+              {formatCountdown(promptedLiveClasswork.remainingMs || 0)} left
+            </p>
+            <ul className="mt-3 space-y-1.5 text-[11px] text-white/75">
+              {promptedLiveClasswork.checklist.map((item) => (
+                <li key={`${promptedLiveClasswork.id}-${item}`} className="flex items-start gap-2">
+                  <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-cyan-200"></span>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveClassworkPromptId(null)}
+                className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white/85 hover:bg-white/20"
+              >
+                Later
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveClassworkPromptId(null);
+                  navigate('/assignments');
+                }}
+                className="rounded-lg bg-linear-to-r from-[#3D08BA] to-cyan-500 px-3 py-2 text-sm font-semibold text-white hover:opacity-95"
+              >
+                Open Classwork
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {incomingStageInvite && !isTeacher && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 px-4">

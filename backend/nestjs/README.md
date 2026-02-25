@@ -30,7 +30,15 @@ SUPABASE_SERVICE_ROLE_KEY=...
 REDIS_URL=redis://localhost:6379
 DJANGO_INTERNAL_API_URL=http://localhost:8000/admin-api
 INTERNAL_API_TOKEN=<same token configured in Django>
+STRIPE_API_KEY=sk_...
+STRIPE_PUBLISHABLE_KEY=pk_...
+STRIPE_TUTOR_SUBSCRIPTION_PRICE_ID=price_...
+STRIPE_SCHOOL_SUBSCRIPTION_PRICE_ID=price_...
 ```
+
+Note:
+- `src/main.ts` and `src/worker/worker.ts` now auto-load `backend/nestjs/.env` at startup.
+- You no longer need to manually run `source .env` before `npm run start` or `npm run worker`.
 
 Optional local smoke flags (use only when infra is intentionally unavailable):
 
@@ -75,6 +83,17 @@ Realtime endpoints:
 - `POST /realtime/signal`
 - `GET /realtime/stream?channel=signal:student-communication`
 - `GET /realtime/call-events` (filters: `channel`, `event`, `studentId`, repeated `reason`, `limit`)
+
+Subscription endpoints (requires `Authorization: Bearer <supabase_access_token>`):
+
+- `GET /subscriptions/me/status?actor=tutor|school`
+- `POST /subscriptions/me/checkout`
+- `POST /subscriptions/me/sync`
+
+Student analytics endpoint:
+
+- `GET /student-analytics/me/performance` (requires `Authorization: Bearer <supabase_access_token>`)
+- `GET /student-analytics/performance` (internal service route; requires `X-Internal-Token`)
 
 Internal Django admin bridge (`X-Internal-Token` required):
 

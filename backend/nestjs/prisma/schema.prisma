@@ -32,6 +32,13 @@ model User {
 
   // Relation to Enrollment model.
   enrollments Enrollment[]
+
+  // Payment domain relations.
+  paymentMethods      PaymentMethod[]
+  paymentTransactions PaymentTransaction[]
+
+  // Teaching subscription relation (tutor/school monetization).
+  teachingSubscriptions TeachingSubscription[]
 }
 
 model School {
@@ -55,6 +62,107 @@ model Enrollment {
   course   Course @relation(fields: [courseId], references: [id])
   courseId Int
   role     String @default("student")
+}
+
+enum PaymentMethodType {
+  CARD
+  BANK
+}
+
+enum PaymentStatus {
+  PAID
+  PENDING
+  OVERDUE
+  UPCOMING
+}
+
+enum PaymentCategory {
+  TUITION
+  ACCOMMODATION
+  FEES
+  MATERIALS
+}
+
+enum PaymentProvider {
+  LOCAL
+  STRIPE
+}
+
+enum SubscriptionRole {
+  TUTOR
+  SCHOOL
+}
+
+enum SubscriptionStatus {
+  INACTIVE
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+}
+
+model PaymentMethod {
+  id                Int               @id @default(autoincrement())
+  publicId          String            @unique
+  user              User              @relation(fields: [userId], references: [id])
+  userId            Int
+  type              PaymentMethodType
+  label             String
+  last4             String
+  isDefault         Boolean           @default(false)
+  provider          PaymentProvider   @default(LOCAL)
+  providerReference String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([userId, isDefault])
+}
+
+model PaymentTransaction {
+  id                Int             @id @default(autoincrement())
+  publicId          String          @unique
+  user              User            @relation(fields: [userId], references: [id])
+  userId            Int
+  description       String
+  amountMinor       Int
+  currency          String          @default("NGN")
+  status            PaymentStatus   @default(PENDING)
+  category          PaymentCategory
+  dueAt             DateTime?
+  paidAt            DateTime?
+  receiptRef        String?
+  provider          PaymentProvider @default(LOCAL)
+  providerReference String?
+  metadata          Json?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([userId, status, createdAt])
+  @@index([userId, dueAt])
+}
+
+model TeachingSubscription {
+  id                 Int                @id @default(autoincrement())
+  publicId           String             @unique
+  user               User               @relation(fields: [userId], references: [id])
+  userId             Int
+  role               SubscriptionRole
+  status             SubscriptionStatus @default(INACTIVE)
+  planCode           String             @default("edamaa-pro-monthly")
+  priceId            String?
+  stripeCustomerId   String?
+  stripeSubscriptionId String?
+  checkoutSessionId  String?
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  verified3dAt       DateTime?
+  metadata           Json?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@unique([userId, role])
+  @@index([status, currentPeriodEnd])
+  @@index([stripeSubscriptionId])
 }
 
 // Webhook events persisted for audit and safe retry processing. Store provider

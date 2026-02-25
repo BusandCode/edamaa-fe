@@ -13,6 +13,9 @@ import { AuthModule } from './auth/auth.module';
 import { SupabaseModule } from './supabase/supabase.module';
 import { InternalAdminModule } from './internal-admin/internal-admin.module';
 import { LearningProgressModule } from './learning-progress/learning-progress.module';
+import { StudentAnalyticsModule } from './student-analytics/student-analytics.module';
+import { PaymentsModule } from './payments/payments.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 
 @Module({
   // Feature modules are registered here so Nest can compose the app.
@@ -24,6 +27,9 @@ import { LearningProgressModule } from './learning-progress/learning-progress.mo
     SupabaseModule,
     InternalAdminModule,
     LearningProgressModule,
+    StudentAnalyticsModule,
+    PaymentsModule,
+    SubscriptionsModule,
   ],
   controllers: [],
   providers: [PrismaService],
