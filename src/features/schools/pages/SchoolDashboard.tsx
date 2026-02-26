@@ -184,6 +184,10 @@ const SchoolDashboard = () => {
     setGateNotice('WAEC premium module is enabled for your school account.');
   };
 
+  const handleResourceUploadClick = () => {
+    navigate('/resources?actor=school&mode=upload');
+  };
+
   return (
     <div className='min-h-screen bg-gray-50 pb-20'>
       {/* Header */}
@@ -259,24 +263,40 @@ const SchoolDashboard = () => {
                 <p className='text-xs text-emerald-700 font-semibold'>
                   Edamaa Pro active: live teaching and unlimited offline classes are enabled.
                 </p>
-                <button
-                  onClick={() => navigate('/edamaa3d-verified?actor=school')}
-                  className='rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100'
-                >
-                  View Edamaa3D Verify
-                </button>
+                <div className='flex flex-wrap items-center gap-2'>
+                  <button
+                    onClick={handleResourceUploadClick}
+                    className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
+                  >
+                    Upload Resources
+                  </button>
+                  <button
+                    onClick={() => navigate('/edamaa3d-verified?actor=school')}
+                    className='rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100'
+                  >
+                    View Edamaa3D Verify
+                  </button>
+                </div>
               </>
             ) : (
               <>
                 <p className='text-xs text-[#3D08BA] font-semibold'>
                   Free mode active: live classes are locked until subscription is active.
                 </p>
-                <button
-                  onClick={() => navigate('/subscription?actor=school')}
-                  className='rounded-lg bg-[#3D08BA] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#2c0691]'
-                >
-                  Upgrade School Plan
-                </button>
+                <div className='flex flex-wrap items-center gap-2'>
+                  <button
+                    onClick={handleResourceUploadClick}
+                    className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
+                  >
+                    Upload Resources
+                  </button>
+                  <button
+                    onClick={() => navigate('/subscription?actor=school')}
+                    className='rounded-lg bg-[#3D08BA] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#2c0691]'
+                  >
+                    Upgrade School Plan
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -298,6 +318,7 @@ const SchoolDashboard = () => {
             <QuickActionButton icon={FaChartLine} label="Revenue" onClick={() => setGateNotice('Revenue dashboard is available in the finance module.')} />
             <QuickActionButton icon={FaCalendarAlt} label="Schedule" onClick={handleScheduleClick} />
             <QuickActionButton icon={FaVideo} label="Live Classes" badge="8" onClick={handleLiveClassesClick} />
+            <QuickActionButton icon={FaFileAlt} label="Upload Resources" onClick={handleResourceUploadClick} />
           </div>
         </div>
 

@@ -195,6 +195,10 @@ const TutorDashboard = () => {
     navigate(`/live-class/${liveClassId}?role=teacher`, { state: { classItem: classState } });
   };
 
+  const handleResourceUploadClick = () => {
+    navigate('/resources?actor=tutor&mode=upload');
+  };
+
   const handleLogout = async () => {
     await signOutEverywhere();
     navigate('/signin', { replace: true });
@@ -411,12 +415,20 @@ const TutorDashboard = () => {
                     : ''}
                 </p>
               </div>
-              <button
-                onClick={() => navigate('/edamaa3d-verified?actor=tutor')}
-                className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-              >
-                View Edamaa3D Verify
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleResourceUploadClick}
+                  className="rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10"
+                >
+                  Upload Resources
+                </button>
+                <button
+                  onClick={() => navigate('/edamaa3d-verified?actor=tutor')}
+                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                >
+                  View Edamaa3D Verify
+                </button>
+              </div>
             </div>
           ) : (
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -427,12 +439,20 @@ const TutorDashboard = () => {
                   class.
                 </p>
               </div>
-              <button
-                onClick={() => navigate('/subscription?actor=tutor')}
-                className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2c0691]"
-              >
-                Upgrade to Edamaa Pro
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleResourceUploadClick}
+                  className="rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10"
+                >
+                  Upload Resources
+                </button>
+                <button
+                  onClick={() => navigate('/subscription?actor=tutor')}
+                  className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2c0691]"
+                >
+                  Upgrade to Edamaa Pro
+                </button>
+              </div>
             </div>
           )}
         </div>

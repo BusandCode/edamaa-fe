@@ -303,8 +303,7 @@ export class PaymentsService {
     const publishableKey = this.resolveStripePublishableKey();
     const email = this.requireEmail(authUser);
     const displayName = this.normalizeDisplayName(authUser.name, email);
-    const user = await this.resolveOrCreateUser(email, displayName);
-    await this.ensureSeedDataForUser(user.id);
+    const userIdForMetadata = await this.resolveUserIdForStripeMetadata(email, displayName);
 
     const customerId = await this.resolveOrCreateStripeCustomer({
       stripe,
@@ -317,7 +316,7 @@ export class PaymentsService {
       payment_method_types: ['card'],
       usage: 'off_session',
       metadata: {
-        userId: String(user.id),
+        userId: String(userIdForMetadata),
         userEmail: email,
         preferredLabel: String(input.label || '').trim(),
         preferredDefault: input.isDefault ? '1' : '0',
@@ -344,7 +343,7 @@ export class PaymentsService {
     methods: PaymentMethodItem[];
     dataQuality: {
       degraded: boolean;
-      source: 'prisma';
+      source: 'prisma' | 'memory';
     };
   }> {
     const stripe = this.requireStripeClient();
@@ -356,8 +355,15 @@ export class PaymentsService {
       throw new BadRequestException('Setup intent id is required');
     }
 
-    const user = await this.resolveOrCreateUser(email, displayName);
-    await this.ensureSeedDataForUser(user.id);
+    let userId: number | null = null;
+    try {
+      const user = await this.resolveOrCreateUser(email, displayName);
+      await this.ensureSeedDataForUser(user.id);
+      userId = user.id;
+    } catch (error) {
+      // Keep card setup available in local/dev even without a database.
+      this.logger.warn(`Falling back to memory card save (${(error as Error).message})`);
+    }
 
     const setupIntent = await stripe.setupIntents.retrieve(setupIntentId, {
       expand: ['payment_method'],
@@ -369,7 +375,7 @@ export class PaymentsService {
 
     const metadataUserId = String(setupIntent.metadata?.userId || '').trim();
     const metadataEmail = this.normalizeEmail(String(setupIntent.metadata?.userEmail || ''));
-    const isOwnerByUserId = metadataUserId && metadataUserId === String(user.id);
+    const isOwnerByUserId = userId ? metadataUserId === String(userId) : false;
     const isOwnerByEmail = metadataEmail && metadataEmail === email;
     if (!isOwnerByUserId && !isOwnerByEmail) {
       throw new UnauthorizedException('This card setup does not belong to the authenticated user.');
@@ -386,19 +392,40 @@ export class PaymentsService {
     const defaultLabel = /card$/i.test(titleBrand) ? titleBrand : `${titleBrand} card`;
     const label = String(input.label || '').trim() || defaultLabel;
 
-    const created = await this.addOrUpdateStripeMethodInPrisma({
-      userId: user.id,
+    if (userId) {
+      try {
+        const created = await this.addOrUpdateStripeMethodInPrisma({
+          userId,
+          label,
+          last4: cardDetails.last4,
+          providerReference: paymentMethod.id,
+          isDefault: Boolean(input.isDefault),
+        });
+
+        return {
+          ...created,
+          dataQuality: {
+            degraded: false,
+            source: 'prisma',
+          },
+        };
+      } catch (error) {
+        this.logger.warn(`Falling back to memory card save (${(error as Error).message})`);
+      }
+    }
+
+    const created = this.addMethodInMemory(email, {
+      type: 'card',
       label,
       last4: cardDetails.last4,
-      providerReference: paymentMethod.id,
       isDefault: Boolean(input.isDefault),
     });
 
     return {
       ...created,
       dataQuality: {
-        degraded: false,
-        source: 'prisma',
+        degraded: true,
+        source: 'memory',
       },
     };
   }
@@ -1026,6 +1053,17 @@ export class PaymentsService {
     });
   }
 
+  private async resolveUserIdForStripeMetadata(email: string, displayName: string) {
+    try {
+      const user = await this.resolveOrCreateUser(email, displayName);
+      await this.ensureSeedDataForUser(user.id);
+      return user.id;
+    } catch (error) {
+      this.logger.warn(`Falling back to local runtime user for Stripe metadata (${(error as Error).message})`);
+      return this.createLocalRuntimeUserId(email);
+    }
+  }
+
   private mapMethodFromPrisma(method: {
     publicId: string;
     type: PaymentMethodType;
@@ -1215,6 +1253,18 @@ export class PaymentsService {
 
   private normalizeEmail(value: string) {
     return String(value || '').trim().toLowerCase();
+  }
+
+  private createLocalRuntimeUserId(email: string) {
+    const normalized = this.normalizeEmail(email);
+    let hash = 0;
+    for (let i = 0; i < normalized.length; i += 1) {
+      hash = (hash << 5) - hash + normalized.charCodeAt(i);
+      hash |= 0;
+    }
+
+    const fallback = Math.abs(hash);
+    return fallback > 0 ? fallback : 1;
   }
 
   private createSeedPublicId(prefix: 'M' | 'P', userId: number, sequence: number) {

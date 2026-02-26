@@ -27,7 +27,10 @@ import type {
   StripeElementsOptions,
 } from '@stripe/stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
-import { loadPersistedSupabaseAccessToken } from '../../../utils/authSession';
+import {
+  loadPersistedLocalDevAuthSession,
+  loadPersistedSupabaseAccessToken,
+} from '../../../utils/authSession';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -151,7 +154,31 @@ const buildDefaultCardLabel = (brand: CardBrand) => {
   return `${labelBase} card`;
 };
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '');
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
+
+const isLocalhostHost = (host: string) => host === '127.0.0.1' || host === 'localhost';
+
+const resolveApiBaseCandidates = () => {
+  const candidates = new Set<string>();
+  // Always try the Vite proxy route first for the most stable local-dev path.
+  candidates.add('/api');
+
+  if (API_BASE_URL && API_BASE_URL !== '/api') {
+    candidates.add(API_BASE_URL);
+  }
+
+  if (typeof window !== 'undefined') {
+    const host = (window.location.hostname || '').trim();
+    if (isLocalhostHost(host)) {
+      candidates.add(`http://${host}:3001`);
+    }
+  }
+
+  candidates.add('http://127.0.0.1:3001');
+  candidates.add('http://localhost:3001');
+
+  return Array.from(candidates).map((base) => base.replace(/\/+$/, ''));
+};
 
 const FALLBACK_PAYMENTS: Payment[] = [
   {
@@ -421,6 +448,9 @@ const Payments = () => {
   const [stripeClientSecret, setStripeClientSecret] = useState('');
   const [stripePublishableKey, setStripePublishableKey] = useState('');
   const [isPreparingStripeForm, setIsPreparingStripeForm] = useState(false);
+  const [isPaymentMethodModalOpen, setIsPaymentMethodModalOpen] = useState(false);
+  const [activePaymentId, setActivePaymentId] = useState<string | null>(null);
+  const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState('');
 
   const stripePromise = useMemo(() => {
     if (!stripePublishableKey) {
@@ -447,29 +477,72 @@ const Payments = () => {
 
   const requestWithAuth = async (endpoint: string, init?: RequestInit) => {
     const token = loadPersistedSupabaseAccessToken();
-    if (!token) {
-      throw new Error('Sign in with your authenticated account to use live payment actions.');
+    const localDevSession = loadPersistedLocalDevAuthSession();
+
+    if (!token && !localDevSession?.email) {
+      throw new Error('Sign in with your account to use live payment actions.');
     }
 
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(init?.headers || {}),
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    const bases = resolveApiBaseCandidates();
+    let networkError: Error | null = null;
+    const shouldTryNextBase = (response: Response, base: string) => {
+      // If proxy route is missing or upstream is down, move to the next base.
+      if ([502, 503, 504].includes(response.status)) {
+        return true;
+      }
 
-    if (!response.ok) {
-      throw new Error(await extractErrorMessage(response));
+      if (base.startsWith('/') && [404, 405].includes(response.status)) {
+        return true;
+      }
+
+      return false;
+    };
+
+    for (let index = 0; index < bases.length; index += 1) {
+      const base = bases[index];
+      let response: Response;
+      try {
+        response = await fetch(`${base}${endpoint}`, {
+          ...init,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(init?.headers || {}),
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(localDevSession?.email
+              ? {
+                  'X-Dev-User-Email': localDevSession.email,
+                }
+              : {}),
+          },
+        });
+      } catch (error) {
+        networkError = error instanceof Error ? error : new Error('Network request failed');
+        continue;
+      }
+
+      if (!response.ok) {
+        if (shouldTryNextBase(response, base)) {
+          continue;
+        }
+        throw new Error(await extractErrorMessage(response));
+      }
+
+      return response;
     }
 
-    return response;
+    const fallbackMessage =
+      networkError?.message && networkError.message.trim()
+        ? networkError.message
+        : 'Failed to fetch';
+    throw new Error(
+      `${fallbackMessage}. Could not reach the backend API on ${bases.join(', ')}. Ensure NestJS is running on http://127.0.0.1:3001 and your web app is running on Vite dev server.`
+    );
   };
 
   const refreshDashboard = async () => {
     const token = loadPersistedSupabaseAccessToken();
-    if (!token) {
+    const localDevSession = loadPersistedLocalDevAuthSession();
+    if (!token && !localDevSession?.email) {
       return;
     }
 
@@ -508,7 +581,7 @@ const Payments = () => {
     URL.revokeObjectURL(url);
   };
 
-  const handlePayNow = async (paymentId: string) => {
+  const handlePayNow = async (paymentId: string, paymentMethodId?: string) => {
     if (activeActionId) {
       return;
     }
@@ -517,11 +590,13 @@ const Payments = () => {
     try {
       const response = await requestWithAuth(`/payments/me/transactions/${encodeURIComponent(paymentId)}/pay`, {
         method: 'POST',
-        body: JSON.stringify({}),
+        body: JSON.stringify(paymentMethodId ? { paymentMethodId } : {}),
       });
       const payload = (await response.json()) as PayTransactionResponse;
 
       if (payload.mode === 'checkout' && payload.checkoutUrl) {
+        setIsPaymentMethodModalOpen(false);
+        setActivePaymentId(null);
         window.location.assign(payload.checkoutUrl);
         return;
       }
@@ -536,6 +611,8 @@ const Payments = () => {
         window.alert(payload.message);
       }
 
+      setIsPaymentMethodModalOpen(false);
+      setActivePaymentId(null);
       await refreshDashboard();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Payment could not be completed right now.';
@@ -543,6 +620,30 @@ const Payments = () => {
     } finally {
       setActiveActionId(null);
     }
+  };
+
+  const openPayNowModal = (paymentId: string) => {
+    if (activeActionId) {
+      return;
+    }
+
+    const preferredMethod = methods.find((method) => method.isDefault) || methods[0] || null;
+    setActivePaymentId(paymentId);
+    setSelectedPaymentMethodId(preferredMethod?.id || '');
+    setAddMethodSuccess(null);
+    setAddMethodError(null);
+    setIsAddCardOpen(false);
+    setIsPaymentMethodModalOpen(true);
+  };
+
+  const closePayNowModal = () => {
+    if (activeActionId === 'add-method' || Boolean(activeActionId?.startsWith('pay-'))) {
+      return;
+    }
+
+    setIsPaymentMethodModalOpen(false);
+    setActivePaymentId(null);
+    setIsAddCardOpen(false);
   };
 
   const handleDownloadReceipt = async (paymentId: string) => {
@@ -665,12 +766,32 @@ const Payments = () => {
 
   useEffect(() => {
     const token = loadPersistedSupabaseAccessToken();
-    if (!token) {
+    const localDevSession = loadPersistedLocalDevAuthSession();
+    if (!token && !localDevSession?.email) {
       return;
     }
 
     void refreshDashboard();
   }, []);
+
+  useEffect(() => {
+    if (!isPaymentMethodModalOpen) {
+      return;
+    }
+
+    if (methods.length === 0) {
+      setSelectedPaymentMethodId('');
+      return;
+    }
+
+    const hasSelected = methods.some((method) => method.id === selectedPaymentMethodId);
+    if (hasSelected) {
+      return;
+    }
+
+    const preferredMethod = methods.find((method) => method.isDefault) || methods[0];
+    setSelectedPaymentMethodId(preferredMethod?.id || '');
+  }, [isPaymentMethodModalOpen, methods, selectedPaymentMethodId]);
 
   const stripeElementsOptions = useMemo<StripeElementsOptions | null>(() => {
     if (!stripeClientSecret) {
@@ -701,6 +822,9 @@ const Payments = () => {
   const overduePayments = payments.filter((payment) => payment.status === 'overdue');
   const overdueCount  = overduePayments.length;
   const firstOverduePayment = overduePayments[0] || null;
+  const activePayment = activePaymentId
+    ? payments.find((payment) => payment.id === activePaymentId) || null
+    : null;
 
   const filters: { id: FilterId; label: string }[] = [
     { id: 'all',     label: 'All' },
@@ -769,7 +893,7 @@ const Payments = () => {
             <button
               onClick={() => {
                 if (firstOverduePayment) {
-                  void handlePayNow(firstOverduePayment.id);
+                  openPayNowModal(firstOverduePayment.id);
                 }
               }}
               disabled={!firstOverduePayment || Boolean(activeActionId)}
@@ -782,136 +906,10 @@ const Payments = () => {
           </div>
         )}
 
-        {/* ── Payment methods row ── */}
-        <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-100 shadow-sm p-4 sm:p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm sm:text-base font-bold text-gray-900">Payment Methods</h2>
-            <button
-              onClick={() => {
-                if (isAddCardOpen) {
-                  closeAddCardPanel();
-                  return;
-                }
-
-                void openAddCardPanel();
-              }}
-              disabled={Boolean(activeActionId) || isLoading}
-              className="flex items-center gap-1 text-xs text-[#3D08BA] font-semibold hover:underline disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <PlusCircleIcon className="w-4 h-4" /> {isAddCardOpen ? 'Close' : 'Add'}
-            </button>
-          </div>
-          {addMethodSuccess && (
-            <p className="mb-3 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
-              {addMethodSuccess}
-            </p>
-          )}
-          <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-1">
-            {methods.map(m => (
-              <div
-                key={m.id}
-                className={`shrink-0 flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
-                  m.isDefault ? 'border-[#3D08BA] bg-[#3D08BA]/5' : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${m.isDefault ? 'bg-[#3D08BA]' : 'bg-gray-100'}`}>
-                  {m.type === 'card'
-                    ? <CreditCardIcon className={`w-4 h-4 ${m.isDefault ? 'text-white' : 'text-gray-600'}`} />
-                    : <BanknotesIcon  className={`w-4 h-4 ${m.isDefault ? 'text-white' : 'text-gray-600'}`} />
-                  }
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold text-gray-800 truncate">{m.label}</p>
-                  <p className="text-[10px] text-gray-400">••••{m.last4}{m.isDefault ? ' · Default' : ''}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-          {isAddCardOpen && (
-            <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3 sm:p-4">
-              <div className="flex items-start justify-between gap-3 mb-3 sm:mb-4">
-                <div>
-                  <p className="text-sm font-semibold text-gray-900">Add a card</p>
-                  <p className="text-xs text-gray-500">
-                    Your card details are verified by Stripe and never stored directly in Edamaa.
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label htmlFor="payment-card-nickname" className="block text-xs font-semibold text-gray-700 mb-1">
-                      Card name (optional)
-                    </label>
-                    <input
-                      id="payment-card-nickname"
-                      type="text"
-                      value={cardNickname}
-                      onChange={(event) => setCardNickname(event.target.value)}
-                      placeholder="My tuition card"
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#3D08BA] focus:border-transparent"
-                    />
-                  </div>
-                  <div className="flex items-end">
-                    <label className="inline-flex items-center gap-2 text-xs text-gray-700">
-                      <input
-                        type="checkbox"
-                        checked={setAsDefaultMethod}
-                        onChange={(event) => setSetAsDefaultMethod(event.target.checked)}
-                        className="rounded border-gray-300 text-[#3D08BA] focus:ring-[#3D08BA]"
-                      />
-                      Use this as my default payment method
-                    </label>
-                  </div>
-                </div>
-
-                <p className="text-[11px] text-gray-500">
-                  Detected card type: <span className="font-semibold text-gray-700">{CARD_BRAND_LABEL[detectedCardBrand]}</span>
-                </p>
-
-                {addMethodError && (
-                  <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                    {addMethodError}
-                  </p>
-                )}
-
-                {isPreparingStripeForm && (
-                  <div className="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-4 text-xs text-gray-500">
-                    Preparing secure card form...
-                  </div>
-                )}
-
-                {!isPreparingStripeForm && stripePromise && stripeElementsOptions && (
-                  <Elements stripe={stripePromise} options={stripeElementsOptions}>
-                    <StripeCardSetupForm
-                      clientSecret={stripeClientSecret}
-                      disabled={Boolean(activeActionId)}
-                      onBrandChange={(brand) => setDetectedCardBrand(brand)}
-                      onErrorChange={(message) => setAddMethodError(message)}
-                      onConfirmed={handleConfirmStripeMethod}
-                    />
-                  </Elements>
-                )}
-
-                {!isPreparingStripeForm && (!stripePromise || !stripeElementsOptions) && !addMethodError && (
-                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    Secure card setup is unavailable right now. Check your Stripe backend configuration.
-                  </p>
-                )}
-
-                <div className="flex justify-end pt-1">
-                  <button
-                    onClick={() => closeAddCardPanel()}
-                    disabled={Boolean(activeActionId)}
-                    className="px-3 py-2 rounded-lg text-xs font-semibold text-gray-700 bg-white border border-gray-200 hover:bg-gray-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+        <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-100 shadow-sm p-3 sm:p-4">
+          <p className="text-xs sm:text-sm text-gray-600">
+            Payment methods will appear when you click <span className="font-semibold text-gray-800">Pay Now</span>.
+          </p>
         </div>
 
         {/* ── Search + Filters ── */}
@@ -1008,7 +1006,7 @@ const Payments = () => {
                         )}
                         {(p.status === 'pending' || p.status === 'overdue') && (
                           <button
-                            onClick={() => void handlePayNow(p.id)}
+                            onClick={() => openPayNowModal(p.id)}
                             disabled={Boolean(activeActionId)}
                             className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${p.status === 'overdue' ? 'bg-red-600 hover:bg-red-700' : 'bg-[#3D08BA] hover:bg-[#2c0691]'}`}
                           >
@@ -1024,6 +1022,190 @@ const Payments = () => {
           })}
         </div>
       </main>
+
+      {isPaymentMethodModalOpen && activePayment && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-gray-900/55 p-3 sm:p-4">
+          <div className="w-full max-w-xl rounded-2xl bg-white border border-gray-200 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 z-10 bg-white border-b border-gray-100 px-4 sm:px-5 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-gray-900">Choose payment method</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {activePayment.description} • {fmt(activePayment.amount)}
+                  </p>
+                </div>
+                <button
+                  onClick={() => closePayNowModal()}
+                  disabled={Boolean(activeActionId?.startsWith('pay-')) || activeActionId === 'add-method'}
+                  className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div className="px-4 sm:px-5 py-4 space-y-4">
+              {addMethodSuccess && (
+                <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                  {addMethodSuccess}
+                </p>
+              )}
+
+              <div className="space-y-2">
+                {methods.length === 0 && (
+                  <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                    No payment method found yet. Add a card to continue.
+                  </p>
+                )}
+                {methods.map((method) => {
+                  const isSelected = method.id === selectedPaymentMethodId;
+                  return (
+                    <button
+                      key={method.id}
+                      onClick={() => setSelectedPaymentMethodId(method.id)}
+                      className={`w-full flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                        isSelected
+                          ? 'border-[#3D08BA] bg-[#3D08BA]/5'
+                          : 'border-gray-200 hover:border-gray-300 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                            isSelected ? 'bg-[#3D08BA]' : 'bg-gray-100'
+                          }`}
+                        >
+                          {method.type === 'card' ? (
+                            <CreditCardIcon className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-gray-600'}`} />
+                          ) : (
+                            <BanknotesIcon className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-gray-600'}`} />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-gray-800 truncate">{method.label}</p>
+                          <p className="text-[10px] text-gray-500">
+                            ••••{method.last4}
+                            {method.isDefault ? ' · Default' : ''}
+                          </p>
+                        </div>
+                      </div>
+                      {isSelected && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#3D08BA] text-white">
+                          Selected
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex justify-start">
+                <button
+                  onClick={() => {
+                    if (isAddCardOpen) {
+                      closeAddCardPanel();
+                      return;
+                    }
+                    void openAddCardPanel();
+                  }}
+                  disabled={Boolean(activeActionId)}
+                  className="flex items-center gap-1 text-xs text-[#3D08BA] font-semibold hover:underline disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <PlusCircleIcon className="w-4 h-4" />
+                  {isAddCardOpen ? 'Close add card' : 'Add card'}
+                </button>
+              </div>
+
+              {isAddCardOpen && (
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 sm:p-4 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label htmlFor="payment-card-nickname" className="block text-xs font-semibold text-gray-700 mb-1">
+                        Card name (optional)
+                      </label>
+                      <input
+                        id="payment-card-nickname"
+                        type="text"
+                        value={cardNickname}
+                        onChange={(event) => setCardNickname(event.target.value)}
+                        placeholder="My tuition card"
+                        className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#3D08BA] focus:border-transparent"
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={setAsDefaultMethod}
+                          onChange={(event) => setSetAsDefaultMethod(event.target.checked)}
+                          className="rounded border-gray-300 text-[#3D08BA] focus:ring-[#3D08BA]"
+                        />
+                        Use this as my default payment method
+                      </label>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-gray-500">
+                    Detected card type:{' '}
+                    <span className="font-semibold text-gray-700">{CARD_BRAND_LABEL[detectedCardBrand]}</span>
+                  </p>
+
+                  {addMethodError && (
+                    <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                      {addMethodError}
+                    </p>
+                  )}
+
+                  {isPreparingStripeForm && (
+                    <div className="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-4 text-xs text-gray-500">
+                      Preparing secure card form...
+                    </div>
+                  )}
+
+                  {!isPreparingStripeForm && stripePromise && stripeElementsOptions && (
+                    <Elements stripe={stripePromise} options={stripeElementsOptions}>
+                      <StripeCardSetupForm
+                        clientSecret={stripeClientSecret}
+                        disabled={Boolean(activeActionId)}
+                        onBrandChange={(brand) => setDetectedCardBrand(brand)}
+                        onErrorChange={(message) => setAddMethodError(message)}
+                        onConfirmed={handleConfirmStripeMethod}
+                      />
+                    </Elements>
+                  )}
+
+                  {!isPreparingStripeForm && (!stripePromise || !stripeElementsOptions) && !addMethodError && (
+                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      Secure card setup is unavailable right now. Check your Stripe backend configuration.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="sticky bottom-0 bg-white border-t border-gray-100 px-4 sm:px-5 py-3 flex items-center justify-end gap-2">
+              <button
+                onClick={() => closePayNowModal()}
+                disabled={Boolean(activeActionId?.startsWith('pay-')) || activeActionId === 'add-method'}
+                className="px-3 py-2 rounded-lg text-xs font-semibold text-gray-700 bg-white border border-gray-200 hover:bg-gray-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (activePaymentId) {
+                    void handlePayNow(activePaymentId, selectedPaymentMethodId || undefined);
+                  }
+                }}
+                disabled={!activePaymentId || !selectedPaymentMethodId || Boolean(activeActionId)}
+                className="px-3 py-2 rounded-lg text-xs font-bold text-white bg-[#3D08BA] hover:bg-[#2c0691] transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {activePaymentId && activeActionId === `pay-${activePaymentId}` ? 'Processing...' : 'Pay now'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

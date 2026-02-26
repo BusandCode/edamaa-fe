@@ -16,6 +16,7 @@ import { LearningProgressModule } from './learning-progress/learning-progress.mo
 import { StudentAnalyticsModule } from './student-analytics/student-analytics.module';
 import { PaymentsModule } from './payments/payments.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
+import { ResourcesModule } from './resources/resources.module';
 
 @Module({
   // Feature modules are registered here so Nest can compose the app.
@@ -30,6 +31,7 @@ import { SubscriptionsModule } from './subscriptions/subscriptions.module';
     StudentAnalyticsModule,
     PaymentsModule,
     SubscriptionsModule,
+    ResourcesModule,
   ],
   controllers: [],
   providers: [PrismaService],
