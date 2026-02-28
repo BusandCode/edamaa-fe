@@ -6,6 +6,7 @@ import {
   VideoCameraIcon,
   PlayCircleIcon,
   ArrowRightIcon,
+  ArrowLeftIcon,
   ChatBubbleLeftRightIcon,
 } from '@heroicons/react/24/outline';
 import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid';
@@ -42,6 +43,15 @@ const MyCourses = () => {
     navigate(`/course/${courseId}`);
   };
 
+  const handleBackClick = () => {
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+
+    navigate('/student-dashboard');
+  };
+
   const openCourseChat = (course: RecordedCourse) => {
     setSelectedChatCourse(course);
   };
@@ -76,13 +86,25 @@ const MyCourses = () => {
           {/* Top Section */}
           <div className="py-6">
             <div className="flex items-center justify-between mb-6">
-              <div>
-                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-[#3D08BA] mb-2">
-                  My Learning
-                </h1>
-                <p className="text-sm sm:text-base text-gray-600">
-                  Continue your learning journey
-                </p>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleBackClick}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-sm transition-colors hover:bg-gray-50 hover:text-[#3D08BA]"
+                  aria-label="Go back"
+                  title="Go back"
+                >
+                  <ArrowLeftIcon className="h-5 w-5" />
+                </button>
+
+                <div>
+                  <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-[#3D08BA] mb-2">
+                    My Learning
+                  </h1>
+                  <p className="text-sm sm:text-base text-gray-600">
+                    Continue your learning journey
+                  </p>
+                </div>
               </div>
             </div>
 

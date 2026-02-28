@@ -9,6 +9,9 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import * as express from 'express';
 import { mountQueuesUI } from './monitor/queues.ui';
+import { loadBackendEnv } from './config/load-env';
+
+loadBackendEnv();
 
 function initSentry() {
   const dsn = process.env.SENTRY_DSN;
@@ -63,14 +66,16 @@ async function bootstrap() {
     console.warn('Could not mount queues UI:', err?.message || err);
   }
 
-  // Use PORT env var when provided, otherwise default to 3001
-  const port = process.env.PORT || 3001;
+  // Use PORT env var when provided, otherwise default to 3001.
+  // Bind to localhost by default for reliable local access from Vite.
+  const port = Number(process.env.PORT || 3001);
+  const host = String(process.env.HOST || '127.0.0.1').trim() || '127.0.0.1';
 
-  await app.listen(port);
+  await app.listen(port, host);
 
   // Friendly log so developers know the server is running
   // eslint-disable-next-line no-console
-  console.log('NestJS API running on', port);
+  console.log(`NestJS API running on ${host}:${port}`);
 }
 
 bootstrap();

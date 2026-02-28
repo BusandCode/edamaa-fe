@@ -1,1172 +1,1267 @@
-import { useState, useEffect, useRef, type JSX } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  ArrowDownTrayIcon,
+  ArrowLeftIcon,
+  ArrowTrendingUpIcon,
+  CalendarDaysIcon,
+  ChartBarIcon,
+  ChevronDownIcon,
+  CheckCircleIcon,
+  ClockIcon,
+  ExclamationTriangleIcon,
+  LightBulbIcon,
+} from '@heroicons/react/24/outline';
+import { loadPersistedLocalDevAuthSession, loadPersistedSupabaseAccessToken } from '../../../utils/authSession';
+import { loadStudentIdentity } from '../utils/studentIdentity';
 
-// ─── Types & Interfaces ───────────────────────────────────────────────────────
-
-/** Icon name keys matching the icons map */
-export type IconName =
-  | 'Star' | 'Clock' | 'Fire' | 'Cap' | 'Trophy'
-  | 'Target' | 'TrendUp' | 'ChevUp' | 'ChevDown'
-  | 'Book' | 'Calendar' | 'Bulb' | 'Sparkles'
-  | 'Exclamation' | 'Brain' | 'Medal' | 'X';
-
-/** A single icon renderer function */
-export type IconRenderer = (className: string) => JSX.Element;
-
-/** Map of all available icon renderers */
-export type IconMap = Record<IconName, IconRenderer>;
-
-/** Activity type discriminator */
-export type ActivityType = 'quiz' | 'assignment' | 'study' | 'streak';
-
-/** Urgency level for upcoming deadlines */
-export type UrgencyLevel = 'high' | 'medium' | 'low';
-
-/** Panel tab options */
-export type PanelTab = 'overview' | 'activity' | 'leaderboard';
-
-// ─── Sub-entity Interfaces ────────────────────────────────────────────────────
-
-export interface SubjectBreakdown {
-  subject: string;
+type WeeklyMetric = {
+  week: string;
   score: number;
-  color: string;
-}
+  completionRate: number;
+  studyHours: number;
+};
 
-export interface ActivityEntry {
-  date: string;
-  label: string;
-  score?: number;
-  type: ActivityType;
-}
-
-export interface Milestone {
-  text: string;
-  progress: number;
-  target: number;
-}
-
-export interface LeaderboardEntry {
-  rank: number;
-  name: string;
-  score: number;
-  isYou?: boolean;
-}
-
-export interface UpcomingDeadline {
+type SubjectMetric = {
   subject: string;
-  type: string;
-  due: string;
-  color: string;
-  urgency: UrgencyLevel;
-}
+  averageScore: number;
+  completionRate: number;
+  onTimeRate: number;
+  attempts: number;
+  trend: number;
+};
 
-export interface Badge {
-  icon: string;
-  label: string;
-  unlocked: boolean;
-  desc: string;
-  progress?: number;
-  target?: number;
-}
-
-export interface StudyGoal {
-  label: string;
+type GoalMetric = {
+  id: string;
+  title: string;
   current: number;
   target: number;
-  unit: string;
-  color: string;
-}
-
-export interface ActivityIconConfig {
-  icon: IconName;
-  cls: string;
-}
-
-// ─── Core Stat Interface ──────────────────────────────────────────────────────
-
-export interface PerformanceStat {
-  /** Unique identifier used to key the stat and match detail views */
-  id: string;
-  /** Short display label shown on the card */
-  label: string;
-  /** Formatted display value e.g. "84%", "42h", "#3" */
-  value: string;
-  /** Raw numeric value for progress calculations */
-  numericValue: number;
-  /** Denominator for circular progress (use 1 for rank, actual max otherwise) */
-  maxValue: number;
-  /** Secondary label beneath the value */
-  subLabel: string;
-  /** Trend delta (positive = up, negative = down, 0 = neutral) */
-  trend: number;
-  /** Human-readable trend label e.g. "vs last month" */
-  trendLabel: string;
-  /** Key into the IconMap */
-  icon: IconName;
-  /** Tailwind bg class for the icon bubble */
-  accent: string;
-  /** Tailwind text class for the icon */
-  iconColor: string;
-  /** Hex color for the accent / circular progress ring */
-  accentHex: string;
-  /** Hex color for the sparkline */
-  sparkColor: string;
-  /** Heading shown in the expanded detail panel */
-  detailHeading: string;
-  /** Paragraph body shown in the expanded detail panel */
-  detailBody: string;
-  /** Insight callout text */
-  insight: string;
-  /** Optional per-subject score breakdown (shown for avg-score) */
-  breakdown?: SubjectBreakdown[];
-  /** 7-day series for the sparkline */
-  weeklyData?: number[];
-  /** Optional day-label overrides for the x-axis */
-  dayLabels?: string[];
-  /** Recent activity entries */
-  activities?: ActivityEntry[];
-  /** Next milestone / goal */
-  milestone?: Milestone;
-}
-
-// ─── Component Prop Interfaces ────────────────────────────────────────────────
-
-export interface SparklineProps {
-  data: number[];
-  color: string;
-  animated?: boolean;
-}
-
-export interface AnimatedValueProps {
-  value: string;
-}
-
-export interface CircularProgressProps {
-  value: number;
-  max: number;
-  color: string;
-  size?: number;
-}
-
-export interface HeatmapCalendarProps {
-  activeCount?: number;
-}
-
-export type LeaderboardRowProps = LeaderboardEntry
-
-export interface PerformancestatsProps {
-  /** Override the default stat cards */
-  stats?: PerformanceStat[];
-  /** Optional callback when a stat card is clicked */
-  onStatClick?: (stat: PerformanceStat) => void;
-}
-
-// ─── Icon Renderers ───────────────────────────────────────────────────────────
-
-const icons: IconMap = {
-  Star: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-    </svg>
-  ),
-  Clock: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="10" /><polyline points="12,6 12,12 16,14" />
-    </svg>
-  ),
-  Fire: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 2C12 2 6 8 6 13a6 6 0 0012 0c0-5-6-11-6-11zm0 16a3 3 0 01-3-3c0-2 3-6 3-6s3 4 3 6a3 3 0 01-3 3z" />
-    </svg>
-  ),
-  Cap: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M22 10v6M2 10l10-5 10 5-10 5z" /><path d="M6 12v5c3 3 9 3 12 0v-5" />
-    </svg>
-  ),
-  Trophy: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <polyline points="8,21 12,17 16,21" /><line x1="12" y1="17" x2="12" y2="13" />
-      <path d="M7 4H17L15 13H9L7 4z" /><path d="M5 4H7" /><path d="M17 4H19" />
-      <path d="M5 4C5 4 3 5 3 8s2 4 4 3" /><path d="M19 4C19 4 21 5 21 8s-2 4-4 3" />
-    </svg>
-  ),
-  Target: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" />
-    </svg>
-  ),
-  TrendUp: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <polyline points="23,6 13.5,15.5 8.5,10.5 1,18" /><polyline points="17,6 23,6 23,12" />
-    </svg>
-  ),
-  ChevUp: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-      <polyline points="18,15 12,9 6,15" />
-    </svg>
-  ),
-  ChevDown: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-      <polyline points="6,9 12,15 18,9" />
-    </svg>
-  ),
-  Book: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M4 19.5A2.5 2.5 0 016.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
-    </svg>
-  ),
-  Calendar: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" />
-      <line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
-    </svg>
-  ),
-  Bulb: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <line x1="9" y1="18" x2="15" y2="18" /><line x1="10" y1="22" x2="14" y2="22" />
-      <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0018 8 6 6 0 006 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 018.91 14" />
-    </svg>
-  ),
-  Sparkles: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 3L13.5 8.5L19 10L13.5 11.5L12 17L10.5 11.5L5 10L10.5 8.5L12 3z" />
-      <path d="M5 3L5.5 5L7.5 5.5L5.5 6L5 8L4.5 6L2.5 5.5L4.5 5L5 3z" />
-      <path d="M19 13L19.5 15L21.5 15.5L19.5 16L19 18L18.5 16L16.5 15.5L18.5 15L19 13z" />
-    </svg>
-  ),
-  Exclamation: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-    </svg>
-  ),
-  Brain: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M9.5 2A2.5 2.5 0 017 4.5v0A2.5 2.5 0 014.5 7H4a2 2 0 00-2 2v0a2 2 0 002 2h.5A2.5 2.5 0 017 13.5v0A2.5 2.5 0 019.5 16H10a2 2 0 002-2V6a2 2 0 00-2-2h-.5z" />
-      <path d="M14.5 2A2.5 2.5 0 0117 4.5v0A2.5 2.5 0 0119.5 7H20a2 2 0 012 2v0a2 2 0 01-2 2h-.5A2.5 2.5 0 0117 13.5v0A2.5 2.5 0 0114.5 16H14a2 2 0 01-2-2V6a2 2 0 012-2h.5z" />
-      <path d="M10 16v4" /><path d="M14 16v4" /><path d="M8 20h8" />
-    </svg>
-  ),
-  Medal: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="8" r="6" /><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11" />
-    </svg>
-  ),
-  X: (cls) => (
-    <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-      <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-    </svg>
-  ),
+  suffix: string;
 };
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+type OverallMetrics = {
+  overallScore: number;
+  completionRate: number;
+  onTimeRate: number;
+  averageStudyHours: number;
+  trendDelta: number;
+  attendanceRate: number;
+};
 
-interface SparkPoint {
-  x: number;
-  y: number;
-}
+type ReportSnapshot = {
+  studentName: string;
+  generatedAt: string;
+  overallScore: number;
+  completionRate: number;
+  onTimeRate: number;
+  averageStudyHours: number;
+  trendDelta: number;
+  attendanceRate: number;
+  strongestSubjects: SubjectMetric[];
+  riskSubjects: SubjectMetric[];
+  weeklyMetrics: WeeklyMetric[];
+  subjectMetrics: SubjectMetric[];
+  recommendations: string[];
+};
 
-const Sparkline = ({ data, color }: SparklineProps): JSX.Element => {
-  const max: number = Math.max(...data);
-  const min: number = Math.min(...data);
-  const range: number = max - min || 1;
-  const w = 120, h = 40;
+type PerformanceApiResponse = {
+  generatedAt?: string;
+  summary?: Partial<OverallMetrics>;
+  weeklyMetrics?: WeeklyMetric[];
+  subjectMetrics?: SubjectMetric[];
+  goals?: GoalMetric[];
+  recommendations?: string[];
+  dataQuality?: {
+    degraded?: boolean;
+    dataSources?: string[];
+  };
+};
 
-  const pts: SparkPoint[] = data.map((v, i) => ({
-    x: (i / (data.length - 1)) * w,
-    y: h - ((v - min) / range) * (h - 4) - 2,
-  }));
+type PdfMakeLike = {
+  vfs?: Record<string, string>;
+  createPdf: (docDefinition: Record<string, unknown>) => {
+    download: (filename: string) => void;
+    getBlob: () => Promise<Blob>;
+  };
+};
 
-  const linePath: string = pts
-    .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`)
+type CanvasSlice = {
+  dataUrl: string;
+  heightPx: number;
+};
+
+type ExportFormat = 'txt' | 'pdf' | 'csv';
+
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '');
+const LEARNER_KEY_STORAGE_KEY = 'edamaa_learner_key_v1';
+
+const FALLBACK_WEEKLY_METRICS: WeeklyMetric[] = [
+  { week: 'W1', score: 74, completionRate: 68, studyHours: 8.2 },
+  { week: 'W2', score: 77, completionRate: 72, studyHours: 9.1 },
+  { week: 'W3', score: 79, completionRate: 75, studyHours: 10.4 },
+  { week: 'W4', score: 81, completionRate: 80, studyHours: 10.8 },
+  { week: 'W5', score: 83, completionRate: 84, studyHours: 11.6 },
+  { week: 'W6', score: 85, completionRate: 87, studyHours: 12.2 },
+  { week: 'W7', score: 84, completionRate: 86, studyHours: 11.5 },
+  { week: 'W8', score: 87, completionRate: 89, studyHours: 12.8 },
+  { week: 'W9', score: 88, completionRate: 91, studyHours: 13.3 },
+  { week: 'W10', score: 89, completionRate: 92, studyHours: 13.8 },
+  { week: 'W11', score: 90, completionRate: 93, studyHours: 14.1 },
+  { week: 'W12', score: 92, completionRate: 95, studyHours: 14.7 },
+];
+
+const FALLBACK_SUBJECT_METRICS: SubjectMetric[] = [
+  { subject: 'Mathematics', averageScore: 91, completionRate: 96, onTimeRate: 92, attempts: 24, trend: 5.2 },
+  { subject: 'Physics', averageScore: 88, completionRate: 92, onTimeRate: 89, attempts: 21, trend: 3.1 },
+  { subject: 'Computer Science', averageScore: 94, completionRate: 97, onTimeRate: 95, attempts: 27, trend: 4.8 },
+  { subject: 'English', averageScore: 82, completionRate: 88, onTimeRate: 84, attempts: 19, trend: -1.4 },
+  { subject: 'Economics', averageScore: 79, completionRate: 82, onTimeRate: 78, attempts: 17, trend: -2.2 },
+];
+
+const FALLBACK_GOAL_METRICS: GoalMetric[] = [
+  { id: 'overall-score', title: 'Average Score Goal', current: 87, target: 90, suffix: '%' },
+  { id: 'completion-rate', title: 'Completion Goal', current: 91, target: 95, suffix: '%' },
+  { id: 'study-hours', title: 'Weekly Study Goal', current: 14.7, target: 16, suffix: ' hrs' },
+];
+
+const FALLBACK_RECOMMENDATIONS = [
+  'Keep your top subjects steady by maintaining your current weekly learning rhythm.',
+  'Schedule two focused revision sessions for lower-scoring subjects this week.',
+  'Set a personal reminder before deadlines so you can improve on-time submissions.',
+  'Review this report with your tutor so next-week goals stay realistic and measurable.',
+];
+
+const round = (value: number) => Math.round(value * 10) / 10;
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const formatPercent = (value: number) => `${Math.round(value)}%`;
+
+const formatTrend = (value: number) => `${value >= 0 ? '+' : ''}${round(value)}%`;
+
+const getStatusLabel = (score: number) => {
+  if (score >= 90) {
+    return { label: 'Excellent', classes: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
+  }
+
+  if (score >= 80) {
+    return { label: 'Strong', classes: 'bg-blue-100 text-blue-700 border-blue-200' };
+  }
+
+  return { label: 'Needs Focus', classes: 'bg-amber-100 text-amber-700 border-amber-200' };
+};
+
+const buildLinePath = (data: number[], width: number, height: number, padding: number) => {
+  if (data.length === 0) {
+    return { linePath: '', areaPath: '', min: 0, max: 0, span: 1 };
+  }
+
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const span = Math.max(1, max - min);
+
+  const points = data.map((value, index) => {
+    const x = padding + (index / Math.max(1, data.length - 1)) * (width - padding * 2);
+    const y = height - padding - ((value - min) / span) * (height - padding * 2);
+    return { x, y };
+  });
+
+  const linePath = points
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
     .join(' ');
-  const areaPath: string = linePath + ` L${w},${h} L0,${h} Z`;
-  const gradId: string = `sg-${color.replace('#', '')}`;
 
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-10" preserveAspectRatio="none">
-      <defs>
-        {/* <linearlinear id={gradId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
-          <stop offset="100%" stopColor={color} stopOpacity="0.02" />
-        </linearlinear> */}
-      </defs>
-      <path d={areaPath} fill={`url(#${gradId})`} />
-      <path d={linePath} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-      {pts.map((p, i) => (
-        <circle
-          key={i}
-          cx={p.x}
-          cy={p.y}
-          r={i === pts.length - 1 ? 3 : 1.5}
-          fill={i === pts.length - 1 ? color : 'white'}
-          stroke={color}
-          strokeWidth="1.5"
-        />
-      ))}
-    </svg>
-  );
+  const first = points[0];
+  const last = points[points.length - 1];
+  const baseY = height - padding;
+  const areaPath = `${linePath} L ${last.x.toFixed(2)} ${baseY.toFixed(2)} L ${first.x.toFixed(2)} ${baseY.toFixed(2)} Z`;
+
+  return { linePath, areaPath, min, max, span };
 };
 
-// ─── Animated Counter ─────────────────────────────────────────────────────────
+const deriveOverallMetrics = (subjectMetrics: SubjectMetric[], weeklyMetrics: WeeklyMetric[]): OverallMetrics => {
+  const subjectCount = Math.max(1, subjectMetrics.length);
+  const weeklyCount = Math.max(1, weeklyMetrics.length);
 
-const AnimatedValue = ({ value }: AnimatedValueProps): JSX.Element => {
-  const [display, setDisplay] = useState<string>(value);
-  const rafRef = useRef<number | null>(null);
+  const overallScore = round(
+    subjectMetrics.reduce((total, item) => total + item.averageScore, 0) / subjectCount
+  );
+  const completionRate = round(
+    subjectMetrics.reduce((total, item) => total + item.completionRate, 0) / subjectCount
+  );
+  const onTimeRate = round(
+    subjectMetrics.reduce((total, item) => total + item.onTimeRate, 0) / subjectCount
+  );
+
+  const averageStudyHours = round(
+    weeklyMetrics.reduce((total, item) => total + item.studyHours, 0) / weeklyCount
+  );
+
+  const firstHalfCount = Math.min(4, weeklyMetrics.length);
+  const secondHalfCount = Math.min(4, weeklyMetrics.length);
+  const firstHalf = firstHalfCount
+    ? weeklyMetrics.slice(0, firstHalfCount).reduce((total, item) => total + item.score, 0) / firstHalfCount
+    : overallScore;
+  const secondHalf = secondHalfCount
+    ? weeklyMetrics.slice(-secondHalfCount).reduce((total, item) => total + item.score, 0) / secondHalfCount
+    : overallScore;
+
+  const activeWeeks = weeklyMetrics.filter((item) => item.studyHours >= 1 || item.completionRate >= 55).length;
+  const attendanceRate = clamp(Math.round((activeWeeks / weeklyCount) * 100), 40, 100);
+
+  return {
+    overallScore,
+    completionRate,
+    onTimeRate,
+    averageStudyHours,
+    trendDelta: round(secondHalf - firstHalf),
+    attendanceRate,
+  };
+};
+
+const buildReportText = (params: ReportSnapshot) => {
+  const {
+    studentName,
+    generatedAt,
+    overallScore,
+    completionRate,
+    onTimeRate,
+    averageStudyHours,
+    trendDelta,
+    attendanceRate,
+    strongestSubjects,
+    riskSubjects,
+    weeklyMetrics,
+    subjectMetrics,
+    recommendations,
+  } = params;
+
+  const lines: string[] = [
+    'EDAMAA STUDENT PERFORMANCE REPORT',
+    '=================================',
+    `Student: ${studentName}`,
+    `Generated: ${generatedAt}`,
+    '',
+    'EXECUTIVE SUMMARY',
+    '-----------------',
+    `Overall score: ${formatPercent(overallScore)}`,
+    `Completion rate: ${formatPercent(completionRate)}`,
+    `On-time submissions: ${formatPercent(onTimeRate)}`,
+    `Attendance rate: ${formatPercent(attendanceRate)}`,
+    `Average weekly study: ${round(averageStudyHours)} hrs`,
+    `12-week trend: ${formatTrend(trendDelta)}`,
+    '',
+    'WEEKLY TREND',
+    '------------',
+  ];
+
+  weeklyMetrics.forEach((week) => {
+    lines.push(
+      `${week.week}: Score ${week.score}% | Completion ${week.completionRate}% | Study ${week.studyHours} hrs`
+    );
+  });
+
+  lines.push('', 'SUBJECT BREAKDOWN', '-----------------');
+
+  subjectMetrics.forEach((subject) => {
+    lines.push(
+      `${subject.subject}: Score ${subject.averageScore}% | Completion ${subject.completionRate}% | On-time ${subject.onTimeRate}% | Attempts ${subject.attempts} | Trend ${formatTrend(subject.trend)}`
+    );
+  });
+
+  lines.push('', 'KEY INSIGHTS', '------------');
+
+  if (strongestSubjects.length > 0) {
+    lines.push(`Strongest areas: ${strongestSubjects.map((subject) => subject.subject).join(', ')}.`);
+  }
+
+  if (riskSubjects.length > 0) {
+    lines.push(`Focus needed: ${riskSubjects.map((subject) => subject.subject).join(', ')}.`);
+  }
+
+  recommendations.forEach((recommendation, index) => {
+    lines.push(`Recommended action ${index + 1}: ${recommendation}`);
+  });
+
+  return lines.join('\n');
+};
+
+const csvEscape = (value: string | number) => {
+  const rawValue = String(value);
+  if (/[",\n]/.test(rawValue)) {
+    return `"${rawValue.replaceAll('"', '""')}"`;
+  }
+
+  return rawValue;
+};
+
+const joinCsvRow = (values: Array<string | number>) => values.map(csvEscape).join(',');
+
+const buildReportCsv = (params: ReportSnapshot) => {
+  const {
+    studentName,
+    generatedAt,
+    overallScore,
+    completionRate,
+    onTimeRate,
+    averageStudyHours,
+    trendDelta,
+    attendanceRate,
+    strongestSubjects,
+    riskSubjects,
+    weeklyMetrics,
+    subjectMetrics,
+    recommendations,
+  } = params;
+
+  const lines: string[] = [
+    joinCsvRow(['Section', 'Metric', 'Value']),
+    joinCsvRow(['Student', 'Name', studentName]),
+    joinCsvRow(['Student', 'Generated At', generatedAt]),
+    joinCsvRow(['Executive Summary', 'Overall Score (%)', round(overallScore)]),
+    joinCsvRow(['Executive Summary', 'Completion Rate (%)', round(completionRate)]),
+    joinCsvRow(['Executive Summary', 'On-Time Submissions (%)', round(onTimeRate)]),
+    joinCsvRow(['Executive Summary', 'Attendance Rate (%)', round(attendanceRate)]),
+    joinCsvRow(['Executive Summary', 'Average Weekly Study (hrs)', round(averageStudyHours)]),
+    joinCsvRow(['Executive Summary', '12-Week Trend Delta (%)', round(trendDelta)]),
+    '',
+    joinCsvRow(['Weekly Trend']),
+    joinCsvRow(['Week', 'Score (%)', 'Completion (%)', 'Study Hours']),
+  ];
+
+  weeklyMetrics.forEach((week) => {
+    lines.push(joinCsvRow([week.week, week.score, week.completionRate, week.studyHours]));
+  });
+
+  lines.push(
+    '',
+    joinCsvRow(['Subject Metrics']),
+    joinCsvRow(['Subject', 'Score (%)', 'Completion (%)', 'On-Time (%)', 'Attempts', 'Trend (%)'])
+  );
+
+  subjectMetrics.forEach((subject) => {
+    lines.push(
+      joinCsvRow([
+        subject.subject,
+        subject.averageScore,
+        subject.completionRate,
+        subject.onTimeRate,
+        subject.attempts,
+        round(subject.trend),
+      ])
+    );
+  });
+
+  lines.push(
+    '',
+    joinCsvRow(['Strengths', strongestSubjects.map((subject) => subject.subject).join('; ')]),
+    joinCsvRow(['Focus Needed', riskSubjects.map((subject) => subject.subject).join('; ') || 'None']),
+    ''
+  );
+
+  recommendations.forEach((recommendation, index) => {
+    lines.push(joinCsvRow([`Recommended action ${index + 1}`, recommendation]));
+  });
+
+  return lines.join('\n');
+};
+
+const downloadFile = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
+const toFiniteNumber = (value: unknown, fallback: number) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const normalizeWeeklyMetrics = (value: unknown): WeeklyMetric[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item, index) => {
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+
+      const candidate = item as Record<string, unknown>;
+      return {
+        week: typeof candidate.week === 'string' && candidate.week.trim() ? candidate.week.trim() : `W${index + 1}`,
+        score: clamp(Math.round(toFiniteNumber(candidate.score, 0)), 0, 100),
+        completionRate: clamp(Math.round(toFiniteNumber(candidate.completionRate, 0)), 0, 100),
+        studyHours: round(Math.max(0, toFiniteNumber(candidate.studyHours, 0))),
+      };
+    })
+    .filter((item): item is WeeklyMetric => item !== null);
+};
+
+const normalizeSubjectMetrics = (value: unknown): SubjectMetric[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item, index) => {
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+
+      const candidate = item as Record<string, unknown>;
+      return {
+        subject:
+          typeof candidate.subject === 'string' && candidate.subject.trim()
+            ? candidate.subject.trim()
+            : `Subject ${index + 1}`,
+        averageScore: clamp(Math.round(toFiniteNumber(candidate.averageScore, 0)), 0, 100),
+        completionRate: clamp(Math.round(toFiniteNumber(candidate.completionRate, 0)), 0, 100),
+        onTimeRate: clamp(Math.round(toFiniteNumber(candidate.onTimeRate, 0)), 0, 100),
+        attempts: Math.max(0, Math.round(toFiniteNumber(candidate.attempts, 0))),
+        trend: round(toFiniteNumber(candidate.trend, 0)),
+      };
+    })
+    .filter((item): item is SubjectMetric => item !== null);
+};
+
+const normalizeGoalMetrics = (value: unknown): GoalMetric[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item, index) => {
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+
+      const candidate = item as Record<string, unknown>;
+      return {
+        id: typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id.trim() : `goal-${index + 1}`,
+        title:
+          typeof candidate.title === 'string' && candidate.title.trim()
+            ? candidate.title.trim()
+            : `Goal ${index + 1}`,
+        current: round(toFiniteNumber(candidate.current, 0)),
+        target: round(Math.max(1, toFiniteNumber(candidate.target, 1))),
+        suffix: typeof candidate.suffix === 'string' ? candidate.suffix : '%',
+      };
+    })
+    .filter((item): item is GoalMetric => item !== null);
+};
+
+const normalizeRecommendations = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter((item) => item.length > 0)
+    .slice(0, 4);
+};
+
+const normalizeSummary = (value: unknown, fallback: OverallMetrics): OverallMetrics => {
+  if (!value || typeof value !== 'object') {
+    return fallback;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return {
+    overallScore: clamp(round(toFiniteNumber(candidate.overallScore, fallback.overallScore)), 0, 100),
+    completionRate: clamp(round(toFiniteNumber(candidate.completionRate, fallback.completionRate)), 0, 100),
+    onTimeRate: clamp(round(toFiniteNumber(candidate.onTimeRate, fallback.onTimeRate)), 0, 100),
+    averageStudyHours: round(Math.max(0, toFiniteNumber(candidate.averageStudyHours, fallback.averageStudyHours))),
+    trendDelta: round(toFiniteNumber(candidate.trendDelta, fallback.trendDelta)),
+    attendanceRate: clamp(Math.round(toFiniteNumber(candidate.attendanceRate, fallback.attendanceRate)), 0, 100),
+  };
+};
+
+const looksLikeVfsMap = (value: unknown): value is Record<string, string> => {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) {
+    return false;
+  }
+
+  return entries.every(([key, item]) => key.toLowerCase().endsWith('.ttf') && typeof item === 'string');
+};
+
+const resolvePdfMake = (pdfMakeModule: unknown, pdfFontsModule: unknown): PdfMakeLike => {
+  const resolvedPdfMake =
+    (pdfMakeModule as { default?: PdfMakeLike }).default || (pdfMakeModule as PdfMakeLike);
+
+  const fontsModule = pdfFontsModule as {
+    default?: { pdfMake?: { vfs?: Record<string, string> }; vfs?: Record<string, string> } | Record<string, string>;
+    pdfMake?: { vfs?: Record<string, string> };
+    vfs?: Record<string, string>;
+  };
+
+  const defaultFonts = fontsModule.default;
+  const resolvedVfs =
+    fontsModule.pdfMake?.vfs ||
+    fontsModule.vfs ||
+    (defaultFonts && 'pdfMake' in defaultFonts ? (defaultFonts as { pdfMake?: { vfs?: Record<string, string> } }).pdfMake?.vfs : undefined) ||
+    (defaultFonts && 'vfs' in defaultFonts ? (defaultFonts as { vfs?: Record<string, string> }).vfs : undefined) ||
+    (looksLikeVfsMap(defaultFonts) ? defaultFonts : undefined) ||
+    (looksLikeVfsMap(fontsModule) ? (fontsModule as Record<string, string>) : undefined);
+
+  if (resolvedVfs) {
+    resolvedPdfMake.vfs = resolvedVfs;
+  }
+
+  return resolvedPdfMake;
+};
+
+const createCanvasSlices = (
+  sourceCanvas: HTMLCanvasElement,
+  usableWidthPt: number,
+  usableHeightPt: number
+): CanvasSlice[] => {
+  const pixelPerPoint = sourceCanvas.width / usableWidthPt;
+  const pageSliceHeightPx = Math.max(1, Math.floor(usableHeightPt * pixelPerPoint));
+  const slices: CanvasSlice[] = [];
+
+  for (let top = 0; top < sourceCanvas.height; top += pageSliceHeightPx) {
+    const sliceHeight = Math.min(pageSliceHeightPx, sourceCanvas.height - top);
+    const pageCanvas = document.createElement('canvas');
+    pageCanvas.width = sourceCanvas.width;
+    pageCanvas.height = sliceHeight;
+
+    const context = pageCanvas.getContext('2d');
+    if (!context) {
+      continue;
+    }
+
+    context.drawImage(sourceCanvas, 0, top, sourceCanvas.width, sliceHeight, 0, 0, sourceCanvas.width, sliceHeight);
+    slices.push({
+      dataUrl: pageCanvas.toDataURL('image/png'),
+      heightPx: sliceHeight,
+    });
+  }
+
+  return slices;
+};
+
+const Performancestats = () => {
+  const navigate = useNavigate();
+  const reportContentRef = useRef<HTMLElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+  const [exportNotice, setExportNotice] = useState<{
+    kind: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const [weeklyMetrics, setWeeklyMetrics] = useState<WeeklyMetric[]>(FALLBACK_WEEKLY_METRICS);
+  const [subjectMetrics, setSubjectMetrics] = useState<SubjectMetric[]>(FALLBACK_SUBJECT_METRICS);
+  const [goalMetrics, setGoalMetrics] = useState<GoalMetric[]>(FALLBACK_GOAL_METRICS);
+  const [recommendations, setRecommendations] = useState<string[]>(FALLBACK_RECOMMENDATIONS);
+  const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(false);
+  const [analyticsNotice, setAnalyticsNotice] = useState('Syncing your latest performance insights...');
+
+  const studentIdentity = useMemo(() => loadStudentIdentity(), []);
+
+  const studentName = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return studentIdentity.name || 'Student';
+    }
+
+    return (window.localStorage.getItem('edamaa_student_display_name') || '').trim() || studentIdentity.name || 'Student';
+  }, [studentIdentity.name]);
+
+  const learnerKey = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return '';
+    }
+
+    return (window.localStorage.getItem(LEARNER_KEY_STORAGE_KEY) || '').trim();
+  }, []);
+
+  const [overallMetrics, setOverallMetrics] = useState<OverallMetrics>(() =>
+    deriveOverallMetrics(FALLBACK_SUBJECT_METRICS, FALLBACK_WEEKLY_METRICS)
+  );
 
   useEffect(() => {
-    const numMatch = String(value).match(/[\d.]+/);
-    if (!numMatch) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setDisplay(value);
+    if (!isExportMenuOpen) {
       return;
     }
-    const target: number = parseFloat(numMatch[0]);
-    const beforeNum: string = String(value).split(numMatch[0])[0] ?? '';
-    const afterNum: string = String(value).slice(
-      String(value).indexOf(numMatch[0]) + numMatch[0].length
-    );
-    const duration = 600;
-    const startTime: number = performance.now();
 
-    const tick = (now: number): void => {
-      const progress: number = Math.min((now - startTime) / duration, 1);
-      const eased: number = 1 - Math.pow(1 - progress, 3);
-      const current: number = target * eased;
-      const formatted: string = Number.isInteger(target)
-        ? String(Math.round(current))
-        : current.toFixed(1);
-      setDisplay(`${beforeNum}${formatted}${afterNum}`);
-      if (progress < 1) {
-        rafRef.current = requestAnimationFrame(tick);
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!exportMenuRef.current?.contains(event.target as Node)) {
+        setIsExportMenuOpen(false);
       }
     };
 
-    rafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsExportMenuOpen(false);
+      }
     };
-  }, [value]);
 
-  return <span>{display}</span>;
-};
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
 
-// ─── Circular Progress Ring ───────────────────────────────────────────────────
-
-const CircularProgress = ({ value, max, color, size = 56 }: CircularProgressProps): JSX.Element => {
-  const r: number = (size - 8) / 2;
-  const circ: number = 2 * Math.PI * r;
-  const pct: number = Math.min(value / max, 1);
-
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#f0f0f0" strokeWidth="4" />
-      <circle
-        cx={size / 2} cy={size / 2} r={r}
-        fill="none" stroke={color} strokeWidth="4"
-        strokeDasharray={circ}
-        strokeDashoffset={circ * (1 - pct)}
-        strokeLinecap="round"
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        style={{ transition: 'stroke-dashoffset 0.8s cubic-bezier(0.4,0,0.2,1)' }}
-      />
-    </svg>
-  );
-};
-
-// ─── Heatmap Calendar ─────────────────────────────────────────────────────────
-
-interface CalendarDay {
-  day: number;
-  intensity: number;
-  isActive: boolean;
-}
-
-const HeatmapCalendar = ({ activeCount = 14 }: HeatmapCalendarProps): JSX.Element => {
-  const days: CalendarDay[] = Array.from({ length: 28 }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (27 - i));
-    const isActive: boolean = i >= 28 - activeCount;
-    const intensity: number = isActive
-      ? i >= 21 ? 1 : 0.6 + (i - (28 - activeCount)) * 0.03
-      : 0;
-    return { day: d.getDate(), intensity, isActive };
-  });
-
-  const DAY_LETTERS: string[] = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-
-  return (
-    <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(7, 1fr)' }}>
-      {DAY_LETTERS.map((d, i) => (
-        <span key={`hdr-${i}`} className="text-center text-[9px] font-bold text-gray-300 pb-0.5">{d}</span>
-      ))}
-      {days.map((d, i) => (
-        <div
-          key={`day-${i}`}
-          title={d.isActive ? 'Active' : 'Inactive'}
-          className="aspect-square rounded-md flex items-center justify-center text-[9px] font-bold transition-all duration-300"
-          style={{
-            backgroundColor: d.isActive ? `rgba(249, 115, 22, ${d.intensity})` : '#f5f5f5',
-            color: d.intensity > 0.5 ? 'white' : d.isActive ? '#ea580c' : '#d1d5db',
-          }}
-        >
-          {d.day}
-        </div>
-      ))}
-    </div>
-  );
-};
-
-// ─── Leaderboard Row ──────────────────────────────────────────────────────────
-
-const MEDAL_MAP: Record<number, string> = { 1: '🥇', 2: '🥈', 3: '🥉' };
-
-const LeaderboardRow = ({ rank, name, score, isYou = false }: LeaderboardRowProps): JSX.Element => (
-  <div className={`flex items-center gap-2.5 px-3 py-2 rounded-xl transition-all
-    ${isYou
-      ? 'bg-linear-to-r from-[#3D08BA]/10 to-[#F68C29]/10 border border-[#3D08BA]/20'
-      : 'bg-gray-50 hover:bg-gray-100'}`}
-  >
-    <span className="text-sm w-5 text-center">
-      {MEDAL_MAP[rank] ?? <span className="text-xs font-bold text-gray-400">#{rank}</span>}
-    </span>
-    <div className="flex-1 min-w-0">
-      <p className={`text-xs font-semibold truncate ${isYou ? 'text-[#3D08BA]' : 'text-gray-700'}`}>
-        {name}{isYou && <span className="text-[10px] font-normal opacity-60"> (you)</span>}
-      </p>
-    </div>
-    <span className={`text-xs font-bold ${isYou ? 'text-[#3D08BA]' : 'text-gray-500'}`}>{score}%</span>
-    <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-      <div
-        className="h-full rounded-full"
-        style={{
-          width: `${score}%`,
-          background: isYou ? 'linear-linear(90deg,#3D08BA,#F68C29)' : '#d1d5db',
-        }}
-      />
-    </div>
-  </div>
-);
-
-// ─── Static Data ──────────────────────────────────────────────────────────────
-
-const LEADERBOARD: LeaderboardEntry[] = [
-  { rank: 1, name: 'Amara Osei',    score: 96 },
-  { rank: 2, name: 'Felix Kimani',  score: 93 },
-  { rank: 3, name: 'You',           score: 87, isYou: true },
-  { rank: 4, name: 'Priya Nair',    score: 85 },
-  { rank: 5, name: 'Lucas Bianchi', score: 83 },
-];
-
-const UPCOMING: UpcomingDeadline[] = [
-  { subject: 'Mathematics', type: 'Mid-term Exam', due: 'Feb 24', color: '#3D08BA', urgency: 'high' },
-  { subject: 'Science',     type: 'Lab Report',    due: 'Feb 22', color: '#F68C29', urgency: 'medium' },
-  { subject: 'History',     type: 'Essay',         due: 'Feb 20', color: '#10b981', urgency: 'high' },
-  { subject: 'Literature',  type: 'Book Review',   due: 'Mar 3',  color: '#6366f1', urgency: 'low' },
-];
-
-const BADGES: Badge[] = [
-  { icon: '🏆', label: 'Top Performer',   unlocked: true,  desc: 'Scored 90%+ in 3 subjects' },
-  { icon: '🔥', label: '14-Day Streak',   unlocked: true,  desc: 'Consistent daily learning' },
-  { icon: '⚡', label: 'Speed Learner',   unlocked: true,  desc: 'Completed 5 modules ahead of schedule' },
-  { icon: '📚', label: 'Scholar',         unlocked: false, desc: 'Reach 90% average score',          progress: 84, target: 90 },
-  { icon: '💎', label: 'Diamond Student', unlocked: false, desc: 'Maintain #1 rank for a month',     progress: 0,  target: 100 },
-  { icon: '🎯', label: '21-Day Legend',   unlocked: false, desc: '21-day study streak',              progress: 14, target: 21 },
-];
-
-const STUDY_GOALS: StudyGoal[] = [
-  { label: 'Weekly study target',     current: 10, target: 12, unit: 'hrs', color: '#3b82f6' },
-  { label: 'Quiz accuracy goal',      current: 84, target: 90, unit: '%',   color: '#3D08BA' },
-  { label: 'Assignment completion',   current: 9,  target: 11, unit: '',    color: '#9333ea' },
-];
-
-const ACTIVITY_ICON_MAP: Record<ActivityType, ActivityIconConfig> = {
-  quiz:       { icon: 'Book',  cls: 'text-blue-500 bg-blue-50' },
-  assignment: { icon: 'Cap',   cls: 'text-purple-500 bg-purple-50' },
-  study:      { icon: 'Clock', cls: 'text-amber-500 bg-amber-50' },
-  streak:     { icon: 'Fire',  cls: 'text-orange-500 bg-orange-50' },
-};
-
-const DEFAULT_STATS: PerformanceStat[] = [
-  {
-    id: 'avg-score',
-    label: 'Avg. Score',
-    value: '84%',
-    numericValue: 84,
-    maxValue: 100,
-    subLabel: 'Across all subjects',
-    trend: 6,
-    trendLabel: 'vs last month',
-    icon: 'Star',
-    accent: 'bg-amber-50',
-    iconColor: 'text-amber-500',
-    accentHex: '#f59e0b',
-    sparkColor: '#3D08BA',
-    detailHeading: 'Score Breakdown by Subject',
-    detailBody: 'Your average has climbed to 84%, driven by strong results in Math and Science. Keep focusing on Literature to close the gap.',
-    insight: '🎯 You score 12% higher on morning quizzes than evening ones.',
-    breakdown: [
-      { subject: 'Mathematics', score: 91, color: '#3D08BA' },
-      { subject: 'Science',     score: 88, color: '#F68C29' },
-      { subject: 'History',     score: 82, color: '#10b981' },
-      { subject: 'Literature',  score: 74, color: '#6366f1' },
-      { subject: 'Art',         score: 85, color: '#ec4899' },
-    ],
-    weeklyData: [76, 79, 81, 80, 83, 84, 84],
-    activities: [
-      { date: 'Feb 16', label: 'Math Quiz',        score: 95, type: 'quiz' },
-      { date: 'Feb 14', label: 'Science Test',      score: 88, type: 'quiz' },
-      { date: 'Feb 12', label: 'Literature Essay',  score: 74, type: 'assignment' },
-    ],
-    milestone: { text: 'Reach 90% average to unlock Scholar badge', progress: 84, target: 90 },
-  },
-  {
-    id: 'study-hours',
-    label: 'Study Hours',
-    value: '42h',
-    numericValue: 42,
-    maxValue: 50,
-    subLabel: 'This month',
-    trend: 12,
-    trendLabel: 'vs last month',
-    icon: 'Clock',
-    accent: 'bg-blue-50',
-    iconColor: 'text-blue-500',
-    accentHex: '#3b82f6',
-    sparkColor: '#3b82f6',
-    detailHeading: 'Weekly Study Distribution',
-    detailBody: 'You studied 42 hours this month — averaging 10.5 hours per week. Tuesday and Thursday are your most productive days.',
-    insight: '💡 Students who study 10+ hrs/week score 18% higher on average.',
-    weeklyData: [8, 11, 9, 14, 0, 6, 10],
-    dayLabels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-    activities: [
-      { date: 'Feb 17', label: 'Science revision – 2.5h', type: 'study' },
-      { date: 'Feb 15', label: 'Math problem sets – 3h',  type: 'study' },
-      { date: 'Feb 13', label: 'History reading – 1.5h',  type: 'study' },
-    ],
-    milestone: { text: 'Log 50h this month for Dedication badge', progress: 42, target: 50 },
-  },
-  {
-    id: 'streak',
-    label: 'Day Streak',
-    value: '14',
-    numericValue: 14,
-    maxValue: 21,
-    subLabel: 'Keep it up!',
-    trend: 0,
-    trendLabel: 'Personal best: 21',
-    icon: 'Fire',
-    accent: 'bg-orange-50',
-    iconColor: 'text-orange-500',
-    accentHex: '#f97316',
-    sparkColor: '#f97316',
-    detailHeading: 'Streak Calendar',
-    detailBody: "You've logged in and completed at least one task every day for 14 consecutive days. You're 7 days away from your personal best!",
-    insight: '🔥 Top 5% of students maintain streaks over 10 days.',
-    weeklyData: [1, 1, 1, 1, 1, 1, 1],
-    activities: [
-      { date: 'Feb 17', label: 'Day 14 completed',      type: 'streak' },
-      { date: 'Feb 10', label: 'Reached 7-day streak',  type: 'streak' },
-      { date: 'Feb 4',  label: 'Started current streak', type: 'streak' },
-    ],
-    milestone: { text: 'Reach 21 days to beat your personal best!', progress: 14, target: 21 },
-  },
-  {
-    id: 'assignments',
-    label: 'Assignments',
-    value: '9/11',
-    numericValue: 9,
-    maxValue: 11,
-    subLabel: 'Submitted on time',
-    trend: -1,
-    trendLabel: '2 pending',
-    icon: 'Cap',
-    accent: 'bg-purple-50',
-    iconColor: 'text-purple-600',
-    accentHex: '#9333ea',
-    sparkColor: '#9333ea',
-    detailHeading: 'Assignment Status',
-    detailBody: 'You have 2 pending assignments due this week. History essay (due Feb 20) and Science lab report (due Feb 22). Stay on track!',
-    insight: '📝 On-time submissions correlate with 15% higher final grades.',
-    activities: [
-      { date: 'Due Feb 20',      label: 'History Essay',     type: 'assignment' },
-      { date: 'Due Feb 22',      label: 'Science Lab Report', type: 'assignment' },
-      { date: 'Submitted Feb 15', label: 'Math Problem Set', score: 97, type: 'assignment' },
-    ],
-    weeklyData: [10, 9, 11, 10, 9, 9, 9],
-    milestone: { text: 'Submit 2 pending assignments to hit 100%', progress: 9, target: 11 },
-  },
-  {
-    id: 'rank',
-    label: 'Class Rank',
-    value: '#3',
-    numericValue: 3,
-    maxValue: 1,
-    subLabel: 'Out of 48 students',
-    trend: 2,
-    trendLabel: 'positions gained',
-    icon: 'Trophy',
-    accent: 'bg-emerald-50',
-    iconColor: 'text-emerald-500',
-    accentHex: '#10b981',
-    sparkColor: '#10b981',
-    detailHeading: 'Rank Progression',
-    detailBody: "You've climbed from #5 to #3 this month. You're only 3 average points away from the #1 spot. A strong push in Literature could get you there.",
-    insight: '🏆 At this pace, you could reach #1 by end of semester.',
-    weeklyData: [5, 5, 4, 4, 4, 3, 3],
-    activities: [
-      { date: 'Feb 10', label: 'Moved from #4 → #3',     type: 'quiz' },
-      { date: 'Feb 3',  label: 'Moved from #5 → #4',     type: 'quiz' },
-      { date: 'Jan 28', label: 'Best rank: #3 achieved',  type: 'quiz' },
-    ],
-    milestone: { text: 'Close the gap to #1 — only 3 score points away', progress: 84, target: 87 },
-  },
-];
-
-// ─── Main Component ───────────────────────────────────────────────────────────
-
-const Performancestats = ({
-  stats = DEFAULT_STATS,
-  onStatClick,
-}: PerformancestatsProps): JSX.Element => {
-  const [activeId, setActiveId] = useState<string | null>('avg-score');
-  const [activeTab, setActiveTab] = useState<PanelTab>('overview');
-  const [mounted, setMounted] = useState<boolean>(false);
-  const panelRef = useRef<HTMLDivElement | null>(null);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [isExportMenuOpen]);
 
   useEffect(() => {
-    setMounted(true);
-  }, []);
+    if (!exportNotice) {
+      return;
+    }
 
-  const handleClick = (stat: PerformanceStat): void => {
-    const next: string | null = stat.id === activeId ? null : stat.id;
-    setActiveId(next);
-    setActiveTab('overview');
-    onStatClick?.(stat);
-    if (next) {
-      setTimeout(() => panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+    const timer = window.setTimeout(() => setExportNotice(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [exportNotice]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const loadLiveAnalytics = async () => {
+      setIsAnalyticsLoading(true);
+      setAnalyticsNotice('Refreshing your private analytics...');
+
+      try {
+        const meParams = new URLSearchParams();
+        if (learnerKey) {
+          meParams.set('learnerKey', learnerKey);
+        }
+        const meQuery = meParams.toString() ? `?${meParams.toString()}` : '';
+
+        const requestAnalytics = async (endpoint: string, init?: RequestInit) => {
+          const response = await fetch(endpoint, {
+            signal: controller.signal,
+            ...init,
+          });
+          if (!response.ok) {
+            throw new Error(`Request failed with status ${response.status}`);
+          }
+          return (await response.json()) as PerformanceApiResponse;
+        };
+
+        const token = loadPersistedSupabaseAccessToken();
+        if (!token) {
+          const localDevSession = loadPersistedLocalDevAuthSession();
+          setAnalyticsNotice(
+            localDevSession
+              ? 'You are signed in with local development mode, so a sample analytics snapshot is shown.'
+              : 'Sign in to view your private analytics. A local snapshot is shown until authentication is available.'
+          );
+          return;
+        }
+
+        const payload = await requestAnalytics(`${API_BASE_URL}/student-analytics/me/performance${meQuery}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        const nextWeekly = normalizeWeeklyMetrics(payload.weeklyMetrics);
+        const nextSubjects = normalizeSubjectMetrics(payload.subjectMetrics);
+        const nextGoals = normalizeGoalMetrics(payload.goals);
+        const nextRecommendations = normalizeRecommendations(payload.recommendations);
+
+        const resolvedWeekly = nextWeekly.length > 0 ? nextWeekly : FALLBACK_WEEKLY_METRICS;
+        const resolvedSubjects = nextSubjects.length > 0 ? nextSubjects : FALLBACK_SUBJECT_METRICS;
+
+        setWeeklyMetrics(resolvedWeekly);
+        setSubjectMetrics(resolvedSubjects);
+        setGoalMetrics(nextGoals.length > 0 ? nextGoals : FALLBACK_GOAL_METRICS);
+        setRecommendations(nextRecommendations.length > 0 ? nextRecommendations : FALLBACK_RECOMMENDATIONS);
+
+        const derivedSummary = deriveOverallMetrics(resolvedSubjects, resolvedWeekly);
+        setOverallMetrics(normalizeSummary(payload.summary, derivedSummary));
+
+        const degraded = Boolean(payload.dataQuality?.degraded);
+        setAnalyticsNotice(
+          degraded
+            ? 'Your private analytics loaded, but a few data sources are still syncing.'
+            : 'Your private, account-linked analytics has been refreshed.'
+        );
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : '';
+        const isAuthFailure = message.includes('status 401') || message.includes('status 403');
+        setAnalyticsNotice(
+          isAuthFailure
+            ? 'Your session expired. Please sign in again to load private analytics.'
+            : 'Live analytics is temporarily unavailable, so your last known snapshot is being shown.'
+        );
+      } finally {
+        if (!cancelled) {
+          setIsAnalyticsLoading(false);
+        }
+      }
+    };
+
+    void loadLiveAnalytics();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [learnerKey]);
+
+  const strongestSubjects = useMemo(
+    () => [...subjectMetrics].sort((left, right) => right.averageScore - left.averageScore).slice(0, 2),
+    [subjectMetrics]
+  );
+
+  const riskSubjects = useMemo(
+    () => subjectMetrics.filter((subject) => subject.averageScore < 82 || subject.onTimeRate < 82),
+    [subjectMetrics]
+  );
+
+  const chart = useMemo(() => {
+    const width = 820;
+    const height = 280;
+    const padding = 28;
+    const scores = weeklyMetrics.map((item) => item.score);
+    return {
+      width,
+      height,
+      ...buildLinePath(scores, width, height, padding),
+    };
+  }, [weeklyMetrics]);
+
+  const buildReportSnapshot = () => {
+    const generatedAt = new Date().toLocaleString();
+    return {
+      studentName,
+      generatedAt,
+      overallScore: overallMetrics.overallScore,
+      completionRate: overallMetrics.completionRate,
+      onTimeRate: overallMetrics.onTimeRate,
+      averageStudyHours: overallMetrics.averageStudyHours,
+      trendDelta: overallMetrics.trendDelta,
+      attendanceRate: overallMetrics.attendanceRate,
+      strongestSubjects,
+      riskSubjects,
+      weeklyMetrics,
+      subjectMetrics,
+      recommendations,
+    };
+  };
+
+  const handleDownloadTextReport = () => {
+    const reportSnapshot = buildReportSnapshot();
+    const reportText = buildReportText(reportSnapshot);
+    const dateStamp = new Date().toISOString().split('T')[0];
+
+    downloadFile(
+      new Blob([reportText], { type: 'text/plain;charset=utf-8' }),
+      `edamaa-performance-report-${dateStamp}.txt`
+    );
+    setExportNotice({
+      kind: 'success',
+      message: 'Text report download started.',
+    });
+  };
+
+  const handleDownloadCsvReport = () => {
+    const reportSnapshot = buildReportSnapshot();
+    const reportCsv = buildReportCsv(reportSnapshot);
+    const dateStamp = new Date().toISOString().split('T')[0];
+
+    downloadFile(
+      new Blob([reportCsv], { type: 'text/csv;charset=utf-8' }),
+      `edamaa-performance-report-${dateStamp}.csv`
+    );
+    setExportNotice({
+      kind: 'success',
+      message: 'CSV report download started.',
+    });
+  };
+
+  const handleDownloadPdfReport = async () => {
+    if (isExportingPdf) {
+      return;
+    }
+
+    const reportElement = reportContentRef.current;
+    if (!reportElement) {
+      return;
+    }
+
+    setIsExportingPdf(true);
+
+    try {
+      const [html2canvasModule, pdfMakeModule, pdfFontsModule] = await Promise.all([
+        import('html2canvas'),
+        import('pdfmake/build/pdfmake'),
+        import('pdfmake/build/vfs_fonts'),
+      ]);
+
+      const html2canvas = html2canvasModule.default;
+      const pdfMake = resolvePdfMake(pdfMakeModule, pdfFontsModule);
+
+      const canvas = await html2canvas(reportElement, {
+        backgroundColor: '#f9fafb',
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        windowWidth: reportElement.scrollWidth,
+        windowHeight: reportElement.scrollHeight,
+      });
+
+      const pageWidthPt = 595.28;
+      const pageHeightPt = 841.89;
+      const marginPt = 24;
+      const usableWidthPt = pageWidthPt - marginPt * 2;
+      const usableHeightPt = pageHeightPt - marginPt * 2;
+      const slices = createCanvasSlices(canvas, usableWidthPt, usableHeightPt);
+
+      const reportSnapshot = buildReportSnapshot();
+
+      const content: Record<string, unknown>[] = [
+        {
+          text: `EDAMAA Performance Report - ${reportSnapshot.studentName}`,
+          style: 'title',
+        },
+        {
+          text: `Generated ${reportSnapshot.generatedAt}`,
+          style: 'meta',
+          margin: [0, 2, 0, 10],
+        },
+      ];
+
+      slices.forEach((slice, index) => {
+        const renderedHeightPt = (slice.heightPx * usableWidthPt) / canvas.width;
+        const imageBlock: Record<string, unknown> = {
+          image: slice.dataUrl,
+          width: usableWidthPt,
+          height: renderedHeightPt,
+          margin: [0, 0, 0, 6],
+        };
+
+        if (index < slices.length - 1) {
+          imageBlock.pageBreak = 'after';
+        }
+
+        content.push(imageBlock);
+      });
+
+      const docDefinition: Record<string, unknown> = {
+        pageSize: 'A4',
+        pageMargins: [marginPt, marginPt, marginPt, marginPt],
+        defaultStyle: {
+          font: 'Roboto',
+        },
+        content,
+        styles: {
+          title: {
+            fontSize: 16,
+            bold: true,
+            color: '#111827',
+          },
+          meta: {
+            fontSize: 10,
+            color: '#6b7280',
+          },
+        },
+        info: {
+          title: 'Edamaa Student Performance Report',
+          author: 'Edamaa Analytics',
+          subject: 'Student performance analytics',
+        },
+      };
+
+      const dateStamp = new Date().toISOString().split('T')[0];
+      const pdfDocument = pdfMake.createPdf(docDefinition);
+      const pdfBlob = await pdfDocument.getBlob();
+      downloadFile(pdfBlob, `edamaa-performance-report-${dateStamp}.pdf`);
+      setExportNotice({
+        kind: 'success',
+        message: 'PDF report download started.',
+      });
+    } catch (error) {
+      console.error('Unable to export visual PDF report.', error);
+      setExportNotice({
+        kind: 'error',
+        message: 'PDF export failed. Please try again.',
+      });
+    } finally {
+      setIsExportingPdf(false);
     }
   };
 
-  const active: PerformanceStat | undefined = stats.find((s) => s.id === activeId);
+  const handleSelectReportFormat = (format: ExportFormat) => {
+    setIsExportMenuOpen(false);
 
-  const TABS: PanelTab[] = ['overview', 'activity', 'leaderboard'];
-  const DAY_INITIALS: string[] = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    if (format === 'txt') {
+      handleDownloadTextReport();
+      return;
+    }
+
+    if (format === 'csv') {
+      handleDownloadCsvReport();
+      return;
+    }
+
+    void handleDownloadPdfReport();
+  };
+
+  const recommendationCards = [
+    {
+      title: 'Protect strong performance',
+      icon: CheckCircleIcon,
+      iconColor: 'text-emerald-600',
+    },
+    {
+      title: 'Improve deadline consistency',
+      icon: ClockIcon,
+      iconColor: 'text-[#3D08BA]',
+    },
+    {
+      title: 'Focus on areas that need attention',
+      icon: ExclamationTriangleIcon,
+      iconColor: 'text-amber-600',
+    },
+    {
+      title: 'Review report with your tutor',
+      icon: LightBulbIcon,
+      iconColor: 'text-blue-600',
+    },
+  ];
 
   return (
-    <div>
-      <style>{`
-        .perf-card { transition: all 0.22s cubic-bezier(0.34,1.56,0.64,1); }
-        .perf-card:hover { transform: translateY(-3px) scale(1.01); }
-        .perf-card.active { transform: translateY(-3px) scale(1.01); }
+    <div className="min-h-screen bg-gray-50">
+      <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur-sm">
+        <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
+          <button
+            onClick={() => navigate(-1)}
+            className="inline-flex items-center justify-center rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-100"
+            aria-label="Back"
+          >
+            <ArrowLeftIcon className="h-6 w-6" />
+          </button>
 
-        @keyframes slideDown {
-          from { opacity: 0; transform: translateY(-10px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes pulse-dot {
-          0%,100% { transform: scale(1); opacity:1; }
-          50%      { transform: scale(1.5); opacity:0.7; }
-        }
-        .panel-enter { animation: slideDown 0.25s ease; }
-        .live-dot    { animation: pulse-dot 2s infinite; }
-        .progress-bar { transition: width 0.9s cubic-bezier(0.4,0,0.2,1); }
-        .badge-locked { filter: grayscale(1); opacity: 0.45; }
-        .badge-card:hover { transform: translateY(-2px); }
-        .badge-card { transition: transform 0.2s ease; }
-      `}</style>
-
-      {/* ── Header ────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <div className="flex items-center gap-2 mb-0.5">
-            {icons.Brain('w-4 h-4 text-[#3D08BA]')}
-            <h2
-              className="text-gray-900"
-              style={{ fontSize: '1.1rem', fontWeight: 800 }}
-            >
-              My Performance
-            </h2>
-            <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-50 text-emerald-600 font-semibold px-2 py-0.5 rounded-full border border-emerald-100">
-              <span className="live-dot w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
-              On track
-            </span>
+          <div className="text-center">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Performance Analytics</p>
+            <h1 className="text-lg font-bold text-gray-900 sm:text-xl">My Performance Report</h1>
           </div>
-          <p className="text-xs text-gray-400 pl-6">February 2025</p>
-        </div>
-        <button className="flex items-center gap-1.5 text-xs bg-[#3D08BA] text-white px-3 py-1.5 rounded-lg font-medium hover:bg-[#3D08BA]/90 transition-colors">
-          {icons.TrendUp('w-3.5 h-3.5')}
-          Full Report
-        </button>
-      </div>
 
-      {/* ── Semester Progress Bar ──────────────────────────────────────── */}
-      <div className="mb-4 bg-white border border-gray-100 rounded-xl p-3 shadow-sm">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Semester Progress</span>
-          <span className="text-xs font-bold text-[#3D08BA]">Week 7 of 16</span>
-        </div>
-        <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-          <div
-            className="h-full rounded-full progress-bar"
-            style={{
-              width: mounted ? '44%' : '0%',
-              background: 'linear-linear(90deg, #3D08BA, #F68C29)',
-            }}
-          />
-        </div>
-        <div className="flex justify-between mt-1.5">
-          <span className="text-[10px] text-gray-400">Started Jan 6</span>
-          <span className="text-[10px] text-[#F68C29] font-semibold">Mid-terms in 5 days</span>
-          <span className="text-[10px] text-gray-400">Ends May 30</span>
-        </div>
-      </div>
-
-      {/* ── Stat Cards Grid ────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-3">
-        {stats.map((stat: PerformanceStat) => {
-          const isActive: boolean = activeId === stat.id;
-
-          return (
+          <div ref={exportMenuRef} className="relative">
             <button
-              key={stat.id}
-              onClick={() => handleClick(stat)}
-              aria-pressed={isActive}
-              className={`perf-card group relative text-left w-full bg-white rounded-2xl border p-3.5 shadow-sm
-                focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3D08BA]
-                ${isActive
-                  ? 'active border-[#3D08BA] ring-2 ring-[#3D08BA]/15 shadow-lg'
-                  : 'border-gray-200 hover:border-[#3D08BA]/30 hover:shadow-md'}`}
+              type="button"
+              onClick={() => setIsExportMenuOpen((previous) => !previous)}
+              disabled={isExportingPdf}
+              className={`inline-flex items-center gap-2 rounded-lg bg-[#3D08BA] px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#2d0692] ${
+                isExportingPdf ? 'cursor-not-allowed opacity-70' : ''
+              }`}
+              aria-haspopup="menu"
+              aria-expanded={isExportMenuOpen}
             >
-              {/* Icon + ring */}
-              <div className="flex items-start justify-between mb-2">
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${stat.accent} transition-transform duration-200 group-hover:scale-110`}>
-                  {icons[stat.icon](`w-4 h-4 ${stat.iconColor}`)}
-                </div>
-                <CircularProgress
-                  value={stat.numericValue}
-                  max={stat.maxValue === 1 ? stat.numericValue : stat.maxValue}
-                  color={stat.accentHex}
-                  size={34}
-                />
-              </div>
-
-              {/* Value */}
-              <p className="text-2xl font-bold text-gray-900 leading-none mb-0.5">
-                {mounted ? <AnimatedValue value={stat.value} /> : stat.value}
-              </p>
-              <p className="text-xs font-semibold text-gray-700 mb-0.5">{stat.label}</p>
-              <p className="text-[10px] text-gray-400 leading-tight mb-2">{stat.subLabel}</p>
-
-              {/* Sparkline */}
-              {stat.weeklyData && (
-                <div className="-mx-1 mb-2">
-                  <Sparkline data={stat.weeklyData} color={stat.sparkColor} />
-                </div>
-              )}
-
-              {/* Trend badge */}
-              {stat.trend !== 0 ? (
-                <span className={`inline-flex items-center gap-0.5 text-[10px] font-bold
-                  ${stat.trend > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                  {stat.trend > 0 ? icons.ChevUp('w-3 h-3') : icons.ChevDown('w-3 h-3')}
-                  {Math.abs(stat.trend)}{stat.trendLabel.includes('pos') ? '' : '%'} {stat.trendLabel}
-                </span>
-              ) : (
-                <span className="text-[10px] text-gray-400">{stat.trendLabel}</span>
-              )}
-
-              {/* Active indicator bar */}
-              <div className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-b-2xl bg-[#3D08BA] transition-opacity duration-200 ${isActive ? 'opacity-100' : 'opacity-0'}`} />
+              <ArrowDownTrayIcon className="h-4 w-4" />
+              <span>{isExportingPdf ? 'Preparing PDF...' : 'Full Report'}</span>
+              <ChevronDownIcon
+                className={`h-4 w-4 transition-transform ${isExportMenuOpen ? 'rotate-180' : ''}`}
+              />
             </button>
-          );
-        })}
-      </div>
 
-      {/* ── Expanded Detail Panel ──────────────────────────────────────── */}
-      {active && (
-        <div ref={panelRef} className="panel-enter bg-white border border-gray-200 rounded-2xl shadow-md overflow-hidden">
-
-          {/* Panel Header */}
-          <div className="px-5 pt-5 pb-0 border-b border-gray-100">
-            <div className="flex items-start justify-between gap-4 pb-3">
-              <div className="flex items-center gap-3">
-                <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${active.accent}`}>
-                  {icons[active.icon](`w-5 h-5 ${active.iconColor}`)}
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-gray-900">{active.detailHeading}</p>
-                  <p className="text-xs text-gray-400">{active.subLabel}</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="text-right">
-                  <p className="text-2xl font-bold text-gray-900">
-                    {active.value}
-                  </p>
-                  {active.trend !== 0 ? (
-                    <span className={`text-xs font-bold ${active.trend > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                      {active.trend > 0 ? '↑' : '↓'} {Math.abs(active.trend)}{active.trendLabel.includes('pos') ? '' : '%'} {active.trendLabel}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-gray-400">{active.trendLabel}</span>
-                  )}
-                </div>
+            {isExportMenuOpen && !isExportingPdf && (
+              <div
+                role="menu"
+                className="absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
+              >
                 <button
-                  onClick={() => setActiveId(null)}
-                  aria-label="Close panel"
-                  className="w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors"
+                  type="button"
+                  role="menuitem"
+                  onClick={() => handleSelectReportFormat('txt')}
+                  className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50"
                 >
-                  {icons.X('w-3.5 h-3.5 text-gray-500')}
+                  <span>Download as Text</span>
+                  <span className="text-xs font-semibold text-gray-500">TXT</span>
                 </button>
-              </div>
-            </div>
-
-            {/* Tabs */}
-            <div className="flex gap-0 -mb-px">
-              {TABS.map((tab: PanelTab) => (
                 <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`px-4 py-2 text-xs font-semibold capitalize border-b-2 transition-colors
-                    ${activeTab === tab
-                      ? 'text-[#3D08BA] border-[#3D08BA]'
-                      : 'text-gray-400 border-transparent hover:text-gray-600'}`}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => handleSelectReportFormat('pdf')}
+                  className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50"
                 >
-                  {tab}
+                  <span>Download as PDF</span>
+                  <span className="text-xs font-semibold text-gray-500">PDF</span>
                 </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Panel Body */}
-          <div className="p-5">
-
-            {/* ── TAB: Overview ──────────────────────────────────── */}
-            {activeTab === 'overview' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-
-                {/* Col 1 – Summary + Insight + Milestone */}
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Summary</p>
-                    <p className="text-sm text-gray-700 leading-relaxed">{active.detailBody}</p>
-                  </div>
-
-                  <div className="flex gap-2 p-3 rounded-xl border border-[#3D08BA]/15 bg-linear-to-br from-[#3D08BA]/5 to-[#F68C29]/5">
-                    {icons.Bulb('w-4 h-4 text-[#3D08BA] shrink-0 mt-0.5')}
-                    <p className="text-xs text-[#3D08BA] leading-relaxed">{active.insight}</p>
-                  </div>
-
-                  {active.milestone && (
-                    <div>
-                      <div className="flex items-center gap-1 mb-1.5">
-                        {icons.Target('w-3.5 h-3.5 text-gray-400')}
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Next Goal</p>
-                      </div>
-                      <p className="text-xs text-gray-700 mb-2">{active.milestone.text}</p>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-                          <div
-                            className="h-full rounded-full progress-bar"
-                            style={{
-                              width: mounted ? `${(active.milestone.progress / active.milestone.target) * 100}%` : '0%',
-                              background: `linear-linear(90deg, ${active.accentHex}, #F68C29)`,
-                            }}
-                          />
-                        </div>
-                        <span className="text-[10px] font-bold text-gray-500 shrink-0">
-                          {active.milestone.progress}/{active.milestone.target}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Avg-score–specific circular summary */}
-                  {active.id === 'avg-score' && (
-                    <div>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Overall Score</p>
-                      <div className="flex items-center gap-3">
-                        <div className="relative">
-                          <CircularProgress value={84} max={100} color="#3D08BA" size={64} />
-                          <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-[#3D08BA]">84%</span>
-                        </div>
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
-                            <span className="text-[10px] text-gray-600">Strongest: Math 91%</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />
-                            <span className="text-[10px] text-gray-600">Needs work: Literature 74%</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Col 2 – Chart or Breakdown */}
-                <div>
-                  {active.breakdown ? (
-                    <div>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">By Subject</p>
-                      <div className="space-y-3">
-                        {active.breakdown.map((b: SubjectBreakdown) => (
-                          <div key={b.subject}>
-                            <div className="flex justify-between mb-1">
-                              <span className="text-xs text-gray-600 font-medium">{b.subject}</span>
-                              <span className="text-xs font-bold" style={{ color: b.color }}>{b.score}%</span>
-                            </div>
-                            <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                              <div
-                                className="h-full rounded-full progress-bar"
-                                style={{ width: mounted ? `${b.score}%` : '0%', backgroundColor: b.color }}
-                              />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : active.id === 'streak' ? (
-                    <div>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Last 28 Days</p>
-                      <HeatmapCalendar activeCount={14} />
-                      <div className="flex items-center gap-2 mt-3">
-                        {([
-                          { bg: 'bg-orange-100', label: 'Inactive' },
-                          { bg: 'bg-orange-500', label: 'Active' },
-                        ] as { bg: string; label: string }[]).map(({ bg, label }) => (
-                          <div key={label} className="flex gap-1 items-center">
-                            <span className={`w-3 h-3 rounded-sm ${bg} inline-block`} />
-                            <span className="text-[10px] text-gray-400">{label}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
-                        {active.id === 'rank' ? 'Rank Trend' : '7-Day Trend'}
-                      </p>
-                      {active.weeklyData && (
-                        <div className="bg-gray-50 rounded-xl p-3">
-                          <Sparkline data={active.weeklyData} color={active.sparkColor} />
-                          <div className="flex justify-between mt-1">
-                            {DAY_INITIALS.map((d, i) => (
-                              <span key={i} className="text-[9px] text-gray-400">{d}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Study-hours bar chart */}
-                      {active.id === 'study-hours' && active.weeklyData && (
-                        <div className="mt-3">
-                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Daily Breakdown</p>
-                          <div className="flex items-end gap-1 h-16">
-                            {active.weeklyData.map((v: number, i: number) => {
-                              const maxHours: number = Math.max(...(active.weeklyData as number[]));
-                              return (
-                                <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                                  <span className="text-[8px] text-gray-400">{v > 0 ? `${v}h` : ''}</span>
-                                  <div
-                                    className="w-full rounded-sm transition-all duration-700"
-                                    style={{
-                                      height: v > 0 ? `${(v / maxHours) * 48}px` : '4px',
-                                      backgroundColor: v === maxHours ? '#3D08BA' : v === 0 ? '#f0f0f0' : '#a5b4fc',
-                                    }}
-                                  />
-                                  <span className="text-[8px] text-gray-400">{DAY_INITIALS[i]}</span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Pending assignments */}
-                      {active.id === 'assignments' && (
-                        <div className="mt-3 space-y-2">
-                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Pending</p>
-                          {UPCOMING.filter((u: UpcomingDeadline) => u.urgency !== 'low').slice(0, 2).map((u, i) => (
-                            <div key={i} className={`flex items-center gap-2 p-2.5 rounded-xl border
-                              ${u.urgency === 'high' ? 'bg-red-50 border-red-100' : 'bg-amber-50 border-amber-100'}`}>
-                              {icons.Exclamation(`w-4 h-4 shrink-0 ${u.urgency === 'high' ? 'text-red-500' : 'text-amber-500'}`)}
-                              <div className="flex-1">
-                                <p className="text-xs font-semibold text-gray-800">{u.subject} – {u.type}</p>
-                                <p className={`text-[10px] ${u.urgency === 'high' ? 'text-red-500' : 'text-amber-500'}`}>Due {u.due}</p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Col 3 – Upcoming Deadlines + Mini Badges */}
-                <div className="space-y-4">
-                  <div>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Upcoming Deadlines</p>
-                    <div className="space-y-2">
-                      {UPCOMING.map((item: UpcomingDeadline, i: number) => (
-                        <div key={i} className="flex items-center gap-2.5 p-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors">
-                          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-semibold text-gray-800 truncate">{item.subject}</p>
-                            <p className="text-[10px] text-gray-400">{item.type}</p>
-                          </div>
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md
-                            ${item.urgency === 'high'   ? 'bg-red-50 text-red-600'
-                            : item.urgency === 'medium' ? 'bg-amber-50 text-amber-600'
-                            : 'bg-gray-100 text-gray-500'}`}>
-                            {item.due}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Your Badges</p>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {BADGES.slice(0, 6).map((b: Badge, i: number) => (
-                        <div
-                          key={i}
-                          title={b.desc}
-                          className={`badge-card flex flex-col items-center p-2 rounded-xl border
-                            ${b.unlocked ? 'border-amber-200 bg-amber-50' : 'border-gray-100 badge-locked bg-gray-50'}`}
-                        >
-                          <span className="text-xl">{b.icon}</span>
-                          <span className="text-[9px] font-semibold text-center text-gray-600 mt-0.5 leading-tight">{b.label}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => handleSelectReportFormat('csv')}
+                  className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50"
+                >
+                  <span>Download as CSV</span>
+                  <span className="text-xs font-semibold text-gray-500">CSV</span>
+                </button>
               </div>
             )}
+          </div>
+        </div>
+      </header>
 
-            {/* ── TAB: Activity ──────────────────────────────────── */}
-            {activeTab === 'activity' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+      <main ref={reportContentRef} className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+        {exportNotice && (
+          <section
+            className={`rounded-xl border px-4 py-3 text-sm ${
+              exportNotice.kind === 'success'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                : 'border-rose-200 bg-rose-50 text-rose-700'
+            }`}
+          >
+            {exportNotice.message}
+          </section>
+        )}
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-sm text-gray-500">Hello {studentName}, here is your latest learning analytics summary.</p>
+              <h2 className="mt-1 text-xl font-semibold text-gray-900">Executive Overview</h2>
+              <p className="mt-1 text-xs text-gray-500">
+                {isAnalyticsLoading ? 'Updating from backend...' : analyticsNotice}
+              </p>
+            </div>
+            <p className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-700">
+              <ArrowTrendingUpIcon className="h-4 w-4" />
+              {formatTrend(overallMetrics.trendDelta)} in the last 12 weeks
+            </p>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <article className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs text-gray-500">Overall score</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{formatPercent(overallMetrics.overallScore)}</p>
+            </article>
+            <article className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs text-gray-500">Completion rate</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{formatPercent(overallMetrics.completionRate)}</p>
+            </article>
+            <article className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs text-gray-500">On-time submissions</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{formatPercent(overallMetrics.onTimeRate)}</p>
+            </article>
+            <article className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs text-gray-500">Attendance</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{formatPercent(overallMetrics.attendanceRate)}</p>
+            </article>
+            <article className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs text-gray-500">Avg study / week</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{overallMetrics.averageStudyHours}h</p>
+            </article>
+          </div>
+        </section>
+
+        <section className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <div className="space-y-6">
+            <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Recent Activity</p>
-                  <div className="space-y-2">
-                    {(active.activities ?? []).map((a: ActivityEntry, i: number) => {
-                      const cfg: ActivityIconConfig = ACTIVITY_ICON_MAP[a.type];
+                  <h3 className="text-lg font-semibold text-gray-900">Performance Trend (12 Weeks)</h3>
+                  <p className="text-sm text-gray-600">Tracks your average score progression over time.</p>
+                </div>
+                <ChartBarIcon className="h-5 w-5 text-gray-500" />
+              </div>
+
+              <div className="overflow-x-auto">
+                <svg
+                  viewBox={`0 0 ${chart.width} ${chart.height}`}
+                  className="h-64 min-w-[720px]"
+                  role="img"
+                  aria-label="Weekly performance trend chart"
+                >
+                  <defs>
+                    <linearGradient id="scoreFill" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stopColor="#3D08BA" stopOpacity="0.3" />
+                      <stop offset="100%" stopColor="#3D08BA" stopOpacity="0" />
+                    </linearGradient>
+                  </defs>
+
+                  {[0, 1, 2, 3, 4].map((line) => {
+                    const y = 28 + line * 56;
+                    return <line key={line} x1="28" x2="792" y1={y} y2={y} stroke="#e5e7eb" strokeWidth="1" />;
+                  })}
+
+                  {chart.areaPath && <path d={chart.areaPath} fill="url(#scoreFill)" />}
+                  {chart.linePath && (
+                    <path d={chart.linePath} fill="none" stroke="#3D08BA" strokeWidth="3" strokeLinecap="round" />
+                  )}
+
+                  {weeklyMetrics.map((week, index) => {
+                    const x = 28 + (index / Math.max(1, weeklyMetrics.length - 1)) * (chart.width - 56);
+                    const y = chart.height - 28 - ((week.score - chart.min) / chart.span) * (chart.height - 56);
+
+                    return (
+                      <g key={week.week}>
+                        <circle cx={x} cy={y} r="4" fill="#3D08BA" />
+                        <text x={x} y={chart.height - 8} textAnchor="middle" fontSize="11" fill="#6b7280">
+                          {week.week}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </svg>
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Subject-Level Analytics</h3>
+                  <p className="text-sm text-gray-600">Detailed performance and consistency by subject.</p>
+                </div>
+                <CalendarDaysIcon className="h-5 w-5 text-gray-500" />
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-xs uppercase tracking-wide text-gray-500">
+                      <th className="px-2 py-2 font-semibold">Subject</th>
+                      <th className="px-2 py-2 font-semibold">Score</th>
+                      <th className="px-2 py-2 font-semibold">Completion</th>
+                      <th className="px-2 py-2 font-semibold">On-time</th>
+                      <th className="px-2 py-2 font-semibold">Attempts</th>
+                      <th className="px-2 py-2 font-semibold">Trend</th>
+                      <th className="px-2 py-2 font-semibold">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {subjectMetrics.map((subject) => {
+                      const status = getStatusLabel(subject.averageScore);
                       return (
-                        <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors">
-                          <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${cfg.cls}`}>
-                            {icons[cfg.icon]('w-3.5 h-3.5')}
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-semibold text-gray-800 truncate">{a.label}</p>
-                            <p className="text-[10px] text-gray-400">{a.date}</p>
-                          </div>
-                          {a.score !== undefined && (
-                            <span className="text-sm font-bold text-[#3D08BA]">{a.score}%</span>
-                          )}
-                        </div>
+                        <tr key={subject.subject} className="border-b border-gray-100 last:border-b-0">
+                          <td className="px-2 py-3 font-semibold text-gray-900">{subject.subject}</td>
+                          <td className="px-2 py-3 text-gray-700">{formatPercent(subject.averageScore)}</td>
+                          <td className="px-2 py-3 text-gray-700">{formatPercent(subject.completionRate)}</td>
+                          <td className="px-2 py-3 text-gray-700">{formatPercent(subject.onTimeRate)}</td>
+                          <td className="px-2 py-3 text-gray-700">{subject.attempts}</td>
+                          <td
+                            className={`px-2 py-3 font-semibold ${
+                              subject.trend >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                            }`}
+                          >
+                            {formatTrend(subject.trend)}
+                          </td>
+                          <td className="px-2 py-3">
+                            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${status.classes}`}>
+                              {status.label}
+                            </span>
+                          </td>
+                        </tr>
                       );
                     })}
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Study Goals</p>
-                  <div className="space-y-3">
-                    {STUDY_GOALS.map((g: StudyGoal, i: number) => (
-                      <div key={i}>
-                        <div className="flex justify-between mb-1">
-                          <span className="text-xs text-gray-600">{g.label}</span>
-                          <span className="text-xs font-bold" style={{ color: g.color }}>
-                            {g.current}/{g.target}{g.unit}
-                          </span>
-                        </div>
-                        <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                          <div
-                            className="h-full rounded-full progress-bar"
-                            style={{
-                              width: mounted ? `${(g.current / g.target) * 100}%` : '0%',
-                              backgroundColor: g.color,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-4 p-3 rounded-xl bg-linear-to-br from-[#3D08BA]/8 to-[#F68C29]/8 border border-[#3D08BA]/10">
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                      {icons.Sparkles('w-3.5 h-3.5 text-[#3D08BA]')}
-                      <p className="text-[10px] font-bold text-[#3D08BA] uppercase tracking-wide">AI Study Tip</p>
-                    </div>
-                    <p className="text-xs text-gray-700 leading-relaxed">
-                      Based on your data, scheduling a 45-min Literature session on Wednesday mornings could boost your average by <strong>3–5%</strong>.
-                    </p>
-                  </div>
-                </div>
+                  </tbody>
+                </table>
               </div>
-            )}
-
-            {/* ── TAB: Leaderboard ──────────────────────────────────── */}
-            {activeTab === 'leaderboard' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                <div>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Class Rankings</p>
-                  <div className="space-y-2">
-                    {LEADERBOARD.map((row: LeaderboardEntry) => (
-                      <LeaderboardRow key={row.rank} {...row} />
-                    ))}
-                  </div>
-                  <div className="mt-3 p-2.5 rounded-xl bg-gray-50 border border-gray-100">
-                    <p className="text-[10px] text-gray-500 text-center">
-                      <strong className="text-[#3D08BA]">3 score points</strong> separate you from #1
-                    </p>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Achievement Badges</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {BADGES.map((b: Badge, i: number) => (
-                      <div
-                        key={i}
-                        title={b.desc}
-                        className={`badge-card p-3 rounded-xl border flex items-start gap-2
-                          ${b.unlocked
-                            ? 'bg-linear-to-br from-amber-50 to-orange-50 border-amber-200'
-                            : 'border-gray-100 badge-locked bg-gray-50'}`}
-                      >
-                        <span className="text-2xl shrink-0">{b.icon}</span>
-                        <div className="min-w-0">
-                          <p className="text-[11px] font-bold text-gray-700 leading-tight">{b.label}</p>
-                          <p className="text-[9px] text-gray-400 mt-0.5">{b.desc}</p>
-                          {!b.unlocked && b.progress !== undefined && b.target !== undefined && (
-                            <div className="mt-1.5">
-                              <div className="w-full h-1 bg-gray-200 rounded-full">
-                                <div
-                                  className="h-full bg-gray-400 rounded-full progress-bar"
-                                  style={{ width: mounted ? `${(b.progress / b.target) * 100}%` : '0%' }}
-                                />
-                              </div>
-                              <p className="text-[8px] text-gray-400 mt-0.5">{b.progress}/{b.target}</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
+            </article>
           </div>
-        </div>
-      )}
+
+          <div className="space-y-6">
+            <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="mb-3 text-lg font-semibold text-gray-900">Strengths</h3>
+              <div className="space-y-2">
+                {strongestSubjects.map((subject) => (
+                  <div key={subject.subject} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                    <p className="font-semibold text-emerald-800">{subject.subject}</p>
+                    <p className="text-sm text-emerald-700">
+                      Score {formatPercent(subject.averageScore)} | On-time {formatPercent(subject.onTimeRate)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="mb-3 text-lg font-semibold text-gray-900">Areas to Improve</h3>
+              {riskSubjects.length === 0 ? (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  Great consistency right now. Keep your current learning rhythm.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {riskSubjects.map((subject) => (
+                    <div key={subject.subject} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                      <p className="font-semibold text-amber-800">{subject.subject}</p>
+                      <p className="text-sm text-amber-700">
+                        Score {formatPercent(subject.averageScore)} | On-time {formatPercent(subject.onTimeRate)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+
+            <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="mb-3 text-lg font-semibold text-gray-900">Goal Progress</h3>
+              <div className="space-y-3">
+                {goalMetrics.map((goal) => {
+                  const progress = clamp((goal.current / goal.target) * 100, 0, 100);
+                  return (
+                    <div key={goal.id}>
+                      <div className="mb-1 flex items-center justify-between text-sm">
+                        <p className="font-medium text-gray-800">{goal.title}</p>
+                        <p className="text-gray-600">
+                          {goal.current}
+                          {goal.suffix} / {goal.target}
+                          {goal.suffix}
+                        </p>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-gray-100">
+                        <div
+                          className="h-full rounded-full bg-linear-to-r from-[#3D08BA] to-[#F68C29]"
+                          style={{ width: `${progress}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h3 className="mb-3 text-lg font-semibold text-gray-900">Recommended Actions</h3>
+              <div className="space-y-2 text-sm">
+                {recommendations.map((recommendation, index) => {
+                  const card = recommendationCards[index] || recommendationCards[recommendationCards.length - 1];
+                  const Icon = card.icon;
+                  return (
+                    <div key={`${card.title}-${index}`} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-gray-700">
+                      <p className="inline-flex items-center gap-2 font-semibold text-gray-900">
+                        <Icon className={`h-4 w-4 ${card.iconColor}`} />
+                        {card.title}
+                      </p>
+                      <p className="mt-1">{recommendation}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </article>
+          </div>
+        </section>
+      </main>
     </div>
   );
 };

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { FaSearch, FaBell, FaCog, FaBook, FaUserGraduate, FaMoneyBillWave, FaHome, FaClock, FaCalendar, FaCopy, FaVideo, FaPlus } from 'react-icons/fa';
+import { useState, useEffect } from 'react';
+import { FaSearch, FaBook, FaUserGraduate, FaMoneyBillWave, FaHome, FaClock, FaCalendar, FaCopy, FaVideo, FaPlus, FaBell, FaCog } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import NewLogo from '../../../components/common/NewLogo';
 import { students } from './lists/students';
@@ -8,8 +8,13 @@ import 'react-toastify/dist/ReactToastify.css';
 import ScheduleClass, { type NewClassData } from '../components/ScheduleClass';
 import { motion, AnimatePresence } from 'framer-motion';
 import TutorProfile from './TutorProfile';
+import {
+  fetchTeachingSubscriptionState,
+  type TeachingSubscriptionState,
+} from '../../subscriptions/utils/teachingSubscriptionApi';
 
 const TutorDashboard = () => {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('classroom');
   const [showProfile, setShowProfile] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
@@ -22,6 +27,11 @@ const TutorDashboard = () => {
   const [description, setDescription] = useState('Enter your bio here...');
   const [showMobileSearch, setShowMobileSearch] = useState(false);
 
+  // subscription state (mimic school dashboard pattern)
+  const [subscriptionState, setSubscriptionState] = useState<TeachingSubscriptionState | null>(null);
+
+  // menu open toggler for profile/mobile menu (todo: implement if needed)
+  // const [menuOpen, setMenuOpen] = useState(false);
 
    const handleProfileUpdate = (updatedProfile: { 
     name: string;
@@ -60,6 +70,27 @@ const TutorDashboard = () => {
   ]);
 
   const classroomId = '224091556';
+  const isSubscriptionActive = Boolean(subscriptionState?.isActive);
+  const offlineScheduleLimit = subscriptionState?.features.maxScheduledOfflineClasses ?? 1;
+
+  const openSubscriptionPage = (message: string) => {
+    toast.info(message);
+    navigate('/subscription?actor=tutor');
+  };
+
+  const loadSubscriptionState = async () => {
+    try {
+      const payload = await fetchTeachingSubscriptionState('tutor');
+      setSubscriptionState(payload);
+    } catch {
+      setSubscriptionState(null);
+    }
+  };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadSubscriptionState();
+  }, []);
 
   const copyToClipboard = async () => {
     try {
@@ -72,20 +103,35 @@ const TutorDashboard = () => {
   }; 
 
   const handleScheduleClass = (newClass: NewClassData) => {
-    setUpcomingClasses([...upcomingClasses, newClass]);
+    if (!isSubscriptionActive && upcomingClasses.length >= offlineScheduleLimit) {
+      openSubscriptionPage(
+        `Free mode allows up to ${offlineScheduleLimit} scheduled offline class. Upgrade to unlock unlimited scheduling.`
+      );
+      return;
+    }
+
+    setUpcomingClasses((previous) => [...previous, newClass]);
+  };
+
+  const handleOpenScheduleClass = () => {
+    if (!isSubscriptionActive && upcomingClasses.length >= offlineScheduleLimit) {
+      openSubscriptionPage(
+        `Free mode allows up to ${offlineScheduleLimit} scheduled offline class. Upgrade to schedule more.`
+      );
+      return;
+    }
+
+    setShowScheduleModal(true);
   };
 
   const handleGoLive = () => {
     toast.info('Starting live session...');
   };
 
-  const navigate = useNavigate();
-  const handleStudentListClick = () => {
-    navigate('/student-list');
-  };
-  const handleCourseClick = () =>{
-    navigate('/courses')
-  }
+  const handleStudentListClick = () => navigate('/student-list');
+  const handleCourseClick = () => navigate('/courses');
+  // logout handler removed; not used
+
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -253,8 +299,9 @@ const TutorDashboard = () => {
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className={`max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6 pb-24 sm:pb-28 ${showProfile ? 'blur-sm' : ''}`}>
+      {/* MAIN CONTENT */}
+      <main className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 pb-24 md:pb-8">
+
         {/* Stats Cards */}
         <div className="grid grid-cols-3 gap-2 sm:gap-3 md:gap-4 mb-4 sm:mb-6">
           <div className="bg-white rounded-lg sm:rounded-xl p-3 sm:p-4 md:p-6 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
@@ -392,7 +439,7 @@ const TutorDashboard = () => {
                       <motion.button 
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
-                        className="bg-[#F68C29] text-white px-4 py-1.5 rounded-lg font-semibold hover:bg-opacity-90 transition-all text-xs sm:text-sm md:text-base"
+                        className="bg-[#F68C29] text-white px-4 py-1.5 rounded-lg font-semibold hover:bg-[#e07d20] transition-colors text-xs sm:text-sm shadow-md"
                       >
                         Start Class
                       </motion.button>
@@ -404,66 +451,60 @@ const TutorDashboard = () => {
           )}
         </AnimatePresence>
 
-        {activeTab === 'live' && (
-          <div className="mb-6">
-            <h3 className="text-base sm:text-lg md:text-xl font-bold text-gray-800 mb-4 sm:mb-6">Live Session</h3>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-              {/* Go Live Card */}
-                    <div className="relative bg-linear-to-br from-[#3D08BA] via-[#7B2FBE] to-[#fd8310] rounded-xl sm:rounded-2xl p-6 sm:p-8 shadow-2xl hover:shadow-[0_20px_60px_-15px_rgba(61,8,186,0.6)] transition-all duration-300 transform hover:scale-105 overflow-hidden">
-        {/* Animated background overlay */}
-        <div className="absolute inset-0 bg-linear-to-tr from-white/10 to-transparent opacity-0 hover:opacity-100 transition-opacity duration-300"></div>
-        
-        {/* Decorative circles */}
-        <div className="absolute -top-10 -right-10 w-40 h-40 bg-[#fd8310]/20 rounded-full blur-2xl"></div>
-        <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-[#3D08BA]/30 rounded-full blur-2xl"></div>
-        
-        <div className="relative flex flex-col items-center text-center">
-          <div className="w-16 h-16 sm:w-20 sm:h-20 bg-linear-to-br from-white/30 to-white/10 backdrop-blur-sm rounded-full flex items-center justify-center mb-4 shadow-lg border border-white/20">
-            <FaVideo className="text-white text-2xl sm:text-3xl drop-shadow-lg" />
-          </div>
-          <h4 className="text-xl sm:text-2xl font-bold text-white mb-2 drop-shadow-md">Go Live Now</h4>
-          <p className="text-white text-opacity-95 mb-6 text-sm sm:text-base drop-shadow-sm">
-            Start an instant live session with your students
-          </p>
-          <button 
-            onClick={handleGoLive}
-            className="bg-white text-[#3D08BA] px-6 sm:px-8 py-3 rounded-lg font-bold hover:bg-opacity-95 hover:shadow-lg active:scale-95 transition-all duration-200 text-sm sm:text-base w-full sm:w-auto flex items-center justify-center gap-2 shadow-md"
-          >
-            <div className="w-3 h-3 bg-linear-to-r from-[#3D08BA] to-[#fd8310] rounded-full animate-pulse shadow-sm"></div>
-            Go Live
-          </button>
-        </div>
-        </div>
-              {/* Schedule Live Class Card */}
-              <div className="relative bg-linear-to-br from-[#fd8310] via-[#B8559E] to-[#5a18f2] rounded-xl sm:rounded-2xl p-6 sm:p-8 shadow-2xl hover:shadow-[0_20px_60px_-15px_rgba(253,131,16,0.6)] transition-all duration-300 transform hover:scale-105 overflow-hidden">
-  {/* Animated background overlay */}
-  <div className="absolute inset-0 bg-linear-to-tr from-white/10 to-transparent opacity-0 hover:opacity-100 transition-opacity duration-300"></div>
-  
-  {/* Decorative circles */}
-  <div className="absolute -top-10 -right-10 w-40 h-40 bg-[#5a18f2]/20 rounded-full blur-2xl"></div>
-  <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-[#fd8310]/30 rounded-full blur-2xl"></div>
-  
-  <div className="relative flex flex-col items-center text-center">
-    <div className="w-16 h-16 sm:w-20 sm:h-20 bg-linear-to-br from-white/30 to-white/10 backdrop-blur-sm rounded-full flex items-center justify-center mb-4 shadow-lg border border-white/20">
-      <FaCalendar className="text-white text-2xl sm:text-3xl drop-shadow-lg" />
-    </div>
-    <h4 className="text-xl sm:text-2xl font-bold text-white mb-2 drop-shadow-md">Schedule Live Class</h4>
-    <p className="text-white text-opacity-95 mb-6 text-sm sm:text-base drop-shadow-sm">
-      Plan and schedule a live session for later
-    </p>
-    <button 
-      onClick={() => setShowScheduleModal(true)}
-      className="bg-white text-[#fd8310] px-6 sm:px-8 py-3 rounded-lg font-bold hover:bg-opacity-95 hover:shadow-lg active:scale-95 transition-all duration-200 text-sm sm:text-base w-full sm:w-auto flex items-center justify-center gap-2 shadow-md"
-    >
-      <FaPlus className="text-sm" />
-      Schedule Class
-    </button>
-  </div>
-</div>
-            </div>
-          </div>
-        )}
+          {activeTab === 'live' && (
+            <motion.div
+              key="live"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="mb-6"
+            >
+              <h3 className="text-base sm:text-lg md:text-xl font-bold text-gray-800 mb-4 sm:mb-6">Live Session</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+
+                {/* Go Live Card */}
+                <div className="relative bg-gradient-to-br from-[#3D08BA] via-[#7B2FBE] to-[#F68C29] rounded-2xl p-6 sm:p-8 shadow-2xl hover:shadow-[0_20px_60px_-15px_rgba(61,8,186,0.5)] transition-all duration-300 hover:-translate-y-1 overflow-hidden">
+                  <div className="absolute -top-10 -right-10 w-40 h-40 bg-[#F68C29]/20 rounded-full blur-2xl" />
+                  <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-[#3D08BA]/30 rounded-full blur-2xl" />
+                  <div className="relative flex flex-col items-center text-center">
+                    <div className="w-16 h-16 sm:w-20 sm:h-20 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center mb-4 shadow-lg border border-white/20">
+                      <FaVideo className="text-white text-2xl sm:text-3xl" />
+                    </div>
+                    <h4 className="text-xl sm:text-2xl font-bold text-white mb-2">Go Live Now</h4>
+                    <p className="text-white/90 mb-6 text-sm sm:text-base">Start an instant live session with your students</p>
+                    <button
+                      onClick={handleGoLive}
+                      className="bg-white text-[#3D08BA] px-6 sm:px-8 py-3 rounded-xl font-bold hover:shadow-lg active:scale-95 transition-all duration-200 text-sm sm:text-base w-full sm:w-auto flex items-center justify-center gap-2 shadow-md"
+                    >
+                      <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+                      Go Live
+                    </button>
+                  </div>
+                </div>
+
+                {/* Schedule Live Class Card */}
+                <div className="relative bg-gradient-to-br from-[#F68C29] via-[#B8559E] to-[#3D08BA] rounded-2xl p-6 sm:p-8 shadow-2xl hover:shadow-[0_20px_60px_-15px_rgba(253,131,16,0.5)] transition-all duration-300 hover:-translate-y-1 overflow-hidden">
+                  <div className="absolute -top-10 -right-10 w-40 h-40 bg-[#3D08BA]/20 rounded-full blur-2xl" />
+                  <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-[#F68C29]/30 rounded-full blur-2xl" />
+                  <div className="relative flex flex-col items-center text-center">
+                    <div className="w-16 h-16 sm:w-20 sm:h-20 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center mb-4 shadow-lg border border-white/20">
+                      <FaCalendar className="text-white text-2xl sm:text-3xl" />
+                    </div>
+                    <h4 className="text-xl sm:text-2xl font-bold text-white mb-2">Schedule Live Class</h4>
+                    <p className="text-white/90 mb-6 text-sm sm:text-base">Plan and schedule a live session for later</p>
+                    <button
+                      onClick={handleOpenScheduleClass}
+                      className="bg-white text-[#F68C29] px-6 sm:px-8 py-3 rounded-xl font-bold hover:shadow-lg active:scale-95 transition-all duration-200 text-sm sm:text-base w-full sm:w-auto flex items-center justify-center gap-2 shadow-md"
+                    >
+                      <FaPlus className="text-sm" />
+                      Schedule Class
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
 
         {activeTab === 'group' && (
           <div className="mb-6">
@@ -473,7 +514,7 @@ const TutorDashboard = () => {
             </div>
           </div>
         )}
-      </div>
+      </main>
 
       {/* Bottom Navigation */}
       <div className="fixed bottom-0 left-0 right-0 bg-white shadow-lg md:hidden z-10">

@@ -173,6 +173,7 @@ npm run build >"$NEST_BUILD_LOG" 2>&1 || {
 }
 
 INTERNAL_API_TOKEN="$INTERNAL_API_TOKEN" \
+  HOST="$NEST_HOST" \
   DJANGO_INTERNAL_API_URL="$DJANGO_INTERNAL_API_URL" \
   REDIS_URL="$REDIS_URL" \
   SKIP_PRISMA_CONNECT="$SKIP_PRISMA_CONNECT" \
@@ -187,7 +188,7 @@ wait_for_http_200 \
   "NestJS internal admin proxy health" \
   "http://${NEST_HOST}:${NEST_PORT}/internal/admin/proxy-health" \
   "X-Internal-Token: ${INTERNAL_API_TOKEN}" \
-  60 \
+  180 \
   1 \
   "$NEST_PID" || {
   tail -n 120 "$NEST_LOG" >&2 || true

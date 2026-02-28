@@ -47,6 +47,14 @@ export class LearningProgressService {
     return merged;
   }
 
+  listByLearner(learnerKey: string): CourseProgressRecord[] {
+    if (!learnerKey.trim()) {
+      return [];
+    }
+
+    return Array.from(this.records.values()).filter((record) => record.learnerKey === learnerKey);
+  }
+
   private composeKey(learnerKey: string, courseId: number) {
     return `${learnerKey}::${courseId}`;
   }

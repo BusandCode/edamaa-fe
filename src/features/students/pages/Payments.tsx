@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeftIcon,
@@ -12,6 +12,25 @@ import {
   DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon as CheckCircleSolid } from '@heroicons/react/24/solid';
+import {
+  CardCvcElement,
+  CardExpiryElement,
+  CardNumberElement,
+  Elements,
+  useElements,
+  useStripe,
+} from '@stripe/react-stripe-js';
+import type {
+  StripeCardCvcElementChangeEvent,
+  StripeCardExpiryElementChangeEvent,
+  StripeCardNumberElementChangeEvent,
+  StripeElementsOptions,
+} from '@stripe/stripe-js';
+import { loadStripe } from '@stripe/stripe-js';
+import {
+  loadPersistedLocalDevAuthSession,
+  loadPersistedSupabaseAccessToken,
+} from '../../../utils/authSession';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -33,7 +52,51 @@ interface PaymentMethod {
   isDefault: boolean;
 }
 
+type CardBrand = 'visa' | 'mastercard' | 'verve' | 'card' | 'unknown';
+
 type FilterId = 'all' | 'paid' | 'pending' | 'overdue';
+
+interface PaymentDashboardResponse {
+  generatedAt: string;
+  summary: {
+    totalPaid: number;
+    totalPending: number;
+    totalUpcoming: number;
+    overdueCount: number;
+  };
+  methods: PaymentMethod[];
+  payments: Payment[];
+  dataQuality?: {
+    degraded: boolean;
+    source: 'prisma' | 'memory';
+  };
+}
+
+interface PayTransactionResponse {
+  mode: 'checkout' | 'settled';
+  checkoutUrl?: string | null;
+  transaction: Payment;
+  message?: string;
+}
+
+interface AddMethodResponse {
+  method: PaymentMethod;
+  methods: PaymentMethod[];
+}
+
+interface SetupIntentResponse {
+  setupIntentId: string;
+  clientSecret: string;
+  publishableKey: string;
+  customerId: string;
+}
+
+interface ReceiptResponse {
+  transactionId: string;
+  receiptNumber: string;
+  fileName: string;
+  content: string;
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -57,32 +120,694 @@ const categoryColor = (c: Payment['category']) => {
 
 const fmt = (n: number) => `₦${n.toLocaleString()}`;
 
+const CARD_BRAND_LABEL: Record<CardBrand, string> = {
+  visa: 'Visa',
+  mastercard: 'Mastercard',
+  verve: 'Verve',
+  card: 'Card',
+  unknown: 'Card',
+};
+
+const mapStripeBrand = (brand: string): CardBrand => {
+  const normalized = brand.trim().toLowerCase();
+  if (normalized === 'visa') {
+    return 'visa';
+  }
+  if (normalized === 'mastercard') {
+    return 'mastercard';
+  }
+  if (normalized === 'verve') {
+    return 'verve';
+  }
+  if (normalized) {
+    return 'card';
+  }
+  return 'unknown';
+};
+
+const buildDefaultCardLabel = (brand: CardBrand) => {
+  const normalizedBrand = brand === 'unknown' ? 'card' : brand;
+  const labelBase = CARD_BRAND_LABEL[normalizedBrand];
+  if (/card$/i.test(labelBase)) {
+    return labelBase;
+  }
+  return `${labelBase} card`;
+};
+
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
+
+const isLocalhostHost = (host: string) => host === '127.0.0.1' || host === 'localhost';
+
+const resolveApiBaseCandidates = () => {
+  const candidates = new Set<string>();
+  // Always try the Vite proxy route first for the most stable local-dev path.
+  candidates.add('/api');
+
+  if (API_BASE_URL && API_BASE_URL !== '/api') {
+    candidates.add(API_BASE_URL);
+  }
+
+  if (typeof window !== 'undefined') {
+    const host = (window.location.hostname || '').trim();
+    if (isLocalhostHost(host)) {
+      candidates.add(`http://${host}:3001`);
+    }
+  }
+
+  candidates.add('http://127.0.0.1:3001');
+  candidates.add('http://localhost:3001');
+
+  return Array.from(candidates).map((base) => base.replace(/\/+$/, ''));
+};
+
+const FALLBACK_PAYMENTS: Payment[] = [
+  {
+    id: 'P001',
+    description: 'First Semester Tuition',
+    amount: 450000,
+    date: 'Sep 15, 2024',
+    status: 'paid',
+    category: 'tuition',
+    receipt: 'RCP-20240915-001',
+  },
+  {
+    id: 'P002',
+    description: 'Accommodation Fee (Session 1)',
+    amount: 180000,
+    date: 'Sep 18, 2024',
+    status: 'paid',
+    category: 'accommodation',
+    receipt: 'RCP-20240918-002',
+  },
+  {
+    id: 'P003',
+    description: 'Student Union Dues',
+    amount: 15000,
+    date: 'Oct 02, 2024',
+    status: 'paid',
+    category: 'fees',
+    receipt: 'RCP-20241002-003',
+  },
+  {
+    id: 'P004',
+    description: 'Lab Materials - Chemistry',
+    amount: 32000,
+    date: 'Oct 20, 2024',
+    status: 'paid',
+    category: 'materials',
+    receipt: 'RCP-20241020-004',
+  },
+  {
+    id: 'P005',
+    description: 'Library Access Fee',
+    amount: 8000,
+    date: 'Nov 05, 2024',
+    status: 'paid',
+    category: 'fees',
+    receipt: 'RCP-20241105-005',
+  },
+  {
+    id: 'P006',
+    description: 'Second Semester Tuition',
+    amount: 450000,
+    date: 'Jan 10, 2025',
+    status: 'pending',
+    category: 'tuition',
+  },
+  {
+    id: 'P007',
+    description: 'Accommodation Fee (Session 2)',
+    amount: 180000,
+    date: 'Jan 15, 2025',
+    status: 'overdue',
+    category: 'accommodation',
+  },
+  {
+    id: 'P008',
+    description: 'Examination Registration',
+    amount: 25000,
+    date: 'Feb 01, 2025',
+    status: 'upcoming',
+    category: 'fees',
+  },
+  {
+    id: 'P009',
+    description: 'Lab Materials - Physics',
+    amount: 28000,
+    date: 'Feb 14, 2025',
+    status: 'upcoming',
+    category: 'materials',
+  },
+];
+
+const FALLBACK_METHODS: PaymentMethod[] = [
+  { id: 'M1', type: 'card', label: 'Visa ending', last4: '4291', isDefault: true },
+  { id: 'M2', type: 'bank', label: 'GTBank A/c', last4: '7823', isDefault: false },
+  { id: 'M3', type: 'card', label: 'Mastercard', last4: '0047', isDefault: false },
+];
+
+type StripeCardSetupFormProps = {
+  clientSecret: string;
+  disabled: boolean;
+  onBrandChange: (brand: CardBrand) => void;
+  onErrorChange: (message: string | null) => void;
+  onConfirmed: (setupIntentId: string, brand: CardBrand) => Promise<void>;
+};
+
+const StripeCardSetupForm = ({
+  clientSecret,
+  disabled,
+  onBrandChange,
+  onErrorChange,
+  onConfirmed,
+}: StripeCardSetupFormProps) => {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [brand, setBrand] = useState<CardBrand>('unknown');
+
+  const stripeInputStyle = {
+    base: {
+      color: '#111827',
+      fontSize: '14px',
+      iconColor: '#3D08BA',
+      '::placeholder': {
+        color: '#9CA3AF',
+      },
+    },
+    invalid: {
+      color: '#B91C1C',
+      iconColor: '#B91C1C',
+    },
+  } as const;
+
+  const handleCardNumberChange = (event: StripeCardNumberElementChangeEvent) => {
+    const detectedBrand = mapStripeBrand(event.brand || '');
+    setBrand(detectedBrand);
+    onBrandChange(detectedBrand);
+
+    if (event.error?.message) {
+      onErrorChange(event.error.message);
+      return;
+    }
+
+    onErrorChange(null);
+  };
+
+  const handleCardMetaChange = (
+    event: StripeCardExpiryElementChangeEvent | StripeCardCvcElementChangeEvent
+  ) => {
+    if (event.error?.message) {
+      onErrorChange(event.error.message);
+      return;
+    }
+
+    onErrorChange(null);
+  };
+
+  const handleSubmit = async () => {
+    if (!stripe || !elements) {
+      onErrorChange('Secure card form is still loading. Please wait a moment.');
+      return;
+    }
+
+    const cardNumberElement = elements.getElement(CardNumberElement);
+    if (!cardNumberElement) {
+      onErrorChange('Card input fields are not ready yet. Please refresh and try again.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    onErrorChange(null);
+    try {
+      const { error, setupIntent } = await stripe.confirmCardSetup(clientSecret, {
+        payment_method: {
+          card: cardNumberElement,
+        },
+      });
+
+      if (error) {
+        throw new Error(error.message || 'Card verification failed. Please try again.');
+      }
+
+      if (!setupIntent?.id) {
+        throw new Error('Card setup completed without a setup reference.');
+      }
+
+      await onConfirmed(setupIntent.id, brand);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to verify this card right now.';
+      onErrorChange(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <label htmlFor="payment-card-number" className="block text-xs font-semibold text-gray-700 mb-1">
+          Card number
+        </label>
+        <div
+          id="payment-card-number"
+          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 focus-within:ring-2 focus-within:ring-[#3D08BA] focus-within:border-transparent"
+        >
+          <CardNumberElement
+            onChange={handleCardNumberChange}
+            options={{
+              showIcon: true,
+              style: stripeInputStyle,
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label htmlFor="payment-card-expiry" className="block text-xs font-semibold text-gray-700 mb-1">
+            Expiry date
+          </label>
+          <div
+            id="payment-card-expiry"
+            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 focus-within:ring-2 focus-within:ring-[#3D08BA] focus-within:border-transparent"
+          >
+            <CardExpiryElement onChange={handleCardMetaChange} options={{ style: stripeInputStyle }} />
+          </div>
+        </div>
+        <div>
+          <label htmlFor="payment-card-cvc" className="block text-xs font-semibold text-gray-700 mb-1">
+            CVV
+          </label>
+          <div
+            id="payment-card-cvc"
+            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 focus-within:ring-2 focus-within:ring-[#3D08BA] focus-within:border-transparent"
+          >
+            <CardCvcElement onChange={handleCardMetaChange} options={{ style: stripeInputStyle }} />
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <span
+          className={`rounded-md px-2 py-1 text-[10px] font-bold ${
+            brand === 'unknown' ? 'bg-gray-100 text-gray-500' : 'bg-[#3D08BA]/10 text-[#3D08BA]'
+          }`}
+        >
+          {CARD_BRAND_LABEL[brand]}
+        </span>
+        <button
+          onClick={() => void handleSubmit()}
+          disabled={disabled || isSubmitting}
+          className="px-3 py-2 rounded-lg text-xs font-semibold text-white bg-[#3D08BA] hover:bg-[#2c0691] transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isSubmitting ? 'Verifying card...' : disabled ? 'Saving...' : 'Save card'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // ─── Page ───────────────────────────────────────────────────────────────────
 
 const Payments = () => {
   const navigate = useNavigate();
-  const [filter, setFilter]       = useState<FilterId>('all');
-  const [search, setSearch]       = useState('');
+  const [filter, setFilter] = useState<FilterId>('all');
+  const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [payments, setPayments] = useState<Payment[]>(FALLBACK_PAYMENTS);
+  const [methods, setMethods] = useState<PaymentMethod[]>(FALLBACK_METHODS);
+  const [isLoading, setIsLoading] = useState(false);
+  const [activeActionId, setActiveActionId] = useState<string | null>(null);
+  const [isAddCardOpen, setIsAddCardOpen] = useState(false);
+  const [cardNickname, setCardNickname] = useState('');
+  const [setAsDefaultMethod, setSetAsDefaultMethod] = useState(false);
+  const [addMethodError, setAddMethodError] = useState<string | null>(null);
+  const [addMethodSuccess, setAddMethodSuccess] = useState<string | null>(null);
+  const [detectedCardBrand, setDetectedCardBrand] = useState<CardBrand>('unknown');
+  const [stripeClientSecret, setStripeClientSecret] = useState('');
+  const [stripePublishableKey, setStripePublishableKey] = useState('');
+  const [isPreparingStripeForm, setIsPreparingStripeForm] = useState(false);
+  const [isPaymentMethodModalOpen, setIsPaymentMethodModalOpen] = useState(false);
+  const [activePaymentId, setActivePaymentId] = useState<string | null>(null);
+  const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState('');
 
-  // ── mock data ──
-  const payments: Payment[] = [
-    { id: 'P001', description: 'First Semester Tuition',       amount: 450000, date: 'Sep 15, 2024', status: 'paid',      category: 'tuition',       receipt: 'RCP-20240915-001' },
-    { id: 'P002', description: 'Accommodation Fee (Session 1)', amount: 180000, date: 'Sep 18, 2024', status: 'paid',      category: 'accommodation', receipt: 'RCP-20240918-002' },
-    { id: 'P003', description: 'Student Union Dues',           amount: 15000,  date: 'Oct 02, 2024', status: 'paid',      category: 'fees',          receipt: 'RCP-20241002-003' },
-    { id: 'P004', description: 'Lab Materials – Chemistry',    amount: 32000,  date: 'Oct 20, 2024', status: 'paid',      category: 'materials',     receipt: 'RCP-20241020-004' },
-    { id: 'P005', description: 'Library Access Fee',           amount: 8000,   date: 'Nov 05, 2024', status: 'paid',      category: 'fees',          receipt: 'RCP-20241105-005' },
-    { id: 'P006', description: 'Second Semester Tuition',      amount: 450000, date: 'Jan 10, 2025', status: 'pending',   category: 'tuition' },
-    { id: 'P007', description: 'Accommodation Fee (Session 2)', amount: 180000, date: 'Jan 15, 2025', status: 'overdue',   category: 'accommodation' },
-    { id: 'P008', description: 'Examination Registration',     amount: 25000,  date: 'Feb 01, 2025', status: 'upcoming', category: 'fees' },
-    { id: 'P009', description: 'Lab Materials – Physics',      amount: 28000,  date: 'Feb 14, 2025', status: 'upcoming', category: 'materials' },
-  ];
+  const stripePromise = useMemo(() => {
+    if (!stripePublishableKey) {
+      return null;
+    }
 
-  const methods: PaymentMethod[] = [
-    { id: 'M1', type: 'card',  label: 'Visa ending',  last4: '4291', isDefault: true },
-    { id: 'M2', type: 'bank',  label: 'GTBank A/c',   last4: '7823', isDefault: false },
-    { id: 'M3', type: 'card',  label: 'Mastercard',   last4: '0047', isDefault: false },
-  ];
+    return loadStripe(stripePublishableKey);
+  }, [stripePublishableKey]);
+
+  const extractErrorMessage = async (response: Response) => {
+    try {
+      const payload = (await response.json()) as { message?: string | string[] };
+      if (Array.isArray(payload.message)) {
+        return payload.message.join(', ');
+      }
+      if (typeof payload.message === 'string' && payload.message.trim()) {
+        return payload.message;
+      }
+    } catch {
+      // Ignore JSON parsing failures and use status fallback below.
+    }
+    return `Request failed with status ${response.status}`;
+  };
+
+  const requestWithAuth = async (endpoint: string, init?: RequestInit) => {
+    const token = loadPersistedSupabaseAccessToken();
+    const localDevSession = loadPersistedLocalDevAuthSession();
+
+    if (!token && !localDevSession?.email) {
+      throw new Error('Sign in with your account to use live payment actions.');
+    }
+
+    const bases = resolveApiBaseCandidates();
+    let networkError: Error | null = null;
+    const shouldTryNextBase = (response: Response, base: string) => {
+      // If proxy route is missing or upstream is down, move to the next base.
+      if ([502, 503, 504].includes(response.status)) {
+        return true;
+      }
+
+      if (base.startsWith('/') && [404, 405].includes(response.status)) {
+        return true;
+      }
+
+      return false;
+    };
+
+    for (let index = 0; index < bases.length; index += 1) {
+      const base = bases[index];
+      let response: Response;
+      try {
+        response = await fetch(`${base}${endpoint}`, {
+          ...init,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(init?.headers || {}),
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(localDevSession?.email
+              ? {
+                  'X-Dev-User-Email': localDevSession.email,
+                }
+              : {}),
+          },
+        });
+      } catch (error) {
+        networkError = error instanceof Error ? error : new Error('Network request failed');
+        continue;
+      }
+
+      if (!response.ok) {
+        if (shouldTryNextBase(response, base)) {
+          continue;
+        }
+        throw new Error(await extractErrorMessage(response));
+      }
+
+      return response;
+    }
+
+    const fallbackMessage =
+      networkError?.message && networkError.message.trim()
+        ? networkError.message
+        : 'Failed to fetch';
+    throw new Error(
+      `${fallbackMessage}. Could not reach the backend API on ${bases.join(', ')}. Ensure NestJS is running on http://127.0.0.1:3001 and your web app is running on Vite dev server.`
+    );
+  };
+
+  const refreshDashboard = async () => {
+    const token = loadPersistedSupabaseAccessToken();
+    const localDevSession = loadPersistedLocalDevAuthSession();
+    if (!token && !localDevSession?.email) {
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const response = await requestWithAuth('/payments/me/dashboard');
+      const payload = (await response.json()) as PaymentDashboardResponse;
+      if (Array.isArray(payload.payments) && payload.payments.length > 0) {
+        setPayments(payload.payments);
+      } else {
+        setPayments([]);
+      }
+
+      if (Array.isArray(payload.methods) && payload.methods.length > 0) {
+        setMethods(payload.methods);
+      } else {
+        setMethods([]);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to load payments right now.';
+      console.warn(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const downloadTextFile = (filename: string, content: string) => {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePayNow = async (paymentId: string, paymentMethodId?: string) => {
+    if (activeActionId) {
+      return;
+    }
+
+    setActiveActionId(`pay-${paymentId}`);
+    try {
+      const response = await requestWithAuth(`/payments/me/transactions/${encodeURIComponent(paymentId)}/pay`, {
+        method: 'POST',
+        body: JSON.stringify(paymentMethodId ? { paymentMethodId } : {}),
+      });
+      const payload = (await response.json()) as PayTransactionResponse;
+
+      if (payload.mode === 'checkout' && payload.checkoutUrl) {
+        setIsPaymentMethodModalOpen(false);
+        setActivePaymentId(null);
+        window.location.assign(payload.checkoutUrl);
+        return;
+      }
+
+      if (payload.transaction) {
+        setPayments((previous) =>
+          previous.map((payment) => (payment.id === payload.transaction.id ? payload.transaction : payment))
+        );
+      }
+
+      if (payload.message) {
+        window.alert(payload.message);
+      }
+
+      setIsPaymentMethodModalOpen(false);
+      setActivePaymentId(null);
+      await refreshDashboard();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Payment could not be completed right now.';
+      window.alert(message);
+    } finally {
+      setActiveActionId(null);
+    }
+  };
+
+  const openPayNowModal = (paymentId: string) => {
+    if (activeActionId) {
+      return;
+    }
+
+    const preferredMethod = methods.find((method) => method.isDefault) || methods[0] || null;
+    setActivePaymentId(paymentId);
+    setSelectedPaymentMethodId(preferredMethod?.id || '');
+    setAddMethodSuccess(null);
+    setAddMethodError(null);
+    setIsAddCardOpen(false);
+    setIsPaymentMethodModalOpen(true);
+  };
+
+  const closePayNowModal = () => {
+    if (activeActionId === 'add-method' || Boolean(activeActionId?.startsWith('pay-'))) {
+      return;
+    }
+
+    setIsPaymentMethodModalOpen(false);
+    setActivePaymentId(null);
+    setIsAddCardOpen(false);
+  };
+
+  const handleDownloadReceipt = async (paymentId: string) => {
+    if (activeActionId) {
+      return;
+    }
+
+    setActiveActionId(`receipt-${paymentId}`);
+    try {
+      const response = await requestWithAuth(
+        `/payments/me/transactions/${encodeURIComponent(paymentId)}/receipt`
+      );
+      const payload = (await response.json()) as ReceiptResponse;
+      downloadTextFile(payload.fileName || `${paymentId}-receipt.txt`, payload.content || '');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Receipt download failed.';
+      window.alert(message);
+    } finally {
+      setActiveActionId(null);
+    }
+  };
+
+  const resetAddCardState = () => {
+    setCardNickname('');
+    setSetAsDefaultMethod(false);
+    setDetectedCardBrand('unknown');
+    setStripeClientSecret('');
+    setStripePublishableKey('');
+    setAddMethodError(null);
+  };
+
+  const openAddCardPanel = async () => {
+    if (activeActionId) {
+      return;
+    }
+
+    setAddMethodSuccess(null);
+    setAddMethodError(null);
+    resetAddCardState();
+    setIsAddCardOpen(true);
+    setIsPreparingStripeForm(true);
+
+    try {
+      const response = await requestWithAuth('/payments/me/methods/setup-intent', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      const payload = (await response.json()) as SetupIntentResponse;
+      if (!payload.clientSecret || !payload.publishableKey) {
+        throw new Error('Could not initialize secure card form. Please try again.');
+      }
+
+      setStripeClientSecret(payload.clientSecret);
+      setStripePublishableKey(payload.publishableKey);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to initialize secure card setup right now.';
+      setAddMethodError(message);
+    } finally {
+      setIsPreparingStripeForm(false);
+    }
+  };
+
+  const closeAddCardPanel = () => {
+    if (activeActionId === 'add-method') {
+      return;
+    }
+
+    setIsAddCardOpen(false);
+    setIsPreparingStripeForm(false);
+    setStripeClientSecret('');
+    setStripePublishableKey('');
+    setDetectedCardBrand('unknown');
+    setAddMethodError(null);
+  };
+
+  const handleConfirmStripeMethod = async (setupIntentId: string, brand: CardBrand) => {
+    if (activeActionId) {
+      return;
+    }
+
+    setAddMethodError(null);
+    setAddMethodSuccess(null);
+    setActiveActionId('add-method');
+
+    const normalizedBrand = brand === 'unknown' ? 'card' : brand;
+    const defaultCardLabel = buildDefaultCardLabel(normalizedBrand);
+    const generatedLabel = cardNickname.trim() || defaultCardLabel;
+
+    try {
+      const response = await requestWithAuth('/payments/me/methods/stripe/confirm', {
+        method: 'POST',
+        body: JSON.stringify({
+          setupIntentId,
+          label: generatedLabel,
+          isDefault: setAsDefaultMethod,
+        }),
+      });
+      const payload = (await response.json()) as AddMethodResponse;
+
+      if (Array.isArray(payload.methods)) {
+        setMethods(payload.methods);
+      } else if (payload.method) {
+        setMethods((previous) => [payload.method, ...previous]);
+      }
+      setAddMethodSuccess(`${defaultCardLabel} added successfully.`);
+      setIsAddCardOpen(false);
+      setStripeClientSecret('');
+      setStripePublishableKey('');
+      setDetectedCardBrand('unknown');
+      setAddMethodError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to add payment method right now.';
+      setAddMethodError(message);
+      throw error instanceof Error ? error : new Error(message);
+    } finally {
+      setActiveActionId(null);
+    }
+  };
+
+  useEffect(() => {
+    const token = loadPersistedSupabaseAccessToken();
+    const localDevSession = loadPersistedLocalDevAuthSession();
+    if (!token && !localDevSession?.email) {
+      return;
+    }
+
+    void refreshDashboard();
+  }, []);
+
+  useEffect(() => {
+    if (!isPaymentMethodModalOpen) {
+      return;
+    }
+
+    if (methods.length === 0) {
+      setSelectedPaymentMethodId('');
+      return;
+    }
+
+    const hasSelected = methods.some((method) => method.id === selectedPaymentMethodId);
+    if (hasSelected) {
+      return;
+    }
+
+    const preferredMethod = methods.find((method) => method.isDefault) || methods[0];
+    setSelectedPaymentMethodId(preferredMethod?.id || '');
+  }, [isPaymentMethodModalOpen, methods, selectedPaymentMethodId]);
+
+  const stripeElementsOptions = useMemo<StripeElementsOptions | null>(() => {
+    if (!stripeClientSecret) {
+      return null;
+    }
+
+    return {
+      clientSecret: stripeClientSecret,
+      appearance: {
+        theme: 'stripe',
+        variables: {
+          colorPrimary: '#3D08BA',
+        },
+      },
+    };
+  }, [stripeClientSecret]);
 
   // ── computed ──
   const filtered = payments.filter(p => {
@@ -94,7 +819,12 @@ const Payments = () => {
   const totalPaid     = payments.filter(p => p.status === 'paid').reduce((s, p) => s + p.amount, 0);
   const totalPending  = payments.filter(p => p.status === 'pending' || p.status === 'overdue').reduce((s, p) => s + p.amount, 0);
   const totalUpcoming = payments.filter(p => p.status === 'upcoming').reduce((s, p) => s + p.amount, 0);
-  const overdueCount  = payments.filter(p => p.status === 'overdue').length;
+  const overduePayments = payments.filter((payment) => payment.status === 'overdue');
+  const overdueCount  = overduePayments.length;
+  const firstOverduePayment = overduePayments[0] || null;
+  const activePayment = activePaymentId
+    ? payments.find((payment) => payment.id === activePaymentId) || null
+    : null;
 
   const filters: { id: FilterId; label: string }[] = [
     { id: 'all',     label: 'All' },
@@ -154,43 +884,32 @@ const Payments = () => {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs sm:text-sm font-semibold text-red-800">You have an overdue payment</p>
-              <p className="text-xs text-red-600 mt-0.5">Accommodation Fee (Session 2) – ₦180,000 was due Jan 15. Please settle this to avoid any holds on your account.</p>
+              <p className="text-xs text-red-600 mt-0.5">
+                {firstOverduePayment
+                  ? `${firstOverduePayment.description} - ${fmt(firstOverduePayment.amount)} was due ${firstOverduePayment.date}. Please settle this to avoid any holds on your account.`
+                  : 'Please settle overdue items to avoid any holds on your account.'}
+              </p>
             </div>
-            <button className="shrink-0 px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700 transition-colors">
-              Pay Now
+            <button
+              onClick={() => {
+                if (firstOverduePayment) {
+                  openPayNowModal(firstOverduePayment.id);
+                }
+              }}
+              disabled={!firstOverduePayment || Boolean(activeActionId)}
+              className="shrink-0 px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {activeActionId && firstOverduePayment && activeActionId === `pay-${firstOverduePayment.id}`
+                ? 'Processing...'
+                : 'Pay Now'}
             </button>
           </div>
         )}
 
-        {/* ── Payment methods row ── */}
-        <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-100 shadow-sm p-4 sm:p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm sm:text-base font-bold text-gray-900">Payment Methods</h2>
-            <button className="flex items-center gap-1 text-xs text-[#3D08BA] font-semibold hover:underline">
-              <PlusCircleIcon className="w-4 h-4" /> Add
-            </button>
-          </div>
-          <div className="flex gap-2 sm:gap-3 overflow-x-auto pb-1">
-            {methods.map(m => (
-              <div
-                key={m.id}
-                className={`shrink-0 flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
-                  m.isDefault ? 'border-[#3D08BA] bg-[#3D08BA]/5' : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${m.isDefault ? 'bg-[#3D08BA]' : 'bg-gray-100'}`}>
-                  {m.type === 'card'
-                    ? <CreditCardIcon className={`w-4 h-4 ${m.isDefault ? 'text-white' : 'text-gray-600'}`} />
-                    : <BanknotesIcon  className={`w-4 h-4 ${m.isDefault ? 'text-white' : 'text-gray-600'}`} />
-                  }
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold text-gray-800 truncate">{m.label}</p>
-                  <p className="text-[10px] text-gray-400">••••{m.last4}{m.isDefault ? ' · Default' : ''}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+        <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-100 shadow-sm p-3 sm:p-4">
+          <p className="text-xs sm:text-sm text-gray-600">
+            Payment methods will appear when you click <span className="font-semibold text-gray-800">Pay Now</span>.
+          </p>
         </div>
 
         {/* ── Search + Filters ── */}
@@ -200,7 +919,7 @@ const Payments = () => {
             <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               type="text"
-              placeholder="Search transactions..."
+              placeholder={isLoading ? "Syncing transactions..." : "Search transactions..."}
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="w-full pl-9 pr-4 py-2.5 text-xs sm:text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3D08BA] focus:border-transparent bg-gray-50"
@@ -277,13 +996,21 @@ const Payments = () => {
                       </div>
                       <div className="flex gap-2">
                         {p.receipt && (
-                          <button className="flex items-center gap-1 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-100 transition-colors">
+                          <button
+                            onClick={() => void handleDownloadReceipt(p.id)}
+                            disabled={Boolean(activeActionId)}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-semibold text-gray-700 hover:bg-gray-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                          >
                             <DocumentTextIcon className="w-3.5 h-3.5" /> Receipt
                           </button>
                         )}
                         {(p.status === 'pending' || p.status === 'overdue') && (
-                          <button className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white transition-colors ${p.status === 'overdue' ? 'bg-red-600 hover:bg-red-700' : 'bg-[#3D08BA] hover:bg-[#2c0691]'}`}>
-                            Pay Now
+                          <button
+                            onClick={() => openPayNowModal(p.id)}
+                            disabled={Boolean(activeActionId)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${p.status === 'overdue' ? 'bg-red-600 hover:bg-red-700' : 'bg-[#3D08BA] hover:bg-[#2c0691]'}`}
+                          >
+                            {activeActionId === `pay-${p.id}` ? 'Processing...' : 'Pay Now'}
                           </button>
                         )}
                       </div>
@@ -295,6 +1022,190 @@ const Payments = () => {
           })}
         </div>
       </main>
+
+      {isPaymentMethodModalOpen && activePayment && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-gray-900/55 p-3 sm:p-4">
+          <div className="w-full max-w-xl rounded-2xl bg-white border border-gray-200 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 z-10 bg-white border-b border-gray-100 px-4 sm:px-5 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-gray-900">Choose payment method</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {activePayment.description} • {fmt(activePayment.amount)}
+                  </p>
+                </div>
+                <button
+                  onClick={() => closePayNowModal()}
+                  disabled={Boolean(activeActionId?.startsWith('pay-')) || activeActionId === 'add-method'}
+                  className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div className="px-4 sm:px-5 py-4 space-y-4">
+              {addMethodSuccess && (
+                <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                  {addMethodSuccess}
+                </p>
+              )}
+
+              <div className="space-y-2">
+                {methods.length === 0 && (
+                  <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                    No payment method found yet. Add a card to continue.
+                  </p>
+                )}
+                {methods.map((method) => {
+                  const isSelected = method.id === selectedPaymentMethodId;
+                  return (
+                    <button
+                      key={method.id}
+                      onClick={() => setSelectedPaymentMethodId(method.id)}
+                      className={`w-full flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                        isSelected
+                          ? 'border-[#3D08BA] bg-[#3D08BA]/5'
+                          : 'border-gray-200 hover:border-gray-300 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                            isSelected ? 'bg-[#3D08BA]' : 'bg-gray-100'
+                          }`}
+                        >
+                          {method.type === 'card' ? (
+                            <CreditCardIcon className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-gray-600'}`} />
+                          ) : (
+                            <BanknotesIcon className={`w-4 h-4 ${isSelected ? 'text-white' : 'text-gray-600'}`} />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-gray-800 truncate">{method.label}</p>
+                          <p className="text-[10px] text-gray-500">
+                            ••••{method.last4}
+                            {method.isDefault ? ' · Default' : ''}
+                          </p>
+                        </div>
+                      </div>
+                      {isSelected && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#3D08BA] text-white">
+                          Selected
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex justify-start">
+                <button
+                  onClick={() => {
+                    if (isAddCardOpen) {
+                      closeAddCardPanel();
+                      return;
+                    }
+                    void openAddCardPanel();
+                  }}
+                  disabled={Boolean(activeActionId)}
+                  className="flex items-center gap-1 text-xs text-[#3D08BA] font-semibold hover:underline disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <PlusCircleIcon className="w-4 h-4" />
+                  {isAddCardOpen ? 'Close add card' : 'Add card'}
+                </button>
+              </div>
+
+              {isAddCardOpen && (
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 sm:p-4 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label htmlFor="payment-card-nickname" className="block text-xs font-semibold text-gray-700 mb-1">
+                        Card name (optional)
+                      </label>
+                      <input
+                        id="payment-card-nickname"
+                        type="text"
+                        value={cardNickname}
+                        onChange={(event) => setCardNickname(event.target.value)}
+                        placeholder="My tuition card"
+                        className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#3D08BA] focus:border-transparent"
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={setAsDefaultMethod}
+                          onChange={(event) => setSetAsDefaultMethod(event.target.checked)}
+                          className="rounded border-gray-300 text-[#3D08BA] focus:ring-[#3D08BA]"
+                        />
+                        Use this as my default payment method
+                      </label>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-gray-500">
+                    Detected card type:{' '}
+                    <span className="font-semibold text-gray-700">{CARD_BRAND_LABEL[detectedCardBrand]}</span>
+                  </p>
+
+                  {addMethodError && (
+                    <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                      {addMethodError}
+                    </p>
+                  )}
+
+                  {isPreparingStripeForm && (
+                    <div className="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-4 text-xs text-gray-500">
+                      Preparing secure card form...
+                    </div>
+                  )}
+
+                  {!isPreparingStripeForm && stripePromise && stripeElementsOptions && (
+                    <Elements stripe={stripePromise} options={stripeElementsOptions}>
+                      <StripeCardSetupForm
+                        clientSecret={stripeClientSecret}
+                        disabled={Boolean(activeActionId)}
+                        onBrandChange={(brand) => setDetectedCardBrand(brand)}
+                        onErrorChange={(message) => setAddMethodError(message)}
+                        onConfirmed={handleConfirmStripeMethod}
+                      />
+                    </Elements>
+                  )}
+
+                  {!isPreparingStripeForm && (!stripePromise || !stripeElementsOptions) && !addMethodError && (
+                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      Secure card setup is unavailable right now. Check your Stripe backend configuration.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="sticky bottom-0 bg-white border-t border-gray-100 px-4 sm:px-5 py-3 flex items-center justify-end gap-2">
+              <button
+                onClick={() => closePayNowModal()}
+                disabled={Boolean(activeActionId?.startsWith('pay-')) || activeActionId === 'add-method'}
+                className="px-3 py-2 rounded-lg text-xs font-semibold text-gray-700 bg-white border border-gray-200 hover:bg-gray-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (activePaymentId) {
+                    void handlePayNow(activePaymentId, selectedPaymentMethodId || undefined);
+                  }
+                }}
+                disabled={!activePaymentId || !selectedPaymentMethodId || Boolean(activeActionId)}
+                className="px-3 py-2 rounded-lg text-xs font-bold text-white bg-[#3D08BA] hover:bg-[#2c0691] transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {activePaymentId && activeActionId === `pay-${activePaymentId}` ? 'Processing...' : 'Pay now'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
