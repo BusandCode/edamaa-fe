@@ -9,5 +9,6 @@ import { SubscriptionsService } from './subscriptions.service';
   imports: [SupabaseModule],
   controllers: [SubscriptionsController],
   providers: [SubscriptionsService, PrismaService, SupabaseAuthGuard],
+  exports: [SubscriptionsService],
 })
 export class SubscriptionsModule {}

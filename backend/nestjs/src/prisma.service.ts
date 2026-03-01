@@ -11,6 +11,8 @@ import { PrismaClient } from '@prisma/client';
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly skipConnect = process.env.SKIP_PRISMA_CONNECT === '1';
+  private readonly connectTimeoutMs = Number(process.env.PRISMA_CONNECT_TIMEOUT_MS || '5000');
+  private prismaConnected = false;
 
   // Called when Nest starts the module; connect to the database here
   async onModuleInit() {
@@ -21,14 +23,47 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       console.warn('Prisma connect skipped (SKIP_PRISMA_CONNECT=1)');
       return;
     }
-    await this.$connect();
+
+    try {
+      await this.withTimeout(this.$connect(), this.connectTimeoutMs);
+      this.prismaConnected = true;
+    } catch (error: any) {
+      this.prismaConnected = false;
+      // Keep API booting even when Postgres is down so non-DB endpoints remain usable.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `Prisma connect failed (${error?.message || error}). Continuing in degraded mode without DB.`
+      );
+    }
   }
 
   // Called when Nest destroys the module; disconnect gracefully
   async onModuleDestroy() {
-    if (this.skipConnect) {
+    if (this.skipConnect || !this.prismaConnected) {
       return;
     }
-    await this.$disconnect();
+
+    try {
+      await this.$disconnect();
+    } catch {
+      // Ignore disconnect errors during shutdown.
+    }
+  }
+
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    let timer: NodeJS.Timeout | null = null;
+
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
   }
 }

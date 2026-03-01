@@ -15,6 +15,7 @@ import StudentRegistration from './features/students/pages/StudentRegistration.t
 
 // Import Dashboard components
 import SchoolDashboard from './features/schools/pages/SchoolDashboard.tsx'
+import SchoolFinance from './features/schools/pages/SchoolFinance.tsx'
 import TutorDashboard from './features/tutors/pages/TutorDashboard.tsx'
 import StudentDashboard from './features/students/pages/StudentDashboard.tsx'
 import StudentHome from './features/students/pages/StudentHome.tsx'
@@ -60,6 +61,7 @@ createRoot(document.getElementById('root')!).render(
         
         {/* Dashboard Routes */}
         <Route path="/school-dashboard" element={<SchoolDashboard />} />
+        <Route path="/school-finance" element={<SchoolFinance />} />
         <Route path="/tutor-dashboard" element={<TutorDashboard />} />
         <Route path="/student-home" element={<StudentHome />} />
         <Route path="/student-dashboard" element={<StudentDashboard />} />

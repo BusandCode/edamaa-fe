@@ -39,6 +39,10 @@ model User {
 
   // Teaching subscription relation (tutor/school monetization).
   teachingSubscriptions TeachingSubscription[]
+
+  // School finance domain (marketplace payout model).
+  schoolFinanceAccount  SchoolFinanceAccount?
+  schoolFeePayments     SchoolFeePayment[]   @relation("SchoolFeePaymentPayer")
 }
 
 model School {
@@ -98,6 +102,30 @@ enum SubscriptionStatus {
   ACTIVE
   TRIALING
   PAST_DUE
+  CANCELED
+}
+
+enum SchoolFeeInvoiceStatus {
+  DRAFT
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  CANCELED
+}
+
+enum SchoolFeePaymentStatus {
+  PENDING
+  SETTLED
+  FAILED
+  REFUNDED
+}
+
+enum SchoolPayoutStatus {
+  REQUESTED
+  PROCESSING
+  PAID
+  FAILED
   CANCELED
 }
 
@@ -165,6 +193,147 @@ model TeachingSubscription {
   @@index([stripeSubscriptionId])
 }
 
+model SchoolFinanceAccount {
+  id                      Int      @id @default(autoincrement())
+  publicId                String   @unique
+  schoolUser              User     @relation(fields: [schoolUserId], references: [id])
+  schoolUserId            Int      @unique
+  currency                String   @default("NGN")
+  pendingMinor            Int      @default(0)
+  availableMinor          Int      @default(0)
+  onHoldMinor             Int      @default(0)
+  lifetimeGrossMinor      Int      @default(0)
+  lifetimeNetMinor        Int      @default(0)
+  totalWithdrawnMinor     Int      @default(0)
+  stripeConnectedAccountId String?
+  payoutsEnabled          Boolean  @default(false)
+  chargesEnabled          Boolean  @default(false)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  feePlans SchoolFeePlan[]
+  invoices SchoolFeeInvoice[]
+  payments SchoolFeePayment[]
+  payouts  SchoolPayout[]
+  payoutLedgerEntries SchoolPayoutLedgerEntry[]
+}
+
+model SchoolFeePlan {
+  id          Int                @id @default(autoincrement())
+  publicId    String             @unique
+  account     SchoolFinanceAccount @relation(fields: [accountId], references: [id])
+  accountId   Int
+  title       String
+  description String?
+  amountMinor Int
+  currency    String             @default("NGN")
+  dueDays     Int?
+  isActive    Boolean            @default(true)
+  metadata    Json?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  invoices SchoolFeeInvoice[]
+
+  @@index([accountId, isActive, createdAt])
+}
+
+model SchoolFeeInvoice {
+  id                    Int                  @id @default(autoincrement())
+  publicId              String               @unique
+  account               SchoolFinanceAccount @relation(fields: [accountId], references: [id])
+  accountId             Int
+  plan                  SchoolFeePlan?       @relation(fields: [planId], references: [id])
+  planId                Int?
+  studentEmail          String
+  studentName           String?
+  title                 String
+  description           String?
+  amountMinor           Int
+  currency              String               @default("NGN")
+  status                SchoolFeeInvoiceStatus @default(PENDING)
+  dueAt                 DateTime?
+  paidAt                DateTime?
+  stripeCheckoutSessionId String?            @unique
+  stripePaymentIntentId String?
+  metadata              Json?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  payments SchoolFeePayment[]
+
+  @@index([accountId, status, createdAt])
+  @@index([studentEmail, status, dueAt])
+}
+
+model SchoolFeePayment {
+  id                Int                   @id @default(autoincrement())
+  publicId          String                @unique
+  account           SchoolFinanceAccount  @relation(fields: [accountId], references: [id])
+  accountId         Int
+  invoice           SchoolFeeInvoice      @relation(fields: [invoiceId], references: [id])
+  invoiceId         Int
+  payerUser         User?                 @relation("SchoolFeePaymentPayer", fields: [payerUserId], references: [id])
+  payerUserId       Int?
+  payerEmail        String
+  grossAmountMinor  Int
+  platformFeeMinor  Int                   @default(0)
+  processingFeeMinor Int                  @default(0)
+  netAmountMinor    Int
+  currency          String                @default("NGN")
+  provider          PaymentProvider       @default(LOCAL)
+  providerReference String?               @unique
+  status            SchoolFeePaymentStatus @default(PENDING)
+  settledAt         DateTime?
+  metadata          Json?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  @@index([accountId, status, createdAt])
+  @@index([invoiceId, status, createdAt])
+}
+
+model SchoolPayout {
+  id                Int               @id @default(autoincrement())
+  publicId          String            @unique
+  account           SchoolFinanceAccount @relation(fields: [accountId], references: [id])
+  accountId         Int
+  amountMinor       Int
+  currency          String            @default("NGN")
+  status            SchoolPayoutStatus @default(REQUESTED)
+  provider          PaymentProvider   @default(LOCAL)
+  providerReference String?
+  requestedAt       DateTime          @default(now())
+  processedAt       DateTime?
+  failureReason     String?
+  metadata          Json?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  ledgerEntries SchoolPayoutLedgerEntry[]
+
+  @@index([accountId, status, createdAt])
+}
+
+model SchoolPayoutLedgerEntry {
+  id            Int                  @id @default(autoincrement())
+  publicId      String               @unique
+  account       SchoolFinanceAccount @relation(fields: [accountId], references: [id])
+  accountId     Int
+  payout        SchoolPayout         @relation(fields: [payoutId], references: [id])
+  payoutId      Int
+  previousStatus SchoolPayoutStatus?
+  nextStatus    SchoolPayoutStatus
+  amountMinor   Int
+  currency      String               @default("NGN")
+  note          String?
+  metadata      Json?
+  createdAt     DateTime             @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([payoutId, createdAt])
+}
+
 // Webhook events persisted for audit and safe retry processing. Store provider
 // metadata and raw JSON payload. Background workers set `processed=true` when
 // handling succeeds.
@@ -199,4 +368,20 @@ model CallSignalEvent {
   @@index([channel, event, createdAt])
   @@index([studentId, createdAt])
   @@index([callId, createdAt])
+}
+
+// Stores paid resource unlock purchases so students keep access after server
+// restarts. This is intentionally lightweight and keyed by resource/email.
+model ResourcePurchase {
+  id         Int      @id @default(autoincrement())
+  publicId   String   @unique
+  resourceId String
+  buyerEmail String
+  amountMinor Int     @default(0)
+  purchasedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@unique([resourceId, buyerEmail])
+  @@index([buyerEmail, purchasedAt])
+  @@index([resourceId, purchasedAt])
 }

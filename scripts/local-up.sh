@@ -27,6 +27,7 @@ DISABLE_QUEUES_UI="${DISABLE_QUEUES_UI:-1}"
 
 RUN_SMOKE="${RUN_SMOKE:-1}"
 DETACH="${DETACH:-0}"
+AUTO_RECLAIM_PORTS="${AUTO_RECLAIM_PORTS:-1}"
 
 LOG_DIR="${LOG_DIR:-/tmp}"
 DJANGO_LOG="${LOG_DIR}/edamaa-django.log"
@@ -48,11 +49,34 @@ require_cmd() {
 
 assert_port_free() {
   local port="$1"
-  if lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "Port $port is already in use. Stop the existing process first." >&2
-    lsof -iTCP:"$port" -sTCP:LISTEN >&2 || true
-    exit 1
+  local service_name="$2"
+
+  if ! lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    return
   fi
+
+  if [ "$AUTO_RECLAIM_PORTS" = "1" ]; then
+    local pids
+    pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+    if [ -n "$pids" ]; then
+      echo "Port $port is busy. Reclaiming it for ${service_name}..."
+      # Split newline-separated PIDs safely.
+      while IFS= read -r pid; do
+        if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+          kill "$pid" >/dev/null 2>&1 || true
+        fi
+      done <<<"$pids"
+
+      sleep 1
+      if ! lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+        return
+      fi
+    fi
+  fi
+
+  echo "Port $port is already in use. Stop the existing process first." >&2
+  lsof -iTCP:"$port" -sTCP:LISTEN >&2 || true
+  exit 1
 }
 
 wait_for_http_200() {
@@ -120,8 +144,8 @@ require_cmd lsof
 require_cmd npm
 require_cmd python3
 
-assert_port_free "$DJANGO_PORT"
-assert_port_free "$NEST_PORT"
+assert_port_free "$DJANGO_PORT" "Django"
+assert_port_free "$NEST_PORT" "NestJS"
 
 echo "Starting local backend stack from ${ROOT_DIR}"
 echo "Logs: ${DJANGO_LOG}, ${NEST_LOG}"
@@ -137,7 +161,8 @@ if ! python -c "import django" >/dev/null 2>&1; then
   pip install -r requirements.txt
 fi
 
-INTERNAL_API_TOKEN="$INTERNAL_API_TOKEN" DATABASE_URL="$DATABASE_URL" REDIS_URL="$REDIS_URL" \
+env -u CODEX_SANDBOX_NETWORK_DISABLED \
+  INTERNAL_API_TOKEN="$INTERNAL_API_TOKEN" DATABASE_URL="$DATABASE_URL" REDIS_URL="$REDIS_URL" \
   python manage.py migrate --noinput >"$DJANGO_MIGRATE_LOG" 2>&1 || {
   echo "Django migrate failed. See ${DJANGO_MIGRATE_LOG}" >&2
   tail -n 80 "$DJANGO_MIGRATE_LOG" >&2 || true
@@ -145,7 +170,8 @@ INTERNAL_API_TOKEN="$INTERNAL_API_TOKEN" DATABASE_URL="$DATABASE_URL" REDIS_URL=
 }
 
 # Use nohup so detached mode keeps services alive after this shell exits.
-INTERNAL_API_TOKEN="$INTERNAL_API_TOKEN" DATABASE_URL="$DATABASE_URL" REDIS_URL="$REDIS_URL" \
+env -u CODEX_SANDBOX_NETWORK_DISABLED \
+  INTERNAL_API_TOKEN="$INTERNAL_API_TOKEN" DATABASE_URL="$DATABASE_URL" REDIS_URL="$REDIS_URL" \
   nohup python manage.py runserver "${DJANGO_HOST}:${DJANGO_PORT}" --noreload >"$DJANGO_LOG" 2>&1 &
 DJANGO_PID="$!"
 echo "$DJANGO_PID" >"$DJANGO_PID_FILE"
@@ -172,7 +198,8 @@ npm run build >"$NEST_BUILD_LOG" 2>&1 || {
   exit 1
 }
 
-INTERNAL_API_TOKEN="$INTERNAL_API_TOKEN" \
+env -u CODEX_SANDBOX_NETWORK_DISABLED \
+  INTERNAL_API_TOKEN="$INTERNAL_API_TOKEN" \
   HOST="$NEST_HOST" \
   DJANGO_INTERNAL_API_URL="$DJANGO_INTERNAL_API_URL" \
   REDIS_URL="$REDIS_URL" \

@@ -9,5 +9,6 @@ import { PaymentsService } from './payments.service';
   imports: [SupabaseModule],
   controllers: [PaymentsController],
   providers: [PaymentsService, PrismaService, SupabaseAuthGuard],
+  exports: [PaymentsService],
 })
 export class PaymentsModule {}

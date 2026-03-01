@@ -6,6 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import {
+  Prisma,
   PaymentCategory,
   PaymentMethodType,
   PaymentProvider,
@@ -496,6 +497,86 @@ export class PaymentsService {
         },
       };
     }
+  }
+
+  async handleStripeWebhookEvent(event: unknown) {
+    const stripeEvent = event as Stripe.Event;
+    if (!stripeEvent || typeof stripeEvent !== 'object') {
+      return { handled: false, reason: 'invalid-event' };
+    }
+
+    if (
+      stripeEvent.type !== 'checkout.session.completed' &&
+      stripeEvent.type !== 'checkout.session.async_payment_succeeded'
+    ) {
+      return { handled: false, reason: 'unsupported-event' };
+    }
+
+    const session = stripeEvent.data?.object as Stripe.Checkout.Session | undefined;
+    if (!session || session.mode !== 'payment') {
+      return { handled: false, reason: 'not-payment-session' };
+    }
+
+    if (session.payment_status !== 'paid') {
+      return { handled: false, reason: 'payment-not-paid' };
+    }
+
+    const transactionPublicId = String(session.metadata?.transactionPublicId || '').trim();
+    if (!transactionPublicId && !session.id) {
+      return { handled: false, reason: 'missing-transaction-reference' };
+    }
+
+    const existing = await this.prisma.paymentTransaction.findFirst({
+      where: {
+        OR: [
+          ...(session.id ? [{ providerReference: session.id }] : []),
+          ...(transactionPublicId ? [{ publicId: transactionPublicId }] : []),
+        ],
+      },
+      orderBy: [{ id: 'desc' }],
+    });
+
+    if (!existing) {
+      return { handled: false, reason: 'transaction-not-found' };
+    }
+
+    if (existing.status === PaymentStatus.PAID) {
+      return { handled: true, reason: 'already-paid' };
+    }
+
+    const paidAt =
+      typeof session.created === 'number' && Number.isFinite(session.created)
+        ? new Date(session.created * 1000)
+        : new Date();
+    const receiptRef = existing.receiptRef || this.createReceiptRef(existing.publicId, paidAt);
+    const mergedMetadata = {
+      ...(existing.metadata && typeof existing.metadata === 'object'
+        ? (existing.metadata as Record<string, unknown>)
+        : {}),
+      webhook: {
+        eventId: stripeEvent.id,
+        eventType: stripeEvent.type,
+      },
+      checkoutSessionId: session.id || existing.providerReference || null,
+      stripePaymentIntentId:
+        typeof session.payment_intent === 'string'
+          ? session.payment_intent
+          : session.payment_intent?.id || null,
+    };
+
+    await this.prisma.paymentTransaction.update({
+      where: { id: existing.id },
+      data: {
+        status: PaymentStatus.PAID,
+        paidAt,
+        receiptRef,
+        provider: PaymentProvider.STRIPE,
+        providerReference: session.id || existing.providerReference || undefined,
+        metadata: mergedMetadata as Prisma.InputJsonValue,
+      },
+    });
+
+    return { handled: true, reason: 'settled' };
   }
 
   private async getDashboardFromPrisma(email: string, displayName: string): Promise<PaymentDashboardResponse> {

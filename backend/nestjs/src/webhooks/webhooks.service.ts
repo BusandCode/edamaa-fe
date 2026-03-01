@@ -9,7 +9,10 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import Stripe from 'stripe';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
+import { PaymentsService } from '../payments/payments.service';
 import { PrismaService } from '../prisma.service';
+import { SchoolFinanceService } from '../school-finance/school-finance.service';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 
 /**
  * WebhooksService
@@ -28,7 +31,12 @@ export class WebhooksService implements OnModuleDestroy {
   private queue: Queue | null = null;
   private redis: IORedis | null = null;
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly schoolFinanceService: SchoolFinanceService,
+    private readonly paymentsService: PaymentsService,
+    private readonly subscriptionsService: SubscriptionsService
+  ) {
     // Initialize Stripe client for server-side operations. We only use the
     // webhook secret below so public key is not strictly required here.
     this.stripe = new Stripe(process.env.STRIPE_API_KEY || 'sk_test_placeholder', { apiVersion: '2022-11-15' });
@@ -87,6 +95,10 @@ export class WebhooksService implements OnModuleDestroy {
           payload: event as any,
         },
       });
+
+      // Run domain side-effects immediately so webhook delivery acts as the
+      // primary reconciliation path. Queue workers still mark persistence state.
+      await this.handleStripeDomainSideEffects(event as Stripe.Event);
 
       const queued = await this.enqueueEvent('stripe-event', {
         event,
@@ -162,6 +174,41 @@ export class WebhooksService implements OnModuleDestroy {
       await client.quit();
     } catch {
       client.disconnect();
+    }
+  }
+
+  private async handleStripeDomainSideEffects(event: Stripe.Event) {
+    const tasks: Array<{
+      label: string;
+      run: () => Promise<{ handled: boolean; reason?: string } | void>;
+    }> = [
+      {
+        label: 'school-finance',
+        run: () => this.schoolFinanceService.handleStripeWebhookEvent(event),
+      },
+      {
+        label: 'payments',
+        run: () => this.paymentsService.handleStripeWebhookEvent(event),
+      },
+      {
+        label: 'subscriptions',
+        run: () => this.subscriptionsService.handleStripeWebhookEvent(event),
+      },
+    ];
+
+    for (const task of tasks) {
+      try {
+        const result = await task.run();
+        if (result && typeof result === 'object' && 'handled' in result && result.handled) {
+          this.logger.log(
+            `Stripe webhook side-effect handled by ${task.label} for event type=${event.type}`
+          );
+        }
+      } catch (error: any) {
+        this.logger.warn(
+          `Stripe webhook side-effect skipped for ${task.label}: ${error?.message || error}`
+        );
+      }
     }
   }
 }

@@ -4,7 +4,10 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma.service';
 
 type AuthUser = {
   id?: string | null;
@@ -26,6 +29,7 @@ type UploadResourceInput = {
   type?: string;
   category?: string;
   pricingType?: string;
+  price?: string | number;
   uploaderRole?: string;
   instructorName?: string;
 };
@@ -84,6 +88,15 @@ type ResourceItemResponse = {
   sizeLabel: string;
   isNew: boolean;
   isLocked: boolean;
+  isPurchased: boolean;
+};
+
+type ResourcePurchaseRecord = {
+  id: string;
+  resourceId: string;
+  buyerEmail: string;
+  amountMinor: number;
+  createdAt: Date;
 };
 
 type ResourceNotificationItemResponse = {
@@ -188,23 +201,31 @@ const detectResourceTypeFromMime = (mimeType: string): ResourceType => {
 };
 
 @Injectable()
-export class ResourcesService {
+export class ResourcesService implements OnModuleInit {
   private readonly logger = new Logger(ResourcesService.name);
   private readonly resources: ResourceRecord[] = [];
   private readonly filesByResourceId = new Map<string, ResourceFileRecord>();
+  private readonly purchases: ResourcePurchaseRecord[] = [];
+  private readonly purchasedEmailsByResourceId = new Map<string, Set<string>>();
   private readonly notifications: ResourceNotificationRecord[] = [];
   private readonly readNotificationIdsByEmail = new Map<string, Set<string>>();
+  private purchasesHydrated = false;
+  private purchaseStoreBackoffUntil = 0;
   private seeded = false;
 
-  constructor() {
+  constructor(private readonly prisma: PrismaService) {
     this.seedIfNeeded();
+  }
+
+  async onModuleInit() {
+    await this.hydratePersistedPurchases();
   }
 
   getFeedForAuthUser(authUser: AuthUser) {
     const email = this.requireEmail(authUser);
     const readIds = this.getReadNotificationIds(email);
 
-    const resources = this.resources.map((resource) => this.toResourceResponse(resource));
+    const resources = this.resources.map((resource) => this.toResourceResponse(resource, email));
     const notifications = this.notifications.map((notification) =>
       this.toNotificationResponse(notification, readIds.has(notification.id))
     );
@@ -286,7 +307,7 @@ export class ResourcesService {
     const email = this.requireEmail(authUser);
     const uploads = this.resources
       .filter((resource) => resource.uploaderEmail === email)
-      .map((resource) => this.toResourceResponse(resource));
+      .map((resource) => this.toResourceResponse(resource, email));
 
     return {
       generatedAt: new Date().toISOString(),
@@ -313,6 +334,7 @@ export class ResourcesService {
     const description = this.normalizeOptionalText(input.description, 500);
     const category = this.normalizeResourceCategory(input.category);
     const pricingType = this.normalizePricingType(input.pricingType);
+    const priceMinor = this.parsePriceMinor(input.price, pricingType);
 
     if (!uploadedFile) {
       throw new BadRequestException('Please attach a file so students can access this resource.');
@@ -330,12 +352,6 @@ export class ResourcesService {
       throw new BadRequestException('File is too large. Keep uploads below 25MB for now.');
     }
 
-    if (pricingType === 'paid') {
-      throw new BadRequestException(
-        'Paid e-library unlock is the next release. For now, publish this as free so students can access it.'
-      );
-    }
-
     const resourceType = this.normalizeResourceType(input.type, String(uploadedFile.mimetype || ''));
     const safeOriginalName = sanitizeFileName(String(uploadedFile.originalname || 'resource-file')) || 'resource-file';
     const resourceId = makeId('res');
@@ -350,7 +366,7 @@ export class ResourcesService {
       type: resourceType,
       category,
       pricingType,
-      priceMinor: null,
+      priceMinor,
       uploaderName: String(uploaderName || defaultName).trim(),
       uploaderRole,
       uploaderEmail: email,
@@ -372,7 +388,7 @@ export class ResourcesService {
     this.notifications.unshift(notification);
 
     return {
-      resource: this.toResourceResponse(resource),
+      resource: this.toResourceResponse(resource, email),
       notification: this.toNotificationResponse(notification, false),
       message: `${resource.title} is now live in the student resources feed.`,
       dataQuality: {
@@ -383,7 +399,7 @@ export class ResourcesService {
   }
 
   getResourceDownloadForAuthUser(authUser: AuthUser, resourceId: string) {
-    this.requireEmail(authUser);
+    const email = this.requireEmail(authUser);
     const normalizedResourceId = String(resourceId || '').trim();
 
     if (!normalizedResourceId) {
@@ -395,9 +411,9 @@ export class ResourcesService {
       throw new NotFoundException('Resource could not be found.');
     }
 
-    if (resource.pricingType === 'paid') {
-      throw new BadRequestException(
-        'This resource is marked as paid. Paid unlock flow will be available in the next release.'
+    if (resource.pricingType === 'paid' && !this.canAccessPaidResource(resource, email)) {
+      throw new ForbiddenException(
+        'This resource is locked. Please purchase it first to preview or download.'
       );
     }
 
@@ -412,8 +428,159 @@ export class ResourcesService {
       fileName: fileRecord.fileName,
       mimeType: fileRecord.mimeType,
       bytes: fileRecord.bytes,
-      resource: this.toResourceResponse(resource),
+      resource: this.toResourceResponse(resource, email),
     };
+  }
+
+  async purchaseResourceForAuthUser(authUser: AuthUser, resourceId: string) {
+    const email = this.requireEmail(authUser);
+    const normalizedResourceId = String(resourceId || '').trim();
+
+    if (!normalizedResourceId) {
+      throw new BadRequestException('Resource id is required.');
+    }
+
+    const resource = this.resources.find((item) => item.id === normalizedResourceId);
+    if (!resource) {
+      throw new NotFoundException('Resource could not be found.');
+    }
+
+    if (resource.pricingType !== 'paid') {
+      return {
+        purchased: false,
+        message: 'This resource is already free for all students.',
+        resource: this.toResourceResponse(resource, email),
+      };
+    }
+
+    if (resource.uploaderEmail === email || this.hasPurchasedResource(resource.id, email)) {
+      return {
+        purchased: false,
+        message: 'You already have access to this resource.',
+        resource: this.toResourceResponse(resource, email),
+      };
+    }
+
+    const purchase: ResourcePurchaseRecord = {
+      id: makeId('respurchase'),
+      resourceId: resource.id,
+      buyerEmail: email,
+      amountMinor: resource.priceMinor || 0,
+      createdAt: new Date(),
+    };
+
+    this.purchases.unshift(purchase);
+    this.getPurchasedEmails(resource.id).add(email);
+    await this.persistPurchaseRecord(purchase);
+
+    return {
+      purchased: true,
+      message: `Access granted. You can now open ${resource.title}.`,
+      purchasedAt: purchase.createdAt.toISOString(),
+      amountPaid: this.toNaira(resource.priceMinor || 0),
+      resource: this.toResourceResponse(resource, email),
+    };
+  }
+
+  private async hydratePersistedPurchases() {
+    if (this.purchasesHydrated) {
+      return;
+    }
+    this.purchasesHydrated = true;
+
+    try {
+      const storedPurchases = await this.prisma.resourcePurchase.findMany({
+        orderBy: [{ purchasedAt: 'desc' }],
+        take: 4000,
+      });
+
+      storedPurchases.forEach((purchase) => {
+        const record: ResourcePurchaseRecord = {
+          id: purchase.publicId,
+          resourceId: purchase.resourceId,
+          buyerEmail: normalizeEmail(purchase.buyerEmail),
+          amountMinor: purchase.amountMinor,
+          createdAt: purchase.purchasedAt,
+        };
+
+        this.purchases.push(record);
+        this.getPurchasedEmails(record.resourceId).add(record.buyerEmail);
+      });
+
+      if (storedPurchases.length > 0) {
+        this.logger.log(`Loaded ${storedPurchases.length} persisted resource purchases.`);
+      }
+    } catch (error) {
+      if (this.isPurchasePersistenceUnavailableError(error)) {
+        this.logger.warn(
+          'Resource purchase persistence is unavailable. Falling back to in-memory purchases only.'
+        );
+        return;
+      }
+
+      this.logger.warn(
+        `Could not hydrate resource purchases. Falling back to memory mode (${(error as Error).message}).`
+      );
+    }
+  }
+
+  private async persistPurchaseRecord(purchase: ResourcePurchaseRecord) {
+    if (Date.now() < this.purchaseStoreBackoffUntil) {
+      return;
+    }
+
+    try {
+      await this.prisma.resourcePurchase.upsert({
+        where: {
+          resourceId_buyerEmail: {
+            resourceId: purchase.resourceId,
+            buyerEmail: purchase.buyerEmail,
+          },
+        },
+        create: {
+          publicId: purchase.id,
+          resourceId: purchase.resourceId,
+          buyerEmail: purchase.buyerEmail,
+          amountMinor: purchase.amountMinor,
+          purchasedAt: purchase.createdAt,
+        },
+        update: {
+          amountMinor: purchase.amountMinor,
+          purchasedAt: purchase.createdAt,
+        },
+      });
+    } catch (error) {
+      if (this.isPurchasePersistenceUnavailableError(error)) {
+        // Avoid log spam when local DB schema is not yet migrated.
+        this.purchaseStoreBackoffUntil = Date.now() + 60_000;
+        this.logger.warn(
+          'Resource purchase persistence failed. Retrying in 60s while keeping in-memory access.'
+        );
+        return;
+      }
+
+      this.logger.warn(
+        `Persisting resource purchase failed (${(error as Error).message}). In-memory access still works.`
+      );
+    }
+  }
+
+  private isPurchasePersistenceUnavailableError(error: unknown) {
+    if (error instanceof Prisma.PrismaClientInitializationError) {
+      return true;
+    }
+
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      return (
+        error.code === 'P1001' ||
+        error.code === 'P1008' ||
+        error.code === 'P1017' ||
+        error.code === 'P2021' ||
+        error.code === 'P2022'
+      );
+    }
+
+    return false;
   }
 
   private requireEmail(authUser: AuthUser) {
@@ -509,6 +676,46 @@ export class ResourcesService {
     return String(value || '').trim().toLowerCase() === 'paid' ? 'paid' : 'free';
   }
 
+  private parsePriceMinor(value: string | number | undefined, pricingType: ResourcePricingType) {
+    if (pricingType === 'free') {
+      return null;
+    }
+
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      throw new BadRequestException('Set a valid paid price before publishing this resource.');
+    }
+
+    if (numeric > 2_000_000) {
+      throw new BadRequestException('Resource price is too high. Keep it within realistic limits.');
+    }
+
+    return Math.round(numeric * 100);
+  }
+
+  private getPurchasedEmails(resourceId: string) {
+    const existing = this.purchasedEmailsByResourceId.get(resourceId);
+    if (existing) {
+      return existing;
+    }
+
+    const created = new Set<string>();
+    this.purchasedEmailsByResourceId.set(resourceId, created);
+    return created;
+  }
+
+  private hasPurchasedResource(resourceId: string, email: string) {
+    return this.getPurchasedEmails(resourceId).has(email);
+  }
+
+  private canAccessPaidResource(resource: ResourceRecord, email: string) {
+    return resource.uploaderEmail === email || this.hasPurchasedResource(resource.id, email);
+  }
+
+  private toNaira(amountMinor: number) {
+    return Math.round(amountMinor) / 100;
+  }
+
   private defaultDescriptionForType(type: ResourceType) {
     switch (type) {
       case 'pdf':
@@ -558,7 +765,13 @@ export class ResourcesService {
     return created;
   }
 
-  private toResourceResponse(resource: ResourceRecord): ResourceItemResponse {
+  private toResourceResponse(resource: ResourceRecord, viewerEmail?: string): ResourceItemResponse {
+    const normalizedViewerEmail = normalizeEmail(viewerEmail);
+    const isPurchased =
+      resource.pricingType === 'paid' &&
+      !!normalizedViewerEmail &&
+      this.canAccessPaidResource(resource, normalizedViewerEmail);
+
     return {
       id: resource.id,
       title: resource.title,
@@ -567,7 +780,13 @@ export class ResourcesService {
       type: resource.type,
       category: resource.category,
       pricingType: resource.pricingType,
-      priceLabel: resource.priceMinor !== null ? `₦${resource.priceMinor.toLocaleString()}` : null,
+      priceLabel:
+        resource.priceMinor !== null
+          ? `₦${this.toNaira(resource.priceMinor).toLocaleString('en-US', {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 2,
+            })}`
+          : null,
       instructor: resource.uploaderName,
       uploaderRole: resource.uploaderRole,
       uploadedAt: resource.createdAt.toISOString(),
@@ -578,7 +797,8 @@ export class ResourcesService {
       sizeBytes: resource.fileSizeBytes,
       sizeLabel: formatBytes(resource.fileSizeBytes),
       isNew: Date.now() - resource.createdAt.getTime() < 1000 * 60 * 60 * 48,
-      isLocked: resource.pricingType === 'paid',
+      isLocked: resource.pricingType === 'paid' && !isPurchased,
+      isPurchased,
     };
   }
 
@@ -607,11 +827,14 @@ export class ResourcesService {
 
     const now = Date.now();
     const seededResources: Array<{
+      id: string;
       title: string;
       description: string;
       subject: string;
       type: ResourceType;
       category: ResourceCategory;
+      pricingType?: ResourcePricingType;
+      priceMinor?: number | null;
       uploaderName: string;
       uploaderRole: UploaderRole;
       uploaderEmail: string;
@@ -621,6 +844,7 @@ export class ResourcesService {
       bodyText: string;
     }> = [
       {
+        id: 'resource_seed_calculus_classwork_hints',
         title: 'Calculus Classwork Hints',
         description: 'Step-by-step hint sheet for this week classwork, with worked examples.',
         subject: 'Mathematics',
@@ -636,6 +860,7 @@ export class ResourcesService {
           'Calculus Classwork Hints\n\n1. Start with substitution before integration by parts.\n2. Show each simplification line.\n3. Validate signs and limits.',
       },
       {
+        id: 'resource_seed_waec_physics_assignment_support',
         title: 'WAEC Physics Assignment Support',
         description: 'Quick reference notes prepared to guide this assignment submission.',
         subject: 'Physics',
@@ -651,6 +876,7 @@ export class ResourcesService {
           'WAEC Physics Assignment Support\n\nFocus areas:\n- Motion graphs\n- Work, energy, and power\n- Practical lab interpretation tips',
       },
       {
+        id: 'resource_seed_study_planning_template',
         title: 'E-Library: Study Planning Template',
         description: 'Free template from the e-library section to plan weekly reading blocks.',
         subject: 'Study Skills',
@@ -665,18 +891,36 @@ export class ResourcesService {
         bodyText:
           'Study Planning Template\n\nWeek Goals:\n- Concept review\n- Assignment draft\n- Practice quiz\n- Reflection',
       },
+      {
+        id: 'resource_seed_premium_sat_math_drill_pack',
+        title: 'Premium SAT Math Drill Pack',
+        description: 'Paid e-library bundle with timed drills and worked answer breakdowns.',
+        subject: 'Mathematics',
+        type: 'pdf',
+        category: 'library',
+        pricingType: 'paid',
+        priceMinor: 450000,
+        uploaderName: 'Edamaa Exam Lab',
+        uploaderRole: 'school',
+        uploaderEmail: 'school@edamaa.dev',
+        fileName: 'premium-sat-math-drills.txt',
+        mimeType: 'text/plain',
+        createdAtOffsetMs: 1000 * 60 * 80,
+        bodyText:
+          'Premium SAT Math Drill Pack\n\nSections:\n- Timed algebra drills\n- Data interpretation\n- Worked answer review',
+      },
     ];
 
     seededResources.forEach((seeded) => {
       const resource: ResourceRecord = {
-        id: makeId('res'),
+        id: seeded.id,
         title: seeded.title,
         description: seeded.description,
         subject: seeded.subject,
         type: seeded.type,
         category: seeded.category,
-        pricingType: 'free',
-        priceMinor: null,
+        pricingType: seeded.pricingType || 'free',
+        priceMinor: seeded.priceMinor ?? null,
         uploaderName: seeded.uploaderName,
         uploaderRole: seeded.uploaderRole,
         uploaderEmail: seeded.uploaderEmail,

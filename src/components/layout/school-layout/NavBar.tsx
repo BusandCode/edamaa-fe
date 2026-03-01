@@ -26,11 +26,15 @@ const NavBar: React.FC<NavBarProps> = ({ activeTab = 'home', onTabChange }) => {
     navigate('/student-list-school');
   }
 
+  const handleFinanceClick = () => {
+    navigate('/school-finance');
+  }
+
   const navItems: NavItem[] = [
     { id: 'home', icon: FaHome, label: 'Home', isActive: true, onClick: handleHomeClick },
     { id: 'students', icon: FaGraduationCap, label: 'Students', onClick: handleStudentListClick },
     { id: 'reports', icon: FaClipboardList, label: 'Reports' },
-    { id: 'finance', icon: FaFileInvoiceDollar, label: 'Finance' },
+    { id: 'finance', icon: FaFileInvoiceDollar, label: 'Finance', onClick: handleFinanceClick },
     { id: 'settings', icon: FaCog, label: 'Settings' },
   ];
 

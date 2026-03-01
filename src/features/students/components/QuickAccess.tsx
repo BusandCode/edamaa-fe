@@ -5,6 +5,7 @@ import {
   ChartBarIcon,
   DocumentTextIcon,
   CreditCardIcon,
+  BanknotesIcon,
 } from '@heroicons/react/24/outline';
 
 interface QuickAccessItem {
@@ -21,6 +22,7 @@ interface QuickAccessGridProps {
   onJoinClass: () => void;
   onResourceClick: () => void;
   onPaymentsClick: () => void;
+  onSchoolFeesClick: () => void;
 }
 
 const QuickAccessGrid = ({
@@ -29,7 +31,8 @@ const QuickAccessGrid = ({
   onPerformanceClick,
   onJoinClass,
   onResourceClick,
-  onPaymentsClick
+  onPaymentsClick,
+  onSchoolFeesClick
 }: QuickAccessGridProps) => {
   const quickAccessItems: QuickAccessItem[] = [
     {
@@ -62,6 +65,11 @@ const QuickAccessGrid = ({
       label: 'Payments',
       icon: CreditCardIcon,
       onClick: onPaymentsClick,
+    },
+    {
+      label: 'My School Fees',
+      icon: BanknotesIcon,
+      onClick: onSchoolFeesClick,
     },
   ];
 
@@ -98,4 +106,3 @@ const QuickAccessGrid = ({
 };
 
 export default QuickAccessGrid;
-

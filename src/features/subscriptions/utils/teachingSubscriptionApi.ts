@@ -1,4 +1,7 @@
-import { loadPersistedSupabaseAccessToken } from '../../../utils/authSession';
+import {
+  loadPersistedLocalDevAuthSession,
+  loadPersistedSupabaseAccessToken,
+} from '../../../utils/authSession';
 
 export type TeachingActor = 'tutor' | 'school';
 export type TeachingSubscriptionStatus =
@@ -30,7 +33,49 @@ type CheckoutResponse = {
   message: string;
 };
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '');
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
+const DEV_PREMIUM_UNLOCK_ENABLED = (() => {
+  // Default to unlocked in local development so premium-gated flows can be tested end-to-end.
+  const rawValue = import.meta.env.VITE_DEV_UNLOCK_PREMIUM ?? (import.meta.env.DEV ? 'true' : 'false');
+  return String(rawValue).trim().toLowerCase() === 'true';
+})();
+
+const isLocalhostHost = (host: string) => host === '127.0.0.1' || host === 'localhost';
+
+const resolveApiBaseCandidates = () => {
+  const candidates = new Set<string>();
+  candidates.add('/api');
+
+  if (API_BASE_URL && API_BASE_URL !== '/api') {
+    candidates.add(API_BASE_URL);
+  }
+
+  if (typeof window !== 'undefined') {
+    const host = (window.location.hostname || '').trim();
+    if (isLocalhostHost(host)) {
+      candidates.add(`http://${host}:3001`);
+    }
+  }
+
+  candidates.add('http://127.0.0.1:3001');
+  candidates.add('http://localhost:3001');
+  return Array.from(candidates).map((base) => base.replace(/\/+$/, ''));
+};
+
+const buildDevUnlockedSubscriptionState = (actor: TeachingActor): TeachingSubscriptionState => ({
+  actor,
+  status: 'active',
+  isActive: true,
+  isEdamaa3dVerified: true,
+  planCode: actor === 'school' ? 'school_pro' : 'tutor_pro',
+  currentPeriodEnd: null,
+  currentPeriodEndLabel: 'Development unlock',
+  features: {
+    canTeachLive: true,
+    canUseUnlimitedOfflineClasses: true,
+    maxScheduledOfflineClasses: 999,
+  },
+});
 
 const extractErrorMessage = async (response: Response) => {
   try {
@@ -42,6 +87,15 @@ const extractErrorMessage = async (response: Response) => {
       return payload.message;
     }
   } catch {
+    // Fall through to plain-text fallback.
+  }
+
+  try {
+    const textPayload = (await response.text()).replace(/\s+/g, ' ').trim();
+    if (textPayload && !/^</.test(textPayload)) {
+      return textPayload;
+    }
+  } catch {
     // Fallback below.
   }
   return `Request failed with status ${response.status}`;
@@ -49,29 +103,71 @@ const extractErrorMessage = async (response: Response) => {
 
 const requestWithAuth = async (endpoint: string, init?: RequestInit) => {
   const token = loadPersistedSupabaseAccessToken();
-  if (!token) {
+  const localDevSession = loadPersistedLocalDevAuthSession();
+  if (!token && !localDevSession?.email) {
     throw new Error('Sign in with your authenticated account to manage subscriptions.');
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  const bases = resolveApiBaseCandidates();
+  let networkError: Error | null = null;
 
-  if (!response.ok) {
-    throw new Error(await extractErrorMessage(response));
+  const shouldTryNextBase = (response: Response, base: string) => {
+    if (base.startsWith('/') && response.status === 500) {
+      return true;
+    }
+    if ([502, 503, 504].includes(response.status)) {
+      return true;
+    }
+    if (base.startsWith('/') && [404, 405].includes(response.status)) {
+      return true;
+    }
+    return false;
+  };
+
+  for (let index = 0; index < bases.length; index += 1) {
+    const base = bases[index];
+    let response: Response;
+    try {
+      response = await fetch(`${base}${endpoint}`, {
+        ...init,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(init?.headers || {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(localDevSession?.email ? { 'X-Dev-User-Email': localDevSession.email } : {}),
+        },
+      });
+    } catch (error) {
+      networkError = error instanceof Error ? error : new Error('Network request failed');
+      continue;
+    }
+
+    if (!response.ok) {
+      if (shouldTryNextBase(response, base)) {
+        continue;
+      }
+      throw new Error(await extractErrorMessage(response));
+    }
+
+    return response;
   }
 
-  return response;
+  const fallbackMessage =
+    networkError?.message && networkError.message.trim()
+      ? networkError.message
+      : 'Failed to fetch';
+  throw new Error(
+    `${fallbackMessage}. Could not reach backend API on ${bases.join(', ')}. Ensure NestJS is running on http://127.0.0.1:3001.`
+  );
 };
 
 export const fetchTeachingSubscriptionState = async (
   actor: TeachingActor
 ): Promise<TeachingSubscriptionState> => {
+  if (DEV_PREMIUM_UNLOCK_ENABLED) {
+    return buildDevUnlockedSubscriptionState(actor);
+  }
+
   const response = await requestWithAuth(`/subscriptions/me/status?actor=${encodeURIComponent(actor)}`);
   return (await response.json()) as TeachingSubscriptionState;
 };

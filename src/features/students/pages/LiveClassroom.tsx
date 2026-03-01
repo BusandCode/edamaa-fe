@@ -504,6 +504,8 @@ const LiveClassroom = () => {
   const [activeClassworkPromptId, setActiveClassworkPromptId] = useState<string | null>(null);
 
   const [chatInput, setChatInput] = useState('');
+  const [isChatOpen, setIsChatOpen] = useState(true);
+  const [mutedChatParticipantIds, setMutedChatParticipantIds] = useState<string[]>([]);
   const [chatReplyTarget, setChatReplyTarget] = useState<{
     id: string;
     senderName: string;
@@ -650,6 +652,15 @@ const LiveClassroom = () => {
       ),
     [activeParticipants, onStageParticipantIds, selfParticipant.id]
   );
+  const chatModerationStudents = useMemo(
+    () =>
+      activeParticipants.filter(
+        (participant) => participant.role === 'student' && participant.id !== selfParticipant.id
+      ),
+    [activeParticipants, selfParticipant.id]
+  );
+  const isSelfChatMuted = mutedChatParticipantIds.includes(selfParticipant.id);
+  const canSendChat = isTeacher || (isChatOpen && !isSelfChatMuted);
 
   const topGifters = useMemo(() => {
     const totals = new Map<string, { senderName: string; total: number }>();
@@ -1288,6 +1299,8 @@ const LiveClassroom = () => {
     setPendingStageInvites([]);
     setIncomingStageInvite(null);
     setChatReplyTarget(null);
+    setIsChatOpen(true);
+    setMutedChatParticipantIds([]);
     setLikesCount(0);
     setStreamStatus('connecting');
     setNotice(isTeacher ? 'Preparing your live stream room...' : 'Joining live stream...');
@@ -1569,6 +1582,7 @@ const LiveClassroom = () => {
         setPendingStageInvites((previous) =>
           previous.filter((invite) => invite.studentId !== participantId || invite.status !== 'pending')
         );
+        setMutedChatParticipantIds((previous) => previous.filter((id) => id !== participantId));
 
         if (!isTeacher && participantId === teacherId) {
           setStreamStatus('ended');
@@ -1717,6 +1731,73 @@ const LiveClassroom = () => {
           setNotice('You were moved back to audience by the tutor.');
         } else {
           setNotice(`${participantName} was moved back to audience.`);
+        }
+        return;
+      }
+
+      if (eventName === 'chat.settings') {
+        const chatOpen = data.isOpen !== false;
+        setIsChatOpen(chatOpen);
+
+        if (!isTeacher) {
+          setNotice(chatOpen ? 'Tutor reopened chat.' : 'Tutor paused chat temporarily.');
+        }
+        return;
+      }
+
+      if (eventName === 'chat.moderation') {
+        const participantId = typeof data.participantId === 'string' ? data.participantId : '';
+        const participantName =
+          typeof data.participantName === 'string' ? data.participantName : 'Student';
+        const muted = data.muted === true;
+
+        if (!participantId) {
+          return;
+        }
+
+        setMutedChatParticipantIds((previous) => {
+          if (muted) {
+            return previous.includes(participantId) ? previous : [...previous, participantId];
+          }
+          return previous.filter((id) => id !== participantId);
+        });
+
+        if (!isTeacher && participantId === selfParticipant.id) {
+          setNotice(
+            muted
+              ? 'Tutor muted your chat for now. Keep following the lesson.'
+              : 'Tutor restored your chat access.'
+          );
+        } else if (isTeacher) {
+          setNotice(
+            muted
+              ? `${participantName} was muted in chat.`
+              : `${participantName} can chat again.`
+          );
+        }
+        return;
+      }
+
+      if (eventName === 'chat.clear') {
+        const actorName =
+          typeof data.actorName === 'string' && data.actorName.trim()
+            ? data.actorName.trim()
+            : liveClass.instructor;
+
+        setChatReplyTarget(null);
+        setChatMessages([
+          {
+            id: `chat-clear-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+            senderId: teacherId,
+            senderName: actorName,
+            senderRole: 'teacher',
+            text: 'Chat was cleared to start a focused discussion.',
+            sentAt: new Date().toISOString(),
+          },
+        ]);
+
+        if (!isTeacher) {
+          setNotice(`${actorName} cleared the chat.`);
         }
         return;
       }
@@ -2060,8 +2141,117 @@ const LiveClassroom = () => {
     setScreenShared((previous) => !previous);
   };
 
+  const toggleChatAvailability = async () => {
+    if (!isTeacher) {
+      return;
+    }
+
+    const nextIsChatOpen = !isChatOpen;
+    setIsChatOpen(nextIsChatOpen);
+
+    const eventId = `chat-settings-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    rememberEventId(eventId);
+
+    const published = await publishSignal('chat.settings', {
+      eventId,
+      clientId: clientIdRef.current,
+      actorId: selfParticipant.id,
+      actorName: selfParticipant.name,
+      isOpen: nextIsChatOpen,
+    });
+
+    setNotice(
+      nextIsChatOpen
+        ? 'Chat reopened for the class.'
+        : 'Chat paused to keep focus on the lesson.'
+    );
+
+    if (!published) {
+      setNotice('Chat setting updated locally. Realtime sync is currently offline.');
+    }
+  };
+
+  const toggleStudentChatMute = async (studentId: string) => {
+    if (!isTeacher) {
+      return;
+    }
+
+    const student = participants.find(
+      (participant) => participant.id === studentId && participant.role === 'student'
+    );
+    if (!student) {
+      return;
+    }
+
+    const nextMuted = !mutedChatParticipantIds.includes(studentId);
+    setMutedChatParticipantIds((previous) =>
+      nextMuted ? (previous.includes(studentId) ? previous : [...previous, studentId]) : previous.filter((id) => id !== studentId)
+    );
+
+    const eventId = `chat-moderation-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    rememberEventId(eventId);
+
+    const published = await publishSignal('chat.moderation', {
+      eventId,
+      clientId: clientIdRef.current,
+      actorId: selfParticipant.id,
+      actorName: selfParticipant.name,
+      participantId: studentId,
+      participantName: student.name,
+      muted: nextMuted,
+    });
+
+    setNotice(nextMuted ? `${student.name} is muted in chat.` : `${student.name} can chat again.`);
+
+    if (!published) {
+      setNotice('Chat moderation updated locally. Realtime sync is currently offline.');
+    }
+  };
+
+  const clearChatForEveryone = async () => {
+    if (!isTeacher) {
+      return;
+    }
+
+    setChatReplyTarget(null);
+    setChatMessages([
+      {
+        id: `chat-clear-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+        senderId: teacherId,
+        senderName: selfParticipant.name,
+        senderRole: 'teacher',
+        text: 'Chat was cleared to start a focused discussion.',
+        sentAt: new Date().toISOString(),
+      },
+    ]);
+
+    const eventId = `chat-clear-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    rememberEventId(eventId);
+
+    const published = await publishSignal('chat.clear', {
+      eventId,
+      clientId: clientIdRef.current,
+      actorId: selfParticipant.id,
+      actorName: selfParticipant.name,
+    });
+
+    setNotice('Chat cleared for everyone.');
+    if (!published) {
+      setNotice('Chat cleared locally. Realtime sync is currently offline.');
+    }
+  };
+
   const handleSendChat = (event: FormEvent) => {
     event.preventDefault();
+
+    if (!canSendChat) {
+      if (!isChatOpen) {
+        setNotice('Tutor paused chat temporarily.');
+      } else if (isSelfChatMuted) {
+        setNotice('Your chat is muted right now.');
+      }
+      return;
+    }
 
     const text = chatInput.trim();
     if (!text) {
@@ -2864,7 +3054,7 @@ const LiveClassroom = () => {
             <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 sm:p-4">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold sm:text-base">Participants ({activeParticipants.length})</h2>
-              <span className="text-[11px] text-white/65">Zoom-style classroom grid</span>
+              <span className="text-[11px] text-white/65">Live classroom grid</span>
             </div>
 
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -3309,8 +3499,79 @@ const LiveClassroom = () => {
                 <ChatBubbleLeftRightIcon className="h-4 w-4" />
                 Live Chat
               </h3>
-              <span className="text-[11px] text-white/65">{chatMessages.length} msgs</span>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                    isChatOpen ? 'bg-emerald-400/20 text-emerald-100' : 'bg-red-400/20 text-red-100'
+                  }`}
+                >
+                  {isChatOpen ? 'Chat On' : 'Chat Paused'}
+                </span>
+                <span className="text-[11px] text-white/65">{chatMessages.length} msgs</span>
+              </div>
             </div>
+
+            {isTeacher ? (
+              <div className="mb-3 space-y-2 rounded-xl border border-white/10 bg-black/20 p-2.5">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void toggleChatAvailability()}
+                    className={`rounded-md px-2.5 py-1 text-[11px] font-semibold ${
+                      isChatOpen
+                        ? 'bg-red-500/20 text-red-100 hover:bg-red-500/30'
+                        : 'bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30'
+                    }`}
+                  >
+                    {isChatOpen ? 'Pause Chat' : 'Reopen Chat'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void clearChatForEveryone()}
+                    className="rounded-md border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white/85 hover:bg-white/20"
+                  >
+                    Clear Chat
+                  </button>
+                </div>
+
+                <div className="max-h-28 overflow-y-auto space-y-1.5">
+                  {chatModerationStudents.length === 0 ? (
+                    <p className="text-[11px] text-white/55">No students online for chat moderation.</p>
+                  ) : (
+                    chatModerationStudents.slice(0, 8).map((student) => {
+                      const isMuted = mutedChatParticipantIds.includes(student.id);
+                      return (
+                        <div
+                          key={`chat-moderation-${student.id}`}
+                          className="flex items-center justify-between gap-2 rounded-md bg-white/[0.04] px-2 py-1.5"
+                        >
+                          <p className="truncate text-[11px] text-white/90">{student.name}</p>
+                          <button
+                            type="button"
+                            onClick={() => void toggleStudentChatMute(student.id)}
+                            className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${
+                              isMuted
+                                ? 'bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30'
+                                : 'bg-amber-500/20 text-amber-100 hover:bg-amber-500/30'
+                            }`}
+                          >
+                            {isMuted ? 'Unmute' : 'Mute'}
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            ) : (
+              (!isChatOpen || isSelfChatMuted) && (
+                <div className="mb-3 rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
+                  {!isChatOpen
+                    ? 'Tutor paused the chat to keep the class focused.'
+                    : 'Tutor muted your chat temporarily.'}
+                </div>
+              )
+            )}
 
             <div ref={chatBodyRef} className="h-72 overflow-y-auto rounded-xl border border-white/10 bg-black/25 p-3">
               {chatMessages.length === 0 ? (
@@ -3396,12 +3657,19 @@ const LiveClassroom = () => {
               <input
                 value={chatInput}
                 onChange={(event) => setChatInput(event.target.value)}
-                placeholder="Write to the class..."
+                disabled={!canSendChat}
+                placeholder={
+                  !isChatOpen && !isTeacher
+                    ? 'Tutor paused chat...'
+                    : isSelfChatMuted && !isTeacher
+                    ? 'You are muted in chat...'
+                    : 'Write to the class...'
+                }
                 className="flex-1 rounded-lg border border-white/20 bg-[#0f1026] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#3D08BA]/70"
               />
               <button
                 type="submit"
-                disabled={!chatInput.trim()}
+                disabled={!chatInput.trim() || !canSendChat}
                 className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[#3D08BA] text-white hover:bg-[#2d0692] disabled:opacity-50"
                 aria-label="Send chat message"
               >
@@ -3442,9 +3710,8 @@ const LiveClassroom = () => {
               Live Class Pattern
             </p>
             <p className="mt-2 leading-relaxed">
-              This room blends a Zoom-style class layout with TikTok-style gifting. Students can engage in chat,
-              raise hands, react with likes, and send school-resource gifts to teachers or school support while the
-              lesson is live.
+              This room combines structured live teaching with interactive class engagement. Students can chat, raise
+              hands, react with likes, and send school-themed gifts during the lesson.
             </p>
           </div>
         </aside>

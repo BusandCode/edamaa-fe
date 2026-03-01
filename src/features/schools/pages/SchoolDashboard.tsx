@@ -11,7 +11,10 @@ import {
   FaCertificate,
   FaBook,
   FaCamera,
+  FaMoneyBillWave,
+  FaHome,
 } from 'react-icons/fa';
+import type { IconType } from 'react-icons';
 import NewLogo from '../../../components/common/NewLogo';
 import QuickActionButton from '../components/QuickActionButton';
 import RecentActivity from '../components/RecentActivity';
@@ -21,6 +24,7 @@ import {
   fetchTeachingSubscriptionState,
   type TeachingSubscriptionState,
 } from '../../subscriptions/utils/teachingSubscriptionApi';
+import { schoolManagementModules, type SchoolModule } from '../data/schoolManagementModules';
 
 
 
@@ -100,13 +104,30 @@ const UpcomingEvents = () => {
   );
 };
 
+const schoolModuleIcons: Record<SchoolModule['iconKey'], IconType> = {
+  fees: FaMoneyBillWave,
+  timetable: FaCalendarAlt,
+  exams: FaFileAlt,
+  homework: FaBook,
+  certificates: FaCertificate,
+  onlineCourses: FaVideo,
+  branches: FaUsers,
+  library: FaBook,
+  attendance: FaCheckCircle,
+  hostel: FaHome,
+};
+
 const SchoolDashboard = () => {
   const [profileImage, setProfileImage] = useState<string>('');
   const [subscriptionState, setSubscriptionState] = useState<TeachingSubscriptionState | null>(null);
   const [isSubscriptionLoading, setIsSubscriptionLoading] = useState(false);
   const [gateNotice, setGateNotice] = useState('');
+  const [isModuleDetailsOpen, setIsModuleDetailsOpen] = useState(false);
+  const [activeModuleId, setActiveModuleId] = useState(schoolManagementModules[0]?.id ?? '');
   const navigate = useNavigate();
   const isSubscriptionActive = Boolean(subscriptionState?.isActive);
+  const activeSchoolModule =
+    schoolManagementModules.find((module) => module.id === activeModuleId) || schoolManagementModules[0];
 
   const loadSubscription = async () => {
     setIsSubscriptionLoading(true);
@@ -186,6 +207,21 @@ const SchoolDashboard = () => {
 
   const handleResourceUploadClick = () => {
     navigate('/resources?actor=school&mode=upload');
+  };
+
+  const handleFinanceClick = () => {
+    navigate('/school-finance');
+  };
+
+  const openModuleDetails = (moduleId?: string) => {
+    if (moduleId) {
+      setActiveModuleId(moduleId);
+    }
+    setIsModuleDetailsOpen(true);
+  };
+
+  const closeModuleDetails = () => {
+    setIsModuleDetailsOpen(false);
   };
 
   return (
@@ -302,6 +338,72 @@ const SchoolDashboard = () => {
           </div>
         </div>
 
+        {!isSubscriptionLoading && (
+          <section className='mb-6'>
+            {isSubscriptionActive ? (
+              <div className='bg-white rounded-2xl p-5 shadow-sm'>
+                <div className='mb-4 flex flex-wrap items-start justify-between gap-3'>
+                  <div>
+                    <h3 className='text-base font-bold text-gray-900'>School Management Platform</h3>
+                    <p className='mt-1 text-xs text-gray-600'>
+                      Run your entire school from one connected system. Clear. Fast. Organized.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => openModuleDetails(activeSchoolModule?.id)}
+                    className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
+                  >
+                    View Module Details
+                  </button>
+                </div>
+
+                <p className='mb-3 text-xs font-semibold text-gray-700'>Core Modules</p>
+
+                <div className='grid grid-cols-1 gap-3 md:grid-cols-2'>
+                  {schoolManagementModules.map((module) => {
+                    const ModuleIcon = schoolModuleIcons[module.iconKey];
+                    return (
+                      <button
+                        type='button'
+                        key={module.id}
+                        onClick={() => openModuleDetails(module.id)}
+                        className='rounded-xl border border-gray-200 bg-gray-50 p-3 text-left transition-colors hover:bg-gray-100'
+                      >
+                        <div className='flex items-start gap-3'>
+                          <div className='mt-0.5 flex h-9 w-9 items-center justify-center rounded-lg bg-[#3D08BA]/10'>
+                            <ModuleIcon className='text-[#3D08BA]' size={16} />
+                          </div>
+                          <div className='min-w-0'>
+                            <p className='text-sm font-semibold text-gray-900'>{module.title}</p>
+                            <p className='mt-1 text-xs leading-relaxed text-gray-600'>{module.summary}</p>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className='bg-white rounded-2xl border border-gray-200 p-4 shadow-sm'>
+                <div className='flex flex-wrap items-center justify-between gap-3'>
+                  <div>
+                    <h3 className='text-sm font-semibold text-gray-900'>School Management Platform</h3>
+                    <p className='mt-1 text-xs text-gray-600'>
+                      Activate your school plan to access the complete module workspace.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => navigate('/subscription?actor=school')}
+                    className='rounded-lg bg-[#3D08BA] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#2c0691]'
+                  >
+                    Upgrade School Plan
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
         {gateNotice && (
           <p className='mb-6 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700'>
             {gateNotice}
@@ -315,7 +417,7 @@ const SchoolDashboard = () => {
             <QuickActionButton icon={FaIdCard} label="Student Lists" onClick={handleStudentListClick}/>
             <QuickActionButton icon={FaUsers} label="Tutors Lists" onClick={() => setGateNotice('Tutor directory workflow can be wired next.')} />
             <QuickActionButton icon={FaCertificate} label="WAEC Prep" badge="NEW" onClick={handleWaecPrepClick} />
-            <QuickActionButton icon={FaChartLine} label="Revenue" onClick={() => setGateNotice('Revenue dashboard is available in the finance module.')} />
+            <QuickActionButton icon={FaChartLine} label="Revenue" onClick={handleFinanceClick} />
             <QuickActionButton icon={FaCalendarAlt} label="Schedule" onClick={handleScheduleClick} />
             <QuickActionButton icon={FaVideo} label="Live Classes" badge="8" onClick={handleLiveClassesClick} />
             <QuickActionButton icon={FaFileAlt} label="Upload Resources" onClick={handleResourceUploadClick} />
@@ -378,6 +480,89 @@ const SchoolDashboard = () => {
           </div>
         </div>
       </main>
+
+      {isModuleDetailsOpen && activeSchoolModule && (
+        <div className='fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4 py-6'>
+          <div className='w-full max-w-4xl rounded-2xl border border-gray-200 bg-white shadow-xl'>
+            <div className='flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-3'>
+              <div>
+                <h3 className='text-sm font-semibold text-gray-900'>School Module Details</h3>
+                <p className='mt-1 text-xs text-gray-600'>
+                  Explore how each module supports your school&apos;s day-to-day operations.
+                </p>
+              </div>
+              <button
+                type='button'
+                onClick={closeModuleDetails}
+                className='rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50'
+              >
+                Close
+              </button>
+            </div>
+
+            <div className='grid grid-cols-1 gap-4 p-4 md:grid-cols-[230px_minmax(0,1fr)]'>
+              <div className='max-h-[360px] overflow-y-auto rounded-xl border border-gray-200 bg-gray-50 p-2'>
+                <div className='space-y-1.5'>
+                  {schoolManagementModules.map((module) => {
+                    const ModuleIcon = schoolModuleIcons[module.iconKey];
+                    const isActive = activeSchoolModule.id === module.id;
+                    return (
+                      <button
+                        key={module.id}
+                        type='button'
+                        onClick={() => setActiveModuleId(module.id)}
+                        className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors ${
+                          isActive
+                            ? 'bg-[#3D08BA] text-white'
+                            : 'bg-white text-gray-700 hover:bg-gray-100'
+                        }`}
+                      >
+                        <ModuleIcon size={14} />
+                        <span className='font-medium'>{module.title}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className='rounded-xl border border-gray-200 p-4'>
+                <h4 className='text-base font-bold text-gray-900'>{activeSchoolModule.title}</h4>
+                <p className='mt-2 text-sm leading-relaxed text-gray-600'>{activeSchoolModule.summary}</p>
+
+                <div className='mt-4 space-y-3'>
+                  <div className='rounded-lg border border-gray-200 bg-gray-50 p-3'>
+                    <p className='text-[11px] font-semibold uppercase tracking-wide text-gray-500'>What it solves</p>
+                    <p className='mt-1 text-sm leading-relaxed text-gray-700'>{activeSchoolModule.solves}</p>
+                  </div>
+                  <div className='rounded-lg border border-gray-200 bg-gray-50 p-3'>
+                    <p className='text-[11px] font-semibold uppercase tracking-wide text-gray-500'>What you can do</p>
+                    <p className='mt-1 text-sm leading-relaxed text-gray-700'>{activeSchoolModule.action}</p>
+                  </div>
+                </div>
+
+                <div className='mt-4 flex flex-wrap justify-end gap-2'>
+                  {activeSchoolModule.id === 'fees-management' && (
+                    <button
+                      type='button'
+                      onClick={() => navigate('/school-finance')}
+                      className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
+                    >
+                      Open Fees Management
+                    </button>
+                  )}
+                  <button
+                    type='button'
+                    onClick={closeModuleDetails}
+                    className='rounded-lg bg-[#3D08BA] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#2c0691]'
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <NavBar />
     </div>
   );

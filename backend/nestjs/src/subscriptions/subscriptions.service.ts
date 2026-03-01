@@ -1,10 +1,13 @@
 import {
   BadRequestException,
   Injectable,
+  InternalServerErrorException,
   Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import {
+  Prisma,
   SubscriptionRole,
   SubscriptionStatus,
   type TeachingSubscription,
@@ -101,83 +104,100 @@ export class SubscriptionsService {
     const role = ACTOR_TO_ROLE[actor];
     const email = this.requireEmail(authUser);
     const displayName = this.normalizeDisplayName(authUser.name, email);
-    const user = await this.resolveOrCreateUser(email, displayName);
-    const row = await this.getOrCreateSubscriptionRow(user.id, role);
-    const synced = await this.syncRowWithStripeIfAvailable(row);
-    return this.mapSubscriptionToResponse(synced);
+    try {
+      const user = await this.resolveOrCreateUser(email, displayName);
+      const row = await this.getOrCreateSubscriptionRow(user.id, role);
+      const synced = await this.syncRowWithStripeIfAvailable(row);
+      return this.mapSubscriptionToResponse(synced);
+    } catch (error) {
+      if (this.isSubscriptionStoreUnavailableError(error)) {
+        this.logger.warn(
+          'Subscription store is unavailable. Returning inactive subscription state fallback.'
+        );
+        return this.buildInactiveSubscriptionResponse(actor);
+      }
+
+      throw this.rethrowUnexpectedError(error);
+    }
   }
 
   async createTeachingSubscriptionCheckoutForAuthUser(
     authUser: AuthUser,
     input: CreateCheckoutInput
   ): Promise<CheckoutResponse> {
-    const stripe = this.requireStripeClient();
-    const actor = this.normalizeActor(input.actor);
-    const role = ACTOR_TO_ROLE[actor];
-    const email = this.requireEmail(authUser);
-    const displayName = this.normalizeDisplayName(authUser.name, email);
-    const user = await this.resolveOrCreateUser(email, displayName);
-    const existing = await this.getOrCreateSubscriptionRow(user.id, role);
-    const priceId = this.resolveStripePriceId(actor);
-    const appBaseUrl = this.resolveAppBaseUrl();
-    const successUrl =
-      this.normalizeHttpUrl(input.successUrl) ||
-      `${appBaseUrl}/subscription?actor=${actor}&checkout=success&session_id={CHECKOUT_SESSION_ID}`;
-    const cancelUrl =
-      this.normalizeHttpUrl(input.cancelUrl) || `${appBaseUrl}/subscription?actor=${actor}&checkout=cancel`;
+    try {
+      const stripe = this.requireStripeClient();
+      const actor = this.normalizeActor(input.actor);
+      const role = ACTOR_TO_ROLE[actor];
+      const email = this.requireEmail(authUser);
+      const displayName = this.normalizeDisplayName(authUser.name, email);
+      const user = await this.resolveOrCreateUser(email, displayName);
+      const existing = await this.getOrCreateSubscriptionRow(user.id, role);
+      const priceId = this.resolveStripePriceId(actor);
+      const appBaseUrl = this.resolveAppBaseUrl();
+      const successUrl =
+        this.normalizeHttpUrl(input.successUrl) ||
+        `${appBaseUrl}/subscription?actor=${actor}&checkout=success&session_id={CHECKOUT_SESSION_ID}`;
+      const cancelUrl =
+        this.normalizeHttpUrl(input.cancelUrl) ||
+        `${appBaseUrl}/subscription?actor=${actor}&checkout=cancel`;
 
-    const customerId =
-      existing.stripeCustomerId ||
-      (await this.resolveOrCreateStripeCustomer({
-        stripe,
-        email,
-        displayName,
-      }));
+      const customerId =
+        existing.stripeCustomerId ||
+        (await this.resolveOrCreateStripeCustomer({
+          stripe,
+          email,
+          displayName,
+        }));
 
-    const checkoutSession = await stripe.checkout.sessions.create({
-      mode: 'subscription',
-      customer: customerId,
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      allow_promotion_codes: true,
-      metadata: {
-        userId: String(user.id),
-        userEmail: email,
-        actor,
-      },
-      subscription_data: {
+      const checkoutSession = await stripe.checkout.sessions.create({
+        mode: 'subscription',
+        customer: customerId,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        allow_promotion_codes: true,
         metadata: {
           userId: String(user.id),
           userEmail: email,
           actor,
         },
-      },
-      line_items: [
-        {
-          price: priceId,
-          quantity: 1,
+        subscription_data: {
+          metadata: {
+            userId: String(user.id),
+            userEmail: email,
+            actor,
+          },
         },
-      ],
-    });
+        line_items: [
+          {
+            price: priceId,
+            quantity: 1,
+          },
+        ],
+      });
 
-    await this.prisma.teachingSubscription.update({
-      where: { id: existing.id },
-      data: {
-        planCode: this.resolvePlanCode(actor),
-        priceId,
-        stripeCustomerId: customerId,
-        checkoutSessionId: checkoutSession.id,
-      },
-    });
+      await this.prisma.teachingSubscription.update({
+        where: { id: existing.id },
+        data: {
+          planCode: this.resolvePlanCode(actor),
+          priceId,
+          stripeCustomerId: customerId,
+          checkoutSessionId: checkoutSession.id,
+        },
+      });
 
-    return {
-      actor,
-      checkoutUrl: checkoutSession.url || null,
-      sessionId: checkoutSession.id,
-      message: checkoutSession.url
-        ? 'Checkout created successfully.'
-        : 'Checkout was created, but Stripe did not return a redirect URL.',
-    };
+      return {
+        actor,
+        checkoutUrl: checkoutSession.url || null,
+        sessionId: checkoutSession.id,
+        message: checkoutSession.url
+          ? 'Checkout created successfully.'
+          : 'Checkout was created, but Stripe did not return a redirect URL.',
+      };
+    } catch (error) {
+      this.throwIfSubscriptionStoreUnavailable(error, 'create subscription checkout');
+      throw this.rethrowUnexpectedError(error);
+    }
   }
 
   async syncTeachingSubscriptionCheckoutForAuthUser(
@@ -187,57 +207,191 @@ export class SubscriptionsService {
     subscription: TeachingSubscriptionStatusResponse;
     message: string;
   }> {
-    const stripe = this.requireStripeClient();
-    const sessionId = String(input.sessionId || '').trim();
-    if (!sessionId) {
-      throw new BadRequestException('Checkout session id is required');
-    }
+    try {
+      const stripe = this.requireStripeClient();
+      const sessionId = String(input.sessionId || '').trim();
+      if (!sessionId) {
+        throw new BadRequestException('Checkout session id is required');
+      }
 
-    const email = this.requireEmail(authUser);
-    const displayName = this.normalizeDisplayName(authUser.name, email);
-    const user = await this.resolveOrCreateUser(email, displayName);
-    const checkoutSession = await stripe.checkout.sessions.retrieve(sessionId, {
-      expand: ['subscription'],
-    });
+      const email = this.requireEmail(authUser);
+      const displayName = this.normalizeDisplayName(authUser.name, email);
+      const user = await this.resolveOrCreateUser(email, displayName);
+      const checkoutSession = await stripe.checkout.sessions.retrieve(sessionId, {
+        expand: ['subscription'],
+      });
 
-    if (checkoutSession.mode !== 'subscription') {
-      throw new BadRequestException('This checkout session is not a subscription session.');
-    }
+      if (checkoutSession.mode !== 'subscription') {
+        throw new BadRequestException('This checkout session is not a subscription session.');
+      }
 
-    const metadataUserId = String(checkoutSession.metadata?.userId || '').trim();
-    const metadataEmail = this.normalizeEmail(String(checkoutSession.metadata?.userEmail || ''));
-    const matchesUserId = metadataUserId && metadataUserId === String(user.id);
-    const matchesEmail = metadataEmail && metadataEmail === email;
-    if (!matchesUserId && !matchesEmail) {
-      throw new UnauthorizedException(
-        'This checkout session does not belong to the authenticated user.'
+      const metadataUserId = String(checkoutSession.metadata?.userId || '').trim();
+      const metadataEmail = this.normalizeEmail(String(checkoutSession.metadata?.userEmail || ''));
+      const matchesUserId = metadataUserId && metadataUserId === String(user.id);
+      const matchesEmail = metadataEmail && metadataEmail === email;
+      if (!matchesUserId && !matchesEmail) {
+        throw new UnauthorizedException(
+          'This checkout session does not belong to the authenticated user.'
+        );
+      }
+
+      const actor = this.normalizeActor(input.actor || checkoutSession.metadata?.actor || 'tutor');
+      const role = ACTOR_TO_ROLE[actor];
+      const row = await this.getOrCreateSubscriptionRow(user.id, role);
+      const stripeSubscription = await this.resolveStripeSubscription(
+        stripe,
+        checkoutSession.subscription
       );
+
+      if (!stripeSubscription) {
+        throw new BadRequestException('Stripe subscription details are not available yet.');
+      }
+
+      const updated = await this.persistStripeSubscriptionState(row, stripeSubscription, {
+        checkoutSessionId: checkoutSession.id,
+        stripeCustomerId:
+          typeof checkoutSession.customer === 'string'
+            ? checkoutSession.customer
+            : checkoutSession.customer?.id || row.stripeCustomerId || undefined,
+      });
+
+      return {
+        subscription: this.mapSubscriptionToResponse(updated),
+        message: 'Subscription synced successfully.',
+      };
+    } catch (error) {
+      this.throwIfSubscriptionStoreUnavailable(error, 'sync subscription checkout');
+      throw this.rethrowUnexpectedError(error);
     }
+  }
 
-    const actor = this.normalizeActor(input.actor || checkoutSession.metadata?.actor || 'tutor');
-    const role = ACTOR_TO_ROLE[actor];
-    const row = await this.getOrCreateSubscriptionRow(user.id, role);
-    const stripeSubscription = await this.resolveStripeSubscription(
-      stripe,
-      checkoutSession.subscription
-    );
+  async handleStripeWebhookEvent(event: unknown) {
+    try {
+      const stripeEvent = event as Stripe.Event;
+      if (!stripeEvent || typeof stripeEvent !== 'object') {
+        return { handled: false, reason: 'invalid-event' };
+      }
 
-    if (!stripeSubscription) {
-      throw new BadRequestException('Stripe subscription details are not available yet.');
+      if (
+        stripeEvent.type !== 'checkout.session.completed' &&
+        stripeEvent.type !== 'customer.subscription.created' &&
+        stripeEvent.type !== 'customer.subscription.updated' &&
+        stripeEvent.type !== 'customer.subscription.deleted'
+      ) {
+        return { handled: false, reason: 'unsupported-event' };
+      }
+
+      if (stripeEvent.type === 'checkout.session.completed') {
+        const session = stripeEvent.data?.object as Stripe.Checkout.Session | undefined;
+        if (!session || session.mode !== 'subscription') {
+          return { handled: false, reason: 'not-subscription-checkout' };
+        }
+
+        const metadataActor = this.normalizeActorFromMetadata(session.metadata?.actor);
+        const row =
+          (await this.resolveSubscriptionRowByCheckoutMetadata(
+            session.metadata?.userId,
+            metadataActor
+          )) ||
+          (await this.resolveSubscriptionRowByStripeCustomer(
+            typeof session.customer === 'string' ? session.customer : session.customer?.id || null,
+            metadataActor
+          ));
+
+        if (!row) {
+          return { handled: false, reason: 'subscription-row-not-found' };
+        }
+
+        const stripeSubscription = await this.resolveStripeSubscriptionForWebhook(
+          session.subscription
+        );
+
+        if (stripeSubscription) {
+          await this.persistStripeSubscriptionState(row, stripeSubscription, {
+            checkoutSessionId: session.id,
+            stripeCustomerId:
+              typeof session.customer === 'string'
+                ? session.customer
+                : session.customer?.id || row.stripeCustomerId || undefined,
+            metadataPatch: {
+              webhookEventId: stripeEvent.id,
+              webhookType: stripeEvent.type,
+            },
+          });
+        } else {
+          const mergedMetadata = {
+            ...(row.metadata && typeof row.metadata === 'object'
+              ? (row.metadata as Record<string, unknown>)
+              : {}),
+            webhookEventId: stripeEvent.id,
+            webhookType: stripeEvent.type,
+          };
+
+          await this.prisma.teachingSubscription.update({
+            where: { id: row.id },
+            data: {
+              status: SubscriptionStatus.ACTIVE,
+              checkoutSessionId: session.id || row.checkoutSessionId,
+              stripeCustomerId:
+                (typeof session.customer === 'string'
+                  ? session.customer
+                  : session.customer?.id || undefined) || row.stripeCustomerId,
+              metadata: mergedMetadata as Prisma.InputJsonValue,
+              verified3dAt: row.verified3dAt || new Date(),
+            },
+          });
+        }
+
+        return { handled: true, reason: 'checkout-reconciled' };
+      }
+
+      const stripeSubscription = stripeEvent.data?.object as Stripe.Subscription | undefined;
+      if (!stripeSubscription || !stripeSubscription.id) {
+        return { handled: false, reason: 'invalid-subscription-object' };
+      }
+
+      const metadataActor = this.normalizeActorFromMetadata(stripeSubscription.metadata?.actor);
+      const row =
+        (await this.prisma.teachingSubscription.findFirst({
+          where: { stripeSubscriptionId: stripeSubscription.id },
+        })) ||
+        (await this.resolveSubscriptionRowByCheckoutMetadata(
+          stripeSubscription.metadata?.userId,
+          metadataActor
+        )) ||
+        (await this.resolveSubscriptionRowByStripeCustomer(
+          typeof stripeSubscription.customer === 'string'
+            ? stripeSubscription.customer
+            : stripeSubscription.customer?.id || null,
+          metadataActor
+        ));
+
+      if (!row) {
+        return { handled: false, reason: 'subscription-row-not-found' };
+      }
+
+      await this.persistStripeSubscriptionState(row, stripeSubscription, {
+        stripeCustomerId:
+          typeof stripeSubscription.customer === 'string'
+            ? stripeSubscription.customer
+            : stripeSubscription.customer?.id || row.stripeCustomerId || undefined,
+        metadataPatch: {
+          webhookEventId: stripeEvent.id,
+          webhookType: stripeEvent.type,
+        },
+      });
+
+      return { handled: true, reason: 'subscription-reconciled' };
+    } catch (error) {
+      if (this.isSubscriptionStoreUnavailableError(error)) {
+        this.logger.warn(
+          'Subscription webhook reconciliation skipped because the subscription store is unavailable.'
+        );
+        return { handled: false, reason: 'subscription-store-unavailable' };
+      }
+
+      throw this.rethrowUnexpectedError(error);
     }
-
-    const updated = await this.persistStripeSubscriptionState(row, stripeSubscription, {
-      checkoutSessionId: checkoutSession.id,
-      stripeCustomerId:
-        typeof checkoutSession.customer === 'string'
-          ? checkoutSession.customer
-          : checkoutSession.customer?.id || row.stripeCustomerId || undefined,
-    });
-
-    return {
-      subscription: this.mapSubscriptionToResponse(updated),
-      message: 'Subscription synced successfully.',
-    };
   }
 
   private async getOrCreateSubscriptionRow(userId: number, role: SubscriptionRole) {
@@ -307,6 +461,7 @@ export class SubscriptionsService {
     overrides?: {
       checkoutSessionId?: string;
       stripeCustomerId?: string;
+      metadataPatch?: Record<string, unknown>;
     }
   ) {
     const status = this.mapStripeStatus(stripeSubscription.status);
@@ -315,6 +470,13 @@ export class SubscriptionsService {
     );
     const currentPeriodEnd = this.dateFromUnixSeconds((stripeSubscription as any).current_period_end);
     const shouldMarkVerified = status === SubscriptionStatus.ACTIVE || status === SubscriptionStatus.TRIALING;
+
+    const mergedMetadata = {
+      ...(row.metadata && typeof row.metadata === 'object'
+        ? (row.metadata as Record<string, unknown>)
+        : {}),
+      ...(overrides?.metadataPatch || {}),
+    };
 
     return this.prisma.teachingSubscription.update({
       where: { id: row.id },
@@ -331,7 +493,88 @@ export class SubscriptionsService {
         currentPeriodStart: currentPeriodStart || row.currentPeriodStart,
         currentPeriodEnd: currentPeriodEnd || row.currentPeriodEnd,
         verified3dAt: shouldMarkVerified ? row.verified3dAt || new Date() : null,
+        metadata:
+          Object.keys(mergedMetadata).length > 0
+            ? (mergedMetadata as Prisma.InputJsonValue)
+            : undefined,
       },
+    });
+  }
+
+  private async resolveStripeSubscriptionForWebhook(
+    subscription: string | Stripe.Subscription | null | undefined
+  ) {
+    if (!subscription) {
+      return null;
+    }
+
+    if (typeof subscription !== 'string') {
+      return subscription;
+    }
+
+    if (!this.stripe) {
+      return null;
+    }
+
+    try {
+      return await this.stripe.subscriptions.retrieve(subscription);
+    } catch (error) {
+      this.logger.warn(
+        `Could not retrieve Stripe subscription ${subscription} during webhook reconciliation: ${
+          (error as Error).message
+        }`
+      );
+      return null;
+    }
+  }
+
+  private async resolveSubscriptionRowByCheckoutMetadata(
+    metadataUserId: unknown,
+    actor: TeachingActorApi | null
+  ) {
+    const parsedUserId = Number(metadataUserId || '');
+    if (!Number.isInteger(parsedUserId) || parsedUserId <= 0) {
+      return null;
+    }
+
+    if (actor) {
+      return this.prisma.teachingSubscription.findUnique({
+        where: {
+          userId_role: {
+            userId: parsedUserId,
+            role: ACTOR_TO_ROLE[actor],
+          },
+        },
+      });
+    }
+
+    return this.prisma.teachingSubscription.findFirst({
+      where: { userId: parsedUserId },
+      orderBy: [{ updatedAt: 'desc' }],
+    });
+  }
+
+  private async resolveSubscriptionRowByStripeCustomer(
+    stripeCustomerId: string | null,
+    actor: TeachingActorApi | null
+  ) {
+    const normalizedCustomerId = String(stripeCustomerId || '').trim();
+    if (!normalizedCustomerId) {
+      return null;
+    }
+
+    if (actor) {
+      return this.prisma.teachingSubscription.findFirst({
+        where: {
+          stripeCustomerId: normalizedCustomerId,
+          role: ACTOR_TO_ROLE[actor],
+        },
+      });
+    }
+
+    return this.prisma.teachingSubscription.findFirst({
+      where: { stripeCustomerId: normalizedCustomerId },
+      orderBy: [{ updatedAt: 'desc' }],
     });
   }
 
@@ -449,6 +692,19 @@ export class SubscriptionsService {
     throw new BadRequestException('Actor must be "tutor" or "school".');
   }
 
+  private normalizeActorFromMetadata(value: unknown): TeachingActorApi | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'school') {
+      return 'school';
+    }
+
+    if (normalized === 'tutor') {
+      return 'tutor';
+    }
+
+    return null;
+  }
+
   private requireEmail(authUser: AuthUser) {
     const email = this.normalizeEmail(authUser.email || '');
     if (!email || !email.includes('@')) {
@@ -542,6 +798,74 @@ export class SubscriptionsService {
     }
 
     return /^https?:\/\//i.test(value) ? value : '';
+  }
+
+  private buildInactiveSubscriptionResponse(actor: TeachingActorApi): TeachingSubscriptionStatusResponse {
+    return {
+      actor,
+      status: 'inactive',
+      isActive: false,
+      isEdamaa3dVerified: false,
+      planCode: this.resolvePlanCode(actor),
+      currentPeriodEnd: null,
+      currentPeriodEndLabel: null,
+      features: {
+        canTeachLive: false,
+        canUseUnlimitedOfflineClasses: false,
+        maxScheduledOfflineClasses: 1,
+      },
+    };
+  }
+
+  private isSubscriptionStoreUnavailableError(error: unknown) {
+    if (error instanceof Prisma.PrismaClientInitializationError) {
+      return true;
+    }
+
+    if (error instanceof Prisma.PrismaClientRustPanicError) {
+      return true;
+    }
+
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (!['P1014', 'P2021', 'P2022'].includes(error.code)) {
+        return false;
+      }
+
+      const details = `${error.message} ${JSON.stringify(error.meta || {})}`.toLowerCase();
+      return details.includes('teachingsubscription') || details.includes('"user"');
+    }
+
+    if (error instanceof Error) {
+      const details = error.message.toLowerCase();
+      return (
+        details.includes("can't reach database server") ||
+        details.includes('connection refused') ||
+        details.includes('failed to connect')
+      );
+    }
+
+    return false;
+  }
+
+  private throwIfSubscriptionStoreUnavailable(error: unknown, attemptedAction: string) {
+    if (!this.isSubscriptionStoreUnavailableError(error)) {
+      return;
+    }
+
+    this.logger.warn(
+      `Subscription store is unavailable while trying to ${attemptedAction}. Returning setup guidance instead.`
+    );
+    throw new ServiceUnavailableException(
+      'Subscription service is temporarily unavailable. Confirm your database is running and initialized, then retry.'
+    );
+  }
+
+  private rethrowUnexpectedError(error: unknown): never {
+    if (error instanceof Error) {
+      throw error;
+    }
+
+    throw new InternalServerErrorException('An unexpected subscription error occurred.');
   }
 
   private resolveAppBaseUrl() {
