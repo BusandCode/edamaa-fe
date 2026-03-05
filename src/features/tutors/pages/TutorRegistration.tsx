@@ -3,6 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { IoMdArrowDropleft,IoMdCamera } from "react-icons/io";
 import { MdWork, MdFolder } from "react-icons/md";
 import Logo from "../../../components/common/Logo";
+import {
+  persistAccountRoleState,
+  persistKnownAccountRoleForEmail,
+  persistLocalDevAuthSession,
+  persistSupabaseSession,
+} from '../../../utils/authSession';
+import { getSupabaseBrowserClient, isSupabaseBrowserConfigured } from '../../../utils/supabaseClient';
 
 const TutorRegistration: React.FC = () => {
   const navigate = useNavigate();
@@ -11,22 +18,78 @@ const TutorRegistration: React.FC = () => {
     navigate(-1);
   }
 
-    const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
+    const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     
-    // Add your form validation logic here
     const formData = new FormData(event.currentTarget);
     
-    // Example validation - check if terms are agreed
     const agreedToTerms = formData.get('agreedToTerms');
     if (!agreedToTerms) {
       alert('Please agree to the terms and conditions');
       return;
     }
-    
-    console.log('Tutor registration form submitted');
-    
-    // Navigate to School Dashboard
+
+    const fullName = String(formData.get('fullName') || '').trim();
+    const email = String(formData.get('email') || '').trim().toLowerCase();
+    const password = String(formData.get('password') || '');
+    const confirmPassword = String(formData.get('confirmPassword') || '');
+
+    if (!email || !email.includes('@')) {
+      alert('Please enter a valid tutor email address.');
+      return;
+    }
+
+    if (!password || password.length < 6) {
+      alert('Please create a password with at least 6 characters.');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      alert('Password confirmation does not match. Please re-enter it.');
+      return;
+    }
+
+    if (isSupabaseBrowserConfigured()) {
+      const supabase = getSupabaseBrowserClient();
+      if (!supabase) {
+        alert('Sign-up service is unavailable right now. Please refresh and try again.');
+        return;
+      }
+
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName || 'Tutor',
+            role: 'tutor',
+            account_role: 'tutor',
+          },
+        },
+      });
+
+      if (error) {
+        alert(error.message || 'Unable to create your tutor account right now.');
+        return;
+      }
+
+      persistSupabaseSession(data.session ?? null);
+    } else if (import.meta.env.DEV) {
+      persistLocalDevAuthSession(email, 'tutor', {
+        defaultRole: 'tutor',
+        activeRoles: ['tutor'],
+      });
+    }
+
+    persistAccountRoleState({
+      defaultRole: 'tutor',
+      activeRoles: ['tutor'],
+      source: 'local-dev',
+    });
+    persistKnownAccountRoleForEmail(email, 'tutor');
+
+    window.localStorage.setItem('edamaa_tutor_display_name', fullName || 'Tutor');
+    alert('Tutor account created successfully. Redirecting to your tutor dashboard...');
     navigate('/tutor-dashboard');
   }
   

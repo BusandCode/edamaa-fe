@@ -1,7 +1,15 @@
 import { clearPersistedAuthSession } from './authSession';
 import { getSupabaseBrowserClient } from './supabaseClient';
 
-const ADDITIONAL_AUTH_STORAGE_KEYS = ['supabase_access_token', 'edamaa-supabase-auth'];
+const ADDITIONAL_AUTH_STORAGE_KEYS = [
+  'supabase_access_token',
+  'edamaa-supabase-auth',
+  'edamaa_school_display_name',
+  'edamaa_school_admin_name',
+  'edamaa_tutor_display_name',
+  'edamaa_student_display_name',
+  'edamaa_account_role_state_v1',
+];
 
 const clearLocalAuthArtifacts = () => {
   if (typeof window === 'undefined') {

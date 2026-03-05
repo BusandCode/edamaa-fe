@@ -94,6 +94,12 @@ For a one-command local backend run (Django + NestJS + bridge smoke):
 make local-up
 ```
 
+For API-only development (recommended for frontend/payments work):
+
+```bash
+make api-up
+```
+
 Stop those local processes:
 
 ```bash
@@ -106,6 +112,11 @@ Start/stop the frontend web app (Vite):
 make web-up
 make web-down
 ```
+
+`make web-up` now auto-starts the NestJS API if `http://127.0.0.1:3001/auth/health` is not reachable.
+
+Running `npm run dev` also auto-starts the NestJS API first, then launches Vite.
+If the API drops during development, `npm run dev` automatically tries to restart it.
 
 Notes:
 

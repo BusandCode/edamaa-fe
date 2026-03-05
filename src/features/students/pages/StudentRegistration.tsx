@@ -4,7 +4,12 @@ import Logo from '../../../components/common/Logo';
 import {languages} from '../../../components/ui/Language';
 import { useNavigate } from "react-router-dom";
 import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
-import { persistLocalDevAuthSession, persistSupabaseSession } from '../../../utils/authSession';
+import {
+  persistAccountRoleState,
+  persistKnownAccountRoleForEmail,
+  persistLocalDevAuthSession,
+  persistSupabaseSession,
+} from '../../../utils/authSession';
 import { getSupabaseBrowserClient, isSupabaseBrowserConfigured } from '../../../utils/supabaseClient';
 
 
@@ -64,6 +69,8 @@ const StudentRegistration: React.FC = () => {
         options: {
           data: {
             full_name: fullName,
+            role: 'student',
+            account_role: 'student',
           },
         },
       });
@@ -76,8 +83,18 @@ const StudentRegistration: React.FC = () => {
       persistSupabaseSession(data.session ?? null);
     } else if (import.meta.env.DEV && email) {
       // Keep local development smooth even before Supabase keys are configured.
-      persistLocalDevAuthSession(email);
+      persistLocalDevAuthSession(email, 'student', {
+        defaultRole: 'student',
+        activeRoles: ['student'],
+      });
     }
+
+    persistAccountRoleState({
+      defaultRole: 'student',
+      activeRoles: ['student'],
+      source: 'local-dev',
+    });
+    persistKnownAccountRoleForEmail(email, 'student');
 
     // Persist a stable student identity so messaging/call routing can target this student id.
     const currentIdentity = loadStudentIdentity();

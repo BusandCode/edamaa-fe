@@ -13,6 +13,7 @@ import {
   FaCamera,
   FaMoneyBillWave,
   FaHome,
+  FaSignOutAlt,
 } from 'react-icons/fa';
 import type { IconType } from 'react-icons';
 import NewLogo from '../../../components/common/NewLogo';
@@ -25,6 +26,8 @@ import {
   type TeachingSubscriptionState,
 } from '../../subscriptions/utils/teachingSubscriptionApi';
 import { schoolManagementModules, type SchoolModule } from '../data/schoolManagementModules';
+import { loadPersistedLocalDevAuthSession } from '../../../utils/authSession';
+import { signOutEverywhere } from '../../../utils/signOut';
 
 
 
@@ -117,8 +120,41 @@ const schoolModuleIcons: Record<SchoolModule['iconKey'], IconType> = {
   hostel: FaHome,
 };
 
+const deriveNameFromEmail = (emailValue: string) => {
+  const normalizedEmail = String(emailValue || '').trim().toLowerCase();
+  if (!normalizedEmail || !normalizedEmail.includes('@')) {
+    return '';
+  }
+
+  const prefix = normalizedEmail.split('@')[0] || '';
+  return prefix
+    .replace(/[._-]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+    .join(' ');
+};
+
+const deriveInitials = (value: string) => {
+  const words = String(value || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length === 0) {
+    return 'SC';
+  }
+  if (words.length === 1) {
+    return words[0].slice(0, 2).toUpperCase();
+  }
+  return `${words[0][0] || ''}${words[1][0] || ''}`.toUpperCase();
+};
+
 const SchoolDashboard = () => {
   const [profileImage, setProfileImage] = useState<string>('');
+  const [schoolDisplayName, setSchoolDisplayName] = useState<string>('School');
+  const [adminDisplayName, setAdminDisplayName] = useState<string>('School Admin');
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const [subscriptionState, setSubscriptionState] = useState<TeachingSubscriptionState | null>(null);
   const [isSubscriptionLoading, setIsSubscriptionLoading] = useState(false);
   const [gateNotice, setGateNotice] = useState('');
@@ -144,6 +180,33 @@ const SchoolDashboard = () => {
   useEffect(() => {
     void loadSubscription();
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const localStorageSchoolName = (window.localStorage.getItem('edamaa_school_display_name') || '').trim();
+    const localStorageAdminName = (window.localStorage.getItem('edamaa_school_admin_name') || '').trim();
+    const localDevSession = loadPersistedLocalDevAuthSession();
+    const fallbackFromEmail = deriveNameFromEmail(localDevSession?.email || '');
+    setSchoolDisplayName(localStorageSchoolName || fallbackFromEmail || 'School');
+    setAdminDisplayName(localStorageAdminName || fallbackFromEmail || 'School Admin');
+  }, []);
+
+  const handleSignOut = async () => {
+    if (isSigningOut) {
+      return;
+    }
+
+    setIsSigningOut(true);
+    try {
+      await signOutEverywhere();
+      navigate('/signin', { replace: true });
+    } finally {
+      setIsSigningOut(false);
+    }
+  };
 
   const goToSubscription = (message: string) => {
     setGateNotice(message);
@@ -171,12 +234,13 @@ const SchoolDashboard = () => {
     }
 
     const liveClassId = `school-live-${Date.now().toString().slice(-6)}`;
+    const liveInstructorName = schoolDisplayName || 'School';
     const classItem = {
       id: liveClassId,
       code: 'SCH101',
-      name: "God'swill School Live Class",
+      name: `${liveInstructorName} Live Class`,
       subject: 'School Session',
-      instructor: "God'swill School",
+      instructor: liveInstructorName,
       schedule: 'Live now',
       students: 40,
       description: 'Live class room managed by school administrators and tutors.',
@@ -246,6 +310,16 @@ const SchoolDashboard = () => {
                 />
               </div>
             </div>
+
+            <button
+              type='button'
+              onClick={() => void handleSignOut()}
+              disabled={isSigningOut}
+              className='inline-flex shrink-0 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
+            >
+              <FaSignOutAlt size={12} />
+              {isSigningOut ? 'Signing out...' : 'Log out'}
+            </button>
           </div>
         </div>
       </header>
@@ -265,7 +339,7 @@ const SchoolDashboard = () => {
                   />
                 ) : (
                   <div className='w-full h-full flex items-center justify-center text-white text-2xl font-bold'>
-                    GS
+                    {deriveInitials(schoolDisplayName)}
                   </div>
                 )}
               </div>
@@ -285,10 +359,15 @@ const SchoolDashboard = () => {
             
             <div className='flex-1 min-w-0'>
               <div className='flex items-center gap-2 flex-wrap'>
-                <h2 className='text-lg sm:text-xl font-bold text-gray-900'>Welcome, God'swill School</h2>
+                <h2 className='text-lg sm:text-xl font-bold text-gray-900'>Welcome, {schoolDisplayName}</h2>
                 <FaCheckCircle className='text-blue-500 shrink-0' size={18} />
               </div>
-              <p className='text-sm text-gray-600 mt-1'>A WAEC accredited tutorial center focused on Science and Technology</p>
+              <p className='text-sm text-gray-600 mt-1'>
+                Admin: {adminDisplayName}
+              </p>
+              <p className='text-xs text-gray-500 mt-0.5'>
+                Manage classes, students, and finances from one connected school workspace.
+              </p>
             </div>
           </div>
           <div className='mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3'>
@@ -547,7 +626,7 @@ const SchoolDashboard = () => {
                       onClick={() => navigate('/school-finance')}
                       className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
                     >
-                      Open Fees Management
+                      Open
                     </button>
                   )}
                   <button

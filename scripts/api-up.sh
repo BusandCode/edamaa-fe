@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Starts the NestJS API in background mode for frontend development.
+# This intentionally skips Django so payment/school pages can work even when
+# internal admin services are not needed for the current task.
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+API_HOST="${API_HOST:-127.0.0.1}"
+API_PORT="${API_PORT:-3001}"
+API_HEALTH_PATH="${API_HEALTH_PATH:-/auth/ready}"
+LOG_DIR="${LOG_DIR:-/tmp}"
+API_UP_LOCK_DIR="${LOG_DIR}/edamaa-api-up.lock"
+API_UP_LOCK_OWNER_FILE="${API_UP_LOCK_DIR}/owner.pid"
+LOCK_ACQUIRED=0
+
+cd "$ROOT_DIR"
+
+api_health_url="http://${API_HOST}:${API_PORT}${API_HEALTH_PATH}"
+api_health_code="$(curl -s -o /dev/null -w '%{http_code}' "$api_health_url" || true)"
+if [ "$api_health_code" = "200" ]; then
+  echo "API already running: http://${API_HOST}:${API_PORT}"
+  exit 0
+fi
+
+cleanup_lock() {
+  if [ "$LOCK_ACQUIRED" = "1" ] && [ -d "$API_UP_LOCK_DIR" ]; then
+    rm -f "$API_UP_LOCK_OWNER_FILE" >/dev/null 2>&1 || true
+    rmdir "$API_UP_LOCK_DIR" >/dev/null 2>&1 || true
+  fi
+}
+
+trap cleanup_lock EXIT INT TERM
+
+acquire_lock_or_wait() {
+  local attempts=0
+  local max_attempts=60
+
+  recover_stale_lock_if_needed() {
+    if [ ! -d "$API_UP_LOCK_DIR" ]; then
+      return
+    fi
+
+    local owner_pid=""
+    if [ -f "$API_UP_LOCK_OWNER_FILE" ]; then
+      owner_pid="$(cat "$API_UP_LOCK_OWNER_FILE" 2>/dev/null || true)"
+    fi
+
+    if [ -n "$owner_pid" ] && kill -0 "$owner_pid" >/dev/null 2>&1; then
+      return
+    fi
+
+    rm -f "$API_UP_LOCK_OWNER_FILE" >/dev/null 2>&1 || true
+    rmdir "$API_UP_LOCK_DIR" >/dev/null 2>&1 || true
+  }
+
+  while [ "$attempts" -lt "$max_attempts" ]; do
+    recover_stale_lock_if_needed
+
+    if mkdir "$API_UP_LOCK_DIR" >/dev/null 2>&1; then
+      LOCK_ACQUIRED=1
+      echo "$$" >"$API_UP_LOCK_OWNER_FILE"
+      return 0
+    fi
+
+    # Another startup is in progress; if it already succeeded, exit cleanly.
+    local code
+    code="$(curl -s -o /dev/null -w '%{http_code}' "$api_health_url" || true)"
+    if [ "$code" = "200" ]; then
+      echo "API became ready while waiting for startup lock."
+      exit 0
+    fi
+
+    attempts=$((attempts + 1))
+    sleep 1
+  done
+
+  echo "Timed out waiting for API startup lock (${API_UP_LOCK_DIR})." >&2
+  return 1
+}
+
+acquire_lock_or_wait
+
+RUN_SMOKE="${RUN_SMOKE:-0}" \
+DETACH=1 \
+START_DJANGO=0 \
+REQUIRE_DJANGO=0 \
+SKIP_PRISMA_CONNECT=0 \
+bash scripts/local-up.sh
+
+api_health_code="$(curl -s -o /dev/null -w '%{http_code}' "$api_health_url" || true)"
+if [ "$api_health_code" != "200" ]; then
+  echo "API failed to start on ${api_health_url}. See /tmp/edamaa-nestjs.log" >&2
+  tail -n 120 /tmp/edamaa-nestjs.log >&2 || true
+  exit 1
+fi
+
+echo "API ready: http://${API_HOST}:${API_PORT}"

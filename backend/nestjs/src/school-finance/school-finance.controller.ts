@@ -15,6 +15,7 @@ type CreateInvoiceBody = {
   title?: string;
   description?: string;
   amount?: number;
+  studentUserId?: string;
   studentEmail?: string;
   studentName?: string;
   dueDate?: string | null;
@@ -73,15 +74,46 @@ export class SchoolFinanceController {
       title: body.title,
       description: body.description,
       amount: body.amount,
+      studentUserId: body.studentUserId,
       studentEmail: body.studentEmail,
       studentName: body.studentName,
       dueDate: body.dueDate,
     });
   }
 
+  @Get('me/students')
+  listSchoolStudents(@Req() request: Request) {
+    return this.schoolFinanceService.listSchoolStudentsForAuthUser(this.getAuthUser(request));
+  }
+
   @Get('invoices/me')
   listMyStudentInvoices(@Req() request: Request) {
     return this.schoolFinanceService.listStudentInvoicesForAuthUser(this.getAuthUser(request));
+  }
+
+  @Get('invoices/me/notifications')
+  listMyStudentInvoiceNotifications(@Req() request: Request) {
+    return this.schoolFinanceService.listStudentInvoiceNotificationsForAuthUser(
+      this.getAuthUser(request)
+    );
+  }
+
+  @Post('invoices/me/notifications/:notificationId/read')
+  markMyStudentInvoiceNotificationAsRead(
+    @Req() request: Request,
+    @Param('notificationId') notificationId: string
+  ) {
+    return this.schoolFinanceService.markStudentInvoiceNotificationAsReadForAuthUser(
+      this.getAuthUser(request),
+      notificationId
+    );
+  }
+
+  @Post('invoices/me/notifications/read-all')
+  markAllMyStudentInvoiceNotificationsAsRead(@Req() request: Request) {
+    return this.schoolFinanceService.markAllStudentInvoiceNotificationsAsReadForAuthUser(
+      this.getAuthUser(request)
+    );
   }
 
   @Post('invoices/:invoiceId/pay')

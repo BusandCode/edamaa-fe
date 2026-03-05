@@ -13,12 +13,14 @@ import {
   createSchoolFeePlan,
   createSchoolInvoice,
   createSchoolWithdrawal,
+  fetchSchoolFinanceStudents,
   fetchSchoolInvoiceCheckoutStatus,
   fetchSchoolFinanceDashboard,
   fetchSchoolWithdrawalLedger,
   paySchoolInvoice,
   syncSchoolInvoiceCheckout,
   type SchoolFinanceDashboard,
+  type SchoolFinanceStudent,
   updateSchoolWithdrawalStatus,
 } from '../utils/schoolFinanceApi';
 
@@ -51,6 +53,7 @@ const SchoolFinance = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [dashboard, setDashboard] = useState<SchoolFinanceDashboard | null>(null);
+  const [students, setStudents] = useState<SchoolFinanceStudent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +70,8 @@ const SchoolFinance = () => {
   const [planDueDays, setPlanDueDays] = useState('');
 
   const [invoicePlanId, setInvoicePlanId] = useState('');
+  const [invoiceStudentPickerValue, setInvoiceStudentPickerValue] = useState('');
+  const [invoiceStudentUserId, setInvoiceStudentUserId] = useState('');
   const [invoiceTitle, setInvoiceTitle] = useState('');
   const [invoiceDescription, setInvoiceDescription] = useState('');
   const [invoiceAmount, setInvoiceAmount] = useState('');
@@ -83,8 +88,12 @@ const SchoolFinance = () => {
     setIsLoading(true);
     setError(null);
     try {
-      const payload = await fetchSchoolFinanceDashboard();
-      setDashboard(payload);
+      const [dashboardPayload, studentsPayload] = await Promise.all([
+        fetchSchoolFinanceDashboard(),
+        fetchSchoolFinanceStudents(),
+      ]);
+      setDashboard(dashboardPayload);
+      setStudents(studentsPayload.students || []);
     } catch (requestError) {
       const message =
         requestError instanceof Error
@@ -197,6 +206,36 @@ const SchoolFinance = () => {
     ];
   }, [dashboard]);
 
+  const activeFeePlans = useMemo(
+    () => (dashboard?.feePlans || []).filter((plan) => plan.isActive),
+    [dashboard?.feePlans]
+  );
+
+  const selectedInvoicePlan = useMemo(
+    () => activeFeePlans.find((plan) => plan.id === invoicePlanId) || null,
+    [activeFeePlans, invoicePlanId]
+  );
+
+  useEffect(() => {
+    if (!selectedInvoicePlan) {
+      return;
+    }
+
+    // Prefill key invoice fields from the selected plan to reduce manual typing.
+    setInvoiceTitle(selectedInvoicePlan.title || '');
+    setInvoiceAmount(String(selectedInvoicePlan.amount || ''));
+    setInvoiceDescription(selectedInvoicePlan.description || '');
+
+    if (!invoiceDueDate && selectedInvoicePlan.dueDays !== null) {
+      const dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + selectedInvoicePlan.dueDays);
+      const yyyy = dueDate.getFullYear();
+      const mm = String(dueDate.getMonth() + 1).padStart(2, '0');
+      const dd = String(dueDate.getDate()).padStart(2, '0');
+      setInvoiceDueDate(`${yyyy}-${mm}-${dd}`);
+    }
+  }, [selectedInvoicePlan, invoiceDueDate]);
+
   const submitCreatePlan = async (event: FormEvent) => {
     event.preventDefault();
     if (activeAction) {
@@ -237,20 +276,58 @@ const SchoolFinance = () => {
       return;
     }
 
+    const normalizedStudentEmail = invoiceStudentEmail.trim().toLowerCase();
+    const selectedStudentById = invoiceStudentUserId
+      ? students.find((student) => student.id === invoiceStudentUserId) || null
+      : null;
+    const selectedStudentByEmail = normalizedStudentEmail
+      ? students.find((student) => student.email.toLowerCase() === normalizedStudentEmail) || null
+      : null;
+    const selectedStudent = selectedStudentById || selectedStudentByEmail || null;
+    const resolvedStudentEmail = normalizedStudentEmail || selectedStudent?.email || '';
+    const resolvedStudentName = (invoiceStudentName || selectedStudent?.name || '').trim();
+    const resolvedStudentUserId = selectedStudent?.id || undefined;
+    const normalizedTitle = invoiceTitle.trim();
+    const parsedAmount = Number(invoiceAmount);
+    const hasSelectedPlan = Boolean(invoicePlanId);
+
+    if (!resolvedStudentEmail || !resolvedStudentEmail.includes('@')) {
+      setError('Please pick a student or enter a valid student email before creating this invoice.');
+      return;
+    }
+
+    if (hasSelectedPlan && !selectedInvoicePlan) {
+      setError('Please choose a valid fee plan from the list, or switch to custom invoice.');
+      return;
+    }
+
+    if (!hasSelectedPlan && !normalizedTitle) {
+      setError('Choose a fee plan or enter an invoice title for this custom invoice.');
+      return;
+    }
+
+    if (!hasSelectedPlan && (!Number.isFinite(parsedAmount) || parsedAmount <= 0)) {
+      setError('Choose a fee plan or enter a valid invoice amount greater than zero.');
+      return;
+    }
+
     setActiveAction('invoice');
     setError(null);
     setNotice(null);
     try {
       await createSchoolInvoice({
-        feePlanId: invoicePlanId || undefined,
-        title: invoiceTitle || undefined,
+        feePlanId: hasSelectedPlan ? invoicePlanId : undefined,
+        title: normalizedTitle || undefined,
         description: invoiceDescription || undefined,
-        amount: invoiceAmount ? Number(invoiceAmount) : undefined,
-        studentEmail: invoiceStudentEmail,
-        studentName: invoiceStudentName || undefined,
+        amount: Number.isFinite(parsedAmount) && parsedAmount > 0 ? parsedAmount : undefined,
+        studentUserId: resolvedStudentUserId,
+        studentEmail: resolvedStudentEmail,
+        studentName: resolvedStudentName || undefined,
         dueDate: invoiceDueDate || undefined,
       });
       setInvoicePlanId('');
+      setInvoiceStudentPickerValue('');
+      setInvoiceStudentUserId('');
       setInvoiceTitle('');
       setInvoiceDescription('');
       setInvoiceAmount('');
@@ -261,9 +338,15 @@ const SchoolFinance = () => {
       setNotice('Invoice created and ready for payment.');
       await refreshDashboard();
     } catch (requestError) {
-      const message =
+      const rawMessage =
         requestError instanceof Error ? requestError.message : 'Could not create invoice right now.';
-      setError(message);
+      if (rawMessage.toLowerCase().includes('temporarily unavailable')) {
+        setError(
+          `${rawMessage} For local development, make sure your database is running and migrations are applied before creating invoices.`
+        );
+      } else {
+        setError(rawMessage);
+      }
     } finally {
       setActiveAction(null);
     }
@@ -508,46 +591,151 @@ const SchoolFinance = () => {
             className="mb-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
           >
             <h2 className="text-sm font-semibold text-gray-900">Create Student Invoice</h2>
+            <p className="mt-1 text-[11px] text-gray-600">
+              Pick a student to auto-fill details. You can still enter an email manually when needed.
+            </p>
             <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-              <select
-                value={invoicePlanId}
-                onChange={(event) => setInvoicePlanId(event.target.value)}
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
-              >
-                <option value="">No plan selected</option>
-                {(dashboard?.feePlans || []).map((plan) => (
-                  <option key={plan.id} value={plan.id}>
-                    {plan.title} ({fmt(plan.amount)})
-                  </option>
-                ))}
-              </select>
-              <input
-                value={invoiceStudentEmail}
-                onChange={(event) => setInvoiceStudentEmail(event.target.value)}
-                placeholder="Student email"
-                type="email"
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
-                required
-              />
-              <input
-                value={invoiceStudentName}
-                onChange={(event) => setInvoiceStudentName(event.target.value)}
-                placeholder="Student name (optional)"
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
-              />
+              <div className="space-y-1">
+                <select
+                  value={invoiceStudentPickerValue}
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+                    setInvoiceStudentPickerValue(nextValue);
+
+                    if (!nextValue) {
+                      setInvoiceStudentUserId('');
+                      return;
+                    }
+
+                    const [targetType, targetValue] = nextValue.split(':', 2);
+                    if (!targetValue) {
+                      setInvoiceStudentUserId('');
+                      return;
+                    }
+
+                    if (targetType === 'id') {
+                      const selectedStudent =
+                        students.find((student) => student.id === targetValue) || null;
+                      setInvoiceStudentUserId(targetValue);
+                      if (selectedStudent?.email) {
+                        setInvoiceStudentEmail(selectedStudent.email);
+                      }
+                      if (!invoiceStudentName && selectedStudent?.name) {
+                        setInvoiceStudentName(selectedStudent.name);
+                      }
+                      return;
+                    }
+
+                    const normalizedEmail = targetValue.trim().toLowerCase();
+                    const selectedStudent =
+                      students.find((student) => student.email.toLowerCase() === normalizedEmail) ||
+                      null;
+                    setInvoiceStudentUserId(selectedStudent?.id || '');
+                    setInvoiceStudentEmail(selectedStudent?.email || normalizedEmail);
+                    if (!invoiceStudentName && selectedStudent?.name) {
+                      setInvoiceStudentName(selectedStudent.name);
+                    }
+                  }}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                >
+                  <option value="">Select student from list (recommended)</option>
+                  {students.map((student) => (
+                    <option
+                      key={`student-option-${student.id || student.email}`}
+                      value={student.id ? `id:${student.id}` : `email:${student.email}`}
+                    >
+                      {(student.name || student.email) + (student.name ? ` (${student.email})` : '')}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-gray-500">
+                  {students.length > 0
+                    ? 'Student list helps avoid assigning invoices to the wrong account.'
+                    : 'No student records found yet. Enter student email manually below.'}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <select
+                  value={invoicePlanId}
+                  onChange={(event) => setInvoicePlanId(event.target.value)}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                >
+                  <option value="">Custom invoice (no fee plan)</option>
+                  {activeFeePlans.map((plan) => (
+                    <option key={plan.id} value={plan.id}>
+                      {plan.title} - {fmt(plan.amount)}
+                    </option>
+                  ))}
+                </select>
+                {activeFeePlans.length === 0 ? (
+                  <p className="text-[11px] text-amber-700">
+                    No active fee plan found yet. Create one first or continue with a custom invoice.
+                  </p>
+                ) : selectedInvoicePlan ? (
+                  <p className="text-[11px] text-[#3D08BA]">
+                    Selected plan: {selectedInvoicePlan.title} ({fmt(selectedInvoicePlan.amount)})
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-gray-500">
+                    Pick a plan to auto-fill title, amount, and due date.
+                  </p>
+                )}
+              </div>
+              <div className="space-y-1">
+                <input
+                  value={invoiceStudentEmail}
+                  onChange={(event) => {
+                    const nextEmail = event.target.value;
+                    setInvoiceStudentEmail(nextEmail);
+                    const normalizedNextEmail = nextEmail.trim().toLowerCase();
+                    const matchedStudent =
+                      students.find((student) => student.email.toLowerCase() === normalizedNextEmail) ||
+                      null;
+
+                    if (matchedStudent?.id) {
+                      setInvoiceStudentUserId(matchedStudent.id);
+                      setInvoiceStudentPickerValue(`id:${matchedStudent.id}`);
+                    } else if (matchedStudent) {
+                      setInvoiceStudentUserId('');
+                      setInvoiceStudentPickerValue(`email:${matchedStudent.email}`);
+                    } else {
+                      setInvoiceStudentUserId('');
+                      setInvoiceStudentPickerValue('');
+                    }
+                  }}
+                  placeholder="Student email (required)"
+                  type="email"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                  required
+                />
+                <p className="text-[11px] text-gray-500">This email is how the student receives and sees this invoice.</p>
+              </div>
+              <div className="space-y-1">
+                <input
+                  value={invoiceStudentName}
+                  onChange={(event) => setInvoiceStudentName(event.target.value)}
+                  placeholder="Student name (optional, display only)"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                />
+                <p className="text-[11px] text-gray-500">
+                  Name helps you recognize the invoice. Account matching uses student record/email.
+                </p>
+              </div>
               <input
                 value={invoiceTitle}
                 onChange={(event) => setInvoiceTitle(event.target.value)}
-                placeholder="Invoice title (optional if plan is selected)"
+                placeholder={selectedInvoicePlan ? 'Invoice title (auto-filled from plan)' : 'Invoice title'}
                 className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                required={!invoicePlanId}
               />
               <input
                 value={invoiceAmount}
                 onChange={(event) => setInvoiceAmount(event.target.value)}
-                placeholder="Amount (optional if plan is selected)"
+                placeholder={selectedInvoicePlan ? 'Amount (auto-filled from plan)' : 'Amount'}
                 type="number"
                 min={1}
                 className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                required={!invoicePlanId}
               />
               <input
                 value={invoiceDueDate}

@@ -5,6 +5,7 @@ set -euo pipefail
 
 LOG_DIR="${LOG_DIR:-/tmp}"
 WEB_PID_FILE="${LOG_DIR}/edamaa-web.pid"
+API_WATCHDOG_PID_FILE="${LOG_DIR}/edamaa-api-watchdog.pid"
 
 if [ ! -f "$WEB_PID_FILE" ]; then
   echo "Frontend is not running (no pid file)."
@@ -20,3 +21,14 @@ else
 fi
 
 rm -f "$WEB_PID_FILE"
+
+if [ -f "$API_WATCHDOG_PID_FILE" ]; then
+  API_WATCHDOG_PID="$(cat "$API_WATCHDOG_PID_FILE")"
+  if [ -n "$API_WATCHDOG_PID" ] && kill -0 "$API_WATCHDOG_PID" >/dev/null 2>&1; then
+    kill "$API_WATCHDOG_PID" >/dev/null 2>&1 || true
+    echo "Stopped API watchdog (pid=${API_WATCHDOG_PID})"
+  else
+    echo "API watchdog is not running (stale pid file removed)"
+  fi
+  rm -f "$API_WATCHDOG_PID_FILE"
+fi

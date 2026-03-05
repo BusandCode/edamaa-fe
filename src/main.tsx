@@ -4,6 +4,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import './index.css'
 import App from './App.tsx'
 import ProtectedRoute from './components/auth/ProtectedRoute.tsx'
+import RoleProtectedRoute from './components/auth/RoleProtectedRoute.tsx'
 
 // Import page components
 import SignUp from './features/auth/SignUp.tsx'
@@ -11,6 +12,7 @@ import SignIn from './features/auth/SignIn.tsx'
 import SchoolRegistration from './features/schools/pages/SchoolRegistration.tsx'
 import TutorRegistration from './features/tutors/pages/TutorRegistration.tsx'
 import PasswordRecovery from './features/auth/PasswordRecovery.tsx'
+import AccountRoles from './features/auth/AccountRoles.tsx'
 import StudentRegistration from './features/students/pages/StudentRegistration.tsx'
 
 // Import Dashboard components
@@ -60,11 +62,47 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/student-registration" element={<StudentRegistration />} />
         
         {/* Dashboard Routes */}
-        <Route path="/school-dashboard" element={<SchoolDashboard />} />
-        <Route path="/school-finance" element={<SchoolFinance />} />
-        <Route path="/tutor-dashboard" element={<TutorDashboard />} />
-        <Route path="/student-home" element={<StudentHome />} />
-        <Route path="/student-dashboard" element={<StudentDashboard />} />
+        <Route
+          path="/school-dashboard"
+          element={
+            <RoleProtectedRoute allowedRoles={['school', 'admin']}>
+              <SchoolDashboard />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="/school-finance"
+          element={
+            <RoleProtectedRoute allowedRoles={['school', 'admin']}>
+              <SchoolFinance />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="/tutor-dashboard"
+          element={
+            <RoleProtectedRoute allowedRoles={['tutor', 'admin']}>
+              <TutorDashboard />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="/student-home"
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'admin']}>
+              <StudentHome />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="/student-dashboard"
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'admin']}>
+              <StudentDashboard />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route path="/account-roles" element={<ProtectedRoute><AccountRoles /></ProtectedRoute>} />
 
         {/* Proile routes */}
         <Route path='/my-profile' element={<StudentProfile />} />

@@ -427,7 +427,7 @@ const Resources = () => {
     throw new Error(
       `${fallbackMessage}. Could not reach the backend API on ${bases.join(
         ', '
-      )}. Ensure NestJS is running on http://127.0.0.1:3001.`
+      )}. Start the API with "bash scripts/api-up.sh", then retry.`
     );
   };
 

@@ -64,6 +64,7 @@ If `prisma db push` cannot run in your environment, apply the SQL manually:
 
 ```bash
 psql "$DATABASE_URL" -f prisma/manual/20260224_add_call_signal_event.sql
+psql "$DATABASE_URL" -f prisma/manual/20260303_add_account_roles.sql
 ```
 
 Start API:
@@ -89,6 +90,16 @@ Subscription endpoints (requires `Authorization: Bearer <supabase_access_token>`
 - `GET /subscriptions/me/status?actor=tutor|school`
 - `POST /subscriptions/me/checkout`
 - `POST /subscriptions/me/sync`
+
+Account roles endpoints (requires `Authorization: Bearer <supabase_access_token>`):
+
+- `GET /account/roles/me`
+- `POST /account/roles/request`
+- `POST /account/roles/switch`
+- `POST /account/roles/deactivate`
+- `GET /account/roles/requests?status=pending|approved|rejected|canceled` (admin only)
+- `POST /account/roles/requests/:requestId/approve` (admin only)
+- `POST /account/roles/requests/:requestId/reject` (admin only)
 
 Student analytics endpoint:
 

@@ -1,44 +1,47 @@
 import {
   loadPersistedLocalDevAuthSession,
   loadPersistedSupabaseAccessToken,
+  type AppAccountRole,
 } from '../../../utils/authSession';
 
-export type TeachingActor = 'tutor' | 'school';
-export type TeachingSubscriptionStatus =
-  | 'inactive'
-  | 'active'
-  | 'trialing'
-  | 'past_due'
-  | 'canceled';
+export type AccountRoleStatus = 'active' | 'inactive';
+export type RoleRequestStatus = 'pending' | 'approved' | 'rejected' | 'canceled';
 
-export type TeachingSubscriptionState = {
-  actor: TeachingActor;
-  status: TeachingSubscriptionStatus;
-  isActive: boolean;
-  isEdamaa3dVerified: boolean;
-  planCode: string;
-  currentPeriodEnd: string | null;
-  currentPeriodEndLabel: string | null;
-  features: {
-    canTeachLive: boolean;
-    canUseUnlimitedOfflineClasses: boolean;
-    maxScheduledOfflineClasses: number;
-  };
+export type AccountRoleItem = {
+  id: string;
+  role: AppAccountRole;
+  status: AccountRoleStatus;
+  isDefault: boolean;
+  requestedAt: string;
+  activatedAt: string | null;
+  deactivatedAt: string | null;
 };
 
-type CheckoutResponse = {
-  actor: TeachingActor;
-  checkoutUrl: string | null;
-  sessionId: string;
-  message: string;
+export type RoleRequestItem = {
+  id: string;
+  targetRole: AppAccountRole;
+  status: RoleRequestStatus;
+  note: string | null;
+  rejectionReason: string | null;
+  reviewedByEmail: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+};
+
+export type AccountRoleStateResponse = {
+  user: {
+    id: number;
+    email: string;
+    name: string | null;
+    defaultRole: AppAccountRole;
+  };
+  roles: AccountRoleItem[];
+  activeRoles: AppAccountRole[];
+  pendingRequests: RoleRequestItem[];
+  canRequestRoles: AppAccountRole[];
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
-const DEV_PREMIUM_UNLOCK_ENABLED = (() => {
-  // Default to unlocked in local development so premium-gated flows can be tested end-to-end.
-  const rawValue = import.meta.env.VITE_DEV_UNLOCK_PREMIUM ?? (import.meta.env.DEV ? 'true' : 'false');
-  return String(rawValue).trim().toLowerCase() === 'true';
-})();
 
 const isLocalhostHost = (host: string) => host === '127.0.0.1' || host === 'localhost';
 
@@ -62,21 +65,6 @@ const resolveApiBaseCandidates = () => {
   return Array.from(candidates).map((base) => base.replace(/\/+$/, ''));
 };
 
-const buildDevUnlockedSubscriptionState = (actor: TeachingActor): TeachingSubscriptionState => ({
-  actor,
-  status: 'active',
-  isActive: true,
-  isEdamaa3dVerified: true,
-  planCode: actor === 'school' ? 'school_pro' : 'tutor_pro',
-  currentPeriodEnd: null,
-  currentPeriodEndLabel: 'Development unlock',
-  features: {
-    canTeachLive: true,
-    canUseUnlimitedOfflineClasses: true,
-    maxScheduledOfflineClasses: 999,
-  },
-});
-
 const extractErrorMessage = async (response: Response) => {
   try {
     const payload = (await response.json()) as { message?: string | string[] };
@@ -96,8 +84,9 @@ const extractErrorMessage = async (response: Response) => {
       return textPayload;
     }
   } catch {
-    // Fallback below.
+    // Fall through to generic fallback.
   }
+
   return `Request failed with status ${response.status}`;
 };
 
@@ -105,7 +94,7 @@ const requestWithAuth = async (endpoint: string, init?: RequestInit) => {
   const token = loadPersistedSupabaseAccessToken();
   const localDevSession = loadPersistedLocalDevAuthSession();
   if (!token && !localDevSession?.email) {
-    throw new Error('Sign in with your authenticated account to manage subscriptions.');
+    throw new Error('Sign in with your authenticated account to manage account roles.');
   }
 
   const bases = resolveApiBaseCandidates();
@@ -131,10 +120,13 @@ const requestWithAuth = async (endpoint: string, init?: RequestInit) => {
       response = await fetch(`${base}${endpoint}`, {
         ...init,
         headers: {
-          'Content-Type': 'application/json',
           ...(init?.headers || {}),
+          'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...(localDevSession?.email ? { 'X-Dev-User-Email': localDevSession.email } : {}),
+          ...(localDevSession?.defaultRole
+            ? { 'X-Dev-User-Role': localDevSession.defaultRole }
+            : {}),
         },
       });
     } catch (error) {
@@ -161,43 +153,47 @@ const requestWithAuth = async (endpoint: string, init?: RequestInit) => {
   );
 };
 
-export const fetchTeachingSubscriptionState = async (
-  actor: TeachingActor
-): Promise<TeachingSubscriptionState> => {
-  if (DEV_PREMIUM_UNLOCK_ENABLED) {
-    return buildDevUnlockedSubscriptionState(actor);
-  }
-
-  const response = await requestWithAuth(`/subscriptions/me/status?actor=${encodeURIComponent(actor)}`);
-  return (await response.json()) as TeachingSubscriptionState;
+export const fetchMyAccountRoles = async (): Promise<AccountRoleStateResponse> => {
+  const response = await requestWithAuth('/account/roles/me', {
+    method: 'GET',
+  });
+  return (await response.json()) as AccountRoleStateResponse;
 };
 
-export const createTeachingSubscriptionCheckout = async (
-  actor: TeachingActor,
-  options?: { successUrl?: string; cancelUrl?: string }
-): Promise<CheckoutResponse> => {
-  const response = await requestWithAuth('/subscriptions/me/checkout', {
+export const requestAccountRoleChange = async (input: {
+  targetRole: 'tutor' | 'school';
+  note?: string;
+  payload?: unknown;
+}) => {
+  const response = await requestWithAuth('/account/roles/request', {
     method: 'POST',
-    body: JSON.stringify({
-      actor,
-      successUrl: options?.successUrl,
-      cancelUrl: options?.cancelUrl,
-    }),
+    body: JSON.stringify(input),
   });
-  return (await response.json()) as CheckoutResponse;
+  return (await response.json()) as {
+    message: string;
+    request: RoleRequestItem;
+    roleState: AccountRoleStateResponse;
+  };
 };
 
-export const syncTeachingSubscriptionCheckout = async (
-  actor: TeachingActor,
-  sessionId: string
-): Promise<TeachingSubscriptionState> => {
-  const response = await requestWithAuth('/subscriptions/me/sync', {
+export const switchDefaultAccountRole = async (role: AppAccountRole) => {
+  const response = await requestWithAuth('/account/roles/switch', {
     method: 'POST',
-    body: JSON.stringify({
-      actor,
-      sessionId,
-    }),
+    body: JSON.stringify({ role }),
   });
-  const payload = (await response.json()) as { subscription: TeachingSubscriptionState };
-  return payload.subscription;
+  return (await response.json()) as {
+    message: string;
+    roleState: AccountRoleStateResponse;
+  };
+};
+
+export const deactivateAccountRole = async (role: AppAccountRole) => {
+  const response = await requestWithAuth('/account/roles/deactivate', {
+    method: 'POST',
+    body: JSON.stringify({ role }),
+  });
+  return (await response.json()) as {
+    message: string;
+    roleState: AccountRoleStateResponse;
+  };
 };
