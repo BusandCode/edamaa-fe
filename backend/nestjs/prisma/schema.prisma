@@ -33,6 +33,10 @@ model User {
   // Relation to Enrollment model.
   enrollments Enrollment[]
 
+  // Multi-role account access for student/tutor/school/admin personas.
+  accountRoles       UserRole[]
+  roleChangeRequests RoleChangeRequest[]
+
   // Payment domain relations.
   paymentMethods      PaymentMethod[]
   paymentTransactions PaymentTransaction[]
@@ -43,6 +47,7 @@ model User {
   // School finance domain (marketplace payout model).
   schoolFinanceAccount  SchoolFinanceAccount?
   schoolFeePayments     SchoolFeePayment[]   @relation("SchoolFeePaymentPayer")
+  schoolFeeInvoices     SchoolFeeInvoice[]   @relation("SchoolFeeInvoiceStudent")
 }
 
 model School {
@@ -66,6 +71,46 @@ model Enrollment {
   course   Course @relation(fields: [courseId], references: [id])
   courseId Int
   role     String @default("student")
+}
+
+model UserRole {
+  id            Int               @id @default(autoincrement())
+  publicId      String            @unique
+  user          User              @relation(fields: [userId], references: [id])
+  userId        Int
+  role          AccountRole
+  status        AccountRoleStatus @default(ACTIVE)
+  isDefault     Boolean           @default(false)
+  requestedAt   DateTime          @default(now())
+  activatedAt   DateTime?
+  deactivatedAt DateTime?
+  metadata      Json?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([userId, role])
+  @@index([userId, status, isDefault])
+  @@index([role, status, createdAt])
+}
+
+model RoleChangeRequest {
+  id              Int                     @id @default(autoincrement())
+  publicId        String                  @unique
+  user            User                    @relation(fields: [userId], references: [id])
+  userId          Int
+  targetRole      AccountRole
+  status          RoleChangeRequestStatus @default(PENDING)
+  note            String?
+  requestPayload  Json?
+  reviewedByEmail String?
+  reviewedAt      DateTime?
+  rejectionReason String?
+  metadata        Json?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  @@index([userId, status, createdAt])
+  @@index([targetRole, status, createdAt])
 }
 
 enum PaymentMethodType {
@@ -102,6 +147,25 @@ enum SubscriptionStatus {
   ACTIVE
   TRIALING
   PAST_DUE
+  CANCELED
+}
+
+enum AccountRole {
+  STUDENT
+  TUTOR
+  SCHOOL
+  ADMIN
+}
+
+enum AccountRoleStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum RoleChangeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
   CANCELED
 }
 
@@ -245,6 +309,8 @@ model SchoolFeeInvoice {
   accountId             Int
   plan                  SchoolFeePlan?       @relation(fields: [planId], references: [id])
   planId                Int?
+  studentUser           User?                @relation("SchoolFeeInvoiceStudent", fields: [studentUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  studentUserId         Int?
   studentEmail          String
   studentName           String?
   title                 String
@@ -264,6 +330,23 @@ model SchoolFeeInvoice {
 
   @@index([accountId, status, createdAt])
   @@index([studentEmail, status, dueAt])
+  @@index([studentUserId, status, dueAt])
+}
+
+model SchoolFeeInvoiceNotificationRead {
+  id            Int      @id @default(autoincrement())
+  publicId      String   @unique
+  invoicePublicId String?
+  userEmail     String
+  notificationId String
+  kind          String
+  readAt        DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userEmail, notificationId])
+  @@index([invoicePublicId, createdAt])
+  @@index([userEmail, createdAt])
 }
 
 model SchoolFeePayment {

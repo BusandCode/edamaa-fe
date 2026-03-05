@@ -72,6 +72,7 @@ type SchoolFeeInvoiceItem = {
   id: string;
   title: string;
   description: string | null;
+  studentUserId: string | null;
   studentEmail: string;
   studentName: string | null;
   amount: number;
@@ -81,6 +82,28 @@ type SchoolFeeInvoiceItem = {
   paidAt: string | null;
   createdAt: string;
   paymentLink: string;
+};
+
+type SchoolInvoiceStudentItem = {
+  id: string | null;
+  email: string;
+  name: string | null;
+  role: string | null;
+};
+
+type SchoolFeeInvoiceNotificationItem = {
+  id: string;
+  kind: 'new_invoice' | 'due_soon' | 'overdue_reminder';
+  invoiceId: string;
+  schoolName: string;
+  title: string;
+  message: string;
+  amount: number;
+  currency: string;
+  status: SchoolFeeInvoiceItem['status'];
+  dueDate: string | null;
+  createdAt: string;
+  isRead: boolean;
 };
 
 type SchoolFeePaymentItem = {
@@ -132,6 +155,7 @@ type CreateInvoiceInput = {
   title?: string;
   description?: string;
   amount?: number;
+  studentUserId?: string;
   studentEmail?: string;
   studentName?: string;
   dueDate?: string | null;
@@ -240,6 +264,7 @@ export class SchoolFinanceService {
     try {
       const schoolUser = await this.resolveOrCreateUser(email, displayName, 'school');
       const account = await this.getOrCreateSchoolFinanceAccount(schoolUser.id);
+      await this.refreshOverdueInvoicesForAccount(account.id);
 
       const [plans, invoices, recentPayments, recentPayouts] = await Promise.all([
         this.prisma.schoolFeePlan.findMany({
@@ -352,10 +377,11 @@ export class SchoolFinanceService {
       const schoolUser = await this.resolveOrCreateUser(email, displayName, 'school');
       const account = await this.getOrCreateSchoolFinanceAccount(schoolUser.id);
 
-      const studentEmail = this.normalizeEmail(input.studentEmail || '');
-      if (!studentEmail || !studentEmail.includes('@')) {
-        throw new BadRequestException('Student email is required.');
-      }
+      const resolvedStudent = await this.resolveInvoiceStudentTarget({
+        studentUserId: input.studentUserId,
+        studentEmail: input.studentEmail,
+        studentName: input.studentName,
+      });
 
       const selectedPlan = input.feePlanId
         ? await this.prisma.schoolFeePlan.findFirst({
@@ -380,18 +406,23 @@ export class SchoolFinanceService {
         : this.parseAmountToMinor(input.amount, 'Invoice amount');
 
       const dueAt = this.parseDate(input.dueDate);
+      const initialStatus =
+        dueAt && dueAt.getTime() < Date.now()
+          ? SchoolFeeInvoiceStatus.OVERDUE
+          : SchoolFeeInvoiceStatus.PENDING;
       const created = await this.prisma.schoolFeeInvoice.create({
         data: {
           publicId: this.createPublicId('INV', schoolUser.id),
           accountId: account.id,
           planId: selectedPlan?.id || null,
-          studentEmail,
-          studentName: this.normalizeOptionalText(input.studentName),
+          studentUserId: resolvedStudent.userId,
+          studentEmail: resolvedStudent.email,
+          studentName: resolvedStudent.name,
           title,
           description: this.normalizeOptionalText(input.description || selectedPlan?.description || ''),
           amountMinor,
           currency: account.currency,
-          status: SchoolFeeInvoiceStatus.PENDING,
+          status: initialStatus,
           dueAt,
         },
       });
@@ -406,6 +437,126 @@ export class SchoolFinanceService {
     }
   }
 
+  async listSchoolStudentsForAuthUser(authUser: AuthUser) {
+    const email = this.requireEmail(authUser);
+    const normalizedRole = this.normalizeRole(authUser.role);
+    this.assertSchoolRole(normalizedRole);
+    const displayName = this.normalizeDisplayName(authUser.name, email);
+
+    try {
+      const schoolUser = await this.resolveOrCreateUser(email, displayName, 'school');
+      const account = await this.getOrCreateSchoolFinanceAccount(schoolUser.id);
+
+      const recentInvoiceStudents = await this.prisma.schoolFeeInvoice.findMany({
+        where: { accountId: account.id },
+        select: {
+          studentUserId: true,
+          studentEmail: true,
+          studentName: true,
+        },
+        orderBy: [{ createdAt: 'desc' }],
+        take: 300,
+      });
+
+      const invoiceStudentUserIds = Array.from(
+        new Set(
+          recentInvoiceStudents
+            .map((invoice) => invoice.studentUserId)
+            .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+        )
+      );
+
+      const students = await this.prisma.user.findMany({
+        where: {
+          OR: [
+            {
+              role: {
+                equals: 'student',
+                mode: 'insensitive',
+              },
+            },
+            ...(invoiceStudentUserIds.length > 0
+              ? [
+                  {
+                    id: {
+                      in: invoiceStudentUserIds,
+                    },
+                  },
+                ]
+              : []),
+          ],
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+        },
+        orderBy: [{ name: 'asc' }, { email: 'asc' }],
+        take: 500,
+      });
+
+      const studentsByEmail = new Map<string, SchoolInvoiceStudentItem>();
+      students.forEach((student) => {
+        const normalizedEmail = this.normalizeEmail(student.email);
+        if (!normalizedEmail || !normalizedEmail.includes('@')) {
+          return;
+        }
+
+        studentsByEmail.set(normalizedEmail, {
+          id: String(student.id),
+          email: normalizedEmail,
+          name: this.normalizeOptionalText(student.name),
+          role: this.normalizeOptionalText(student.role),
+        });
+      });
+
+      // Keep invoice-only students in picker results so schools can still target
+      // historical records even if those users are not currently in the user list.
+      recentInvoiceStudents.forEach((invoice) => {
+        const normalizedEmail = this.normalizeEmail(invoice.studentEmail);
+        if (!normalizedEmail || !normalizedEmail.includes('@')) {
+          return;
+        }
+
+        const existing = studentsByEmail.get(normalizedEmail);
+        if (!existing) {
+          studentsByEmail.set(normalizedEmail, {
+            id: typeof invoice.studentUserId === 'number' ? String(invoice.studentUserId) : null,
+            email: normalizedEmail,
+            name: this.normalizeOptionalText(invoice.studentName),
+            role: 'student',
+          });
+          return;
+        }
+
+        if (!existing.name && invoice.studentName) {
+          existing.name = this.normalizeOptionalText(invoice.studentName);
+        }
+        if (!existing.id && typeof invoice.studentUserId === 'number') {
+          existing.id = String(invoice.studentUserId);
+        }
+      });
+
+      const sorted = Array.from(studentsByEmail.values()).sort((a, b) => {
+        const aLabel = `${a.name || ''} ${a.email}`.toLowerCase();
+        const bLabel = `${b.name || ''} ${b.email}`.toLowerCase();
+        return aLabel.localeCompare(bLabel);
+      });
+
+      return {
+        students: sorted.slice(0, 400),
+      };
+    } catch (error) {
+      if (this.isFinanceWorkspaceUnavailableError(error)) {
+        this.logger.warn('School finance store is unavailable. Returning empty school student picker.');
+        return { students: [] };
+      }
+
+      throw this.rethrowUnexpectedError(error);
+    }
+  }
+
   async listSchoolInvoicesForAuthUser(authUser: AuthUser, input: ListSchoolInvoicesInput = {}) {
     const email = this.requireEmail(authUser);
     const normalizedRole = this.normalizeRole(authUser.role);
@@ -414,6 +565,7 @@ export class SchoolFinanceService {
     try {
       const schoolUser = await this.resolveOrCreateUser(email, displayName, 'school');
       const account = await this.getOrCreateSchoolFinanceAccount(schoolUser.id);
+      await this.refreshOverdueInvoicesForAccount(account.id);
       const normalizedStatus = this.normalizeInvoiceStatus(input.status);
 
       const invoices = await this.prisma.schoolFeeInvoice.findMany({
@@ -440,13 +592,23 @@ export class SchoolFinanceService {
 
   async listStudentInvoicesForAuthUser(authUser: AuthUser) {
     const email = this.requireEmail(authUser);
+    const displayName = this.normalizeDisplayName(authUser.name, email);
     try {
+      const studentUser = await this.resolveOrCreateUser(email, displayName, 'student');
+      await this.refreshOverdueInvoicesForStudent(email, studentUser.id);
       const invoices = await this.prisma.schoolFeeInvoice.findMany({
         where: {
-          studentEmail: {
-            equals: email,
-            mode: 'insensitive',
-          },
+          OR: [
+            {
+              studentUserId: studentUser.id,
+            },
+            {
+              studentEmail: {
+                equals: email,
+                mode: 'insensitive',
+              },
+            },
+          ],
           status: {
             in: [
               SchoolFeeInvoiceStatus.PENDING,
@@ -484,6 +646,82 @@ export class SchoolFinanceService {
     }
   }
 
+  async listStudentInvoiceNotificationsForAuthUser(authUser: AuthUser) {
+    const email = this.requireEmail(authUser);
+
+    try {
+      const invoicesPayload = await this.listStudentInvoicesForAuthUser(authUser);
+      const readIds = await this.getReadInvoiceNotificationIds(email);
+      const notifications = invoicesPayload.invoices
+        .flatMap((invoice) =>
+          this.toStudentInvoiceNotificationItems(
+            {
+              ...invoice,
+              schoolName: invoice.schoolName || 'School',
+            },
+            readIds
+          )
+        )
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      return {
+        generatedAt: new Date().toISOString(),
+        unreadCount: notifications.filter((notification) => !notification.isRead).length,
+        notifications,
+      };
+    } catch (error) {
+      if (this.isFinanceWorkspaceUnavailableError(error)) {
+        this.logger.warn(
+          'School finance store is unavailable. Returning empty student invoice notifications.'
+        );
+        return {
+          generatedAt: new Date().toISOString(),
+          unreadCount: 0,
+          notifications: [] as SchoolFeeInvoiceNotificationItem[],
+        };
+      }
+
+      throw this.rethrowUnexpectedError(error);
+    }
+  }
+
+  async markStudentInvoiceNotificationAsReadForAuthUser(authUser: AuthUser, notificationId: string) {
+    const email = this.requireEmail(authUser);
+    const normalizedNotificationId = String(notificationId || '').trim();
+    if (!normalizedNotificationId) {
+      throw new BadRequestException('Notification id is required.');
+    }
+
+    const notificationsPayload = await this.listStudentInvoiceNotificationsForAuthUser(authUser);
+    const targetNotification = notificationsPayload.notifications.find(
+      (notification) => notification.id === normalizedNotificationId
+    );
+    if (!targetNotification) {
+      throw new NotFoundException('Notification not found.');
+    }
+
+    await this.markInvoiceNotificationRead(email, targetNotification);
+
+    return {
+      notificationId: normalizedNotificationId,
+      isRead: true,
+      unreadCount: notificationsPayload.notifications.filter(
+        (notification) => notification.id !== normalizedNotificationId && !notification.isRead
+      ).length,
+    };
+  }
+
+  async markAllStudentInvoiceNotificationsAsReadForAuthUser(authUser: AuthUser) {
+    const email = this.requireEmail(authUser);
+    const notificationsPayload = await this.listStudentInvoiceNotificationsForAuthUser(authUser);
+    await this.markInvoiceNotificationsRead(email, notificationsPayload.notifications);
+
+    return {
+      updated: notificationsPayload.notifications.length,
+      unreadCount: 0,
+    };
+  }
+
   async payInvoiceForAuthUser(authUser: AuthUser, input: PayInvoiceInput): Promise<InvoicePaymentResponse> {
     const payerEmail = this.requireEmail(authUser);
     const payerRole = this.normalizeRole(authUser.role);
@@ -507,8 +745,13 @@ export class SchoolFinanceService {
         throw new NotFoundException('Invoice not found.');
       }
 
+      const payerDisplayName = this.normalizeDisplayName(authUser.name, payerEmail);
+      const payerUser = await this.resolveOrCreateUser(payerEmail, payerDisplayName, payerRole || 'student');
+
       const payerCanPay =
-        this.normalizeEmail(invoice.studentEmail) === payerEmail || this.isSchoolRole(payerRole);
+        this.normalizeEmail(invoice.studentEmail) === payerEmail ||
+        invoice.studentUserId === payerUser.id ||
+        this.isSchoolRole(payerRole);
 
       if (!payerCanPay) {
         throw new ForbiddenException('You can only pay invoices assigned to your account.');
@@ -530,9 +773,6 @@ export class SchoolFinanceService {
           wallet: this.mapWallet(invoice.account),
         };
       }
-
-      const payerDisplayName = this.normalizeDisplayName(authUser.name, payerEmail);
-      const payerUser = await this.resolveOrCreateUser(payerEmail, payerDisplayName, payerRole || 'student');
 
       if (this.stripe) {
         const appBaseUrl = this.resolveAppBaseUrl();
@@ -1411,6 +1651,7 @@ export class SchoolFinanceService {
         details.includes('schoolfinanceaccount') ||
         details.includes('schoolfeeplan') ||
         details.includes('schoolfeeinvoice') ||
+        details.includes('studentuserid') ||
         details.includes('schoolfeepayment') ||
         details.includes('schoolpayout') ||
         details.includes('schoolpayoutledgerentry')
@@ -1487,6 +1728,7 @@ export class SchoolFinanceService {
     publicId: string;
     title: string;
     description: string | null;
+    studentUserId: number | null;
     studentEmail: string;
     studentName: string | null;
     amountMinor: number;
@@ -1500,6 +1742,10 @@ export class SchoolFinanceService {
       id: invoice.publicId,
       title: invoice.title,
       description: invoice.description,
+      studentUserId:
+        typeof invoice.studentUserId === 'number' && Number.isFinite(invoice.studentUserId)
+          ? String(invoice.studentUserId)
+          : null,
       studentEmail: invoice.studentEmail,
       studentName: invoice.studentName,
       amount: this.toNaira(invoice.amountMinor),
@@ -1735,6 +1981,58 @@ export class SchoolFinanceService {
     });
   }
 
+  private async refreshOverdueInvoicesForAccount(accountId: number) {
+    await this.prisma.schoolFeeInvoice.updateMany({
+      where: {
+        accountId,
+        status: SchoolFeeInvoiceStatus.PENDING,
+        dueAt: {
+          not: null,
+          lt: new Date(),
+        },
+      },
+      data: {
+        status: SchoolFeeInvoiceStatus.OVERDUE,
+      },
+    });
+  }
+
+  private async refreshOverdueInvoicesForStudent(studentEmail: string, studentUserId: number | null) {
+    const normalizedEmail = this.normalizeEmail(studentEmail);
+    const targetFilters: Prisma.SchoolFeeInvoiceWhereInput[] = [];
+
+    if (typeof studentUserId === 'number' && Number.isFinite(studentUserId)) {
+      targetFilters.push({ studentUserId });
+    }
+
+    if (normalizedEmail) {
+      targetFilters.push({
+        studentEmail: {
+          equals: normalizedEmail,
+          mode: 'insensitive',
+        },
+      });
+    }
+
+    if (targetFilters.length === 0) {
+      return;
+    }
+
+    await this.prisma.schoolFeeInvoice.updateMany({
+      where: {
+        OR: targetFilters,
+        status: SchoolFeeInvoiceStatus.PENDING,
+        dueAt: {
+          not: null,
+          lt: new Date(),
+        },
+      },
+      data: {
+        status: SchoolFeeInvoiceStatus.OVERDUE,
+      },
+    });
+  }
+
   private normalizeInvoiceStatus(value: string | undefined): SchoolFeeInvoiceStatus | null {
     const normalized = String(value || '').trim().toLowerCase();
     if (!normalized) {
@@ -1884,6 +2182,281 @@ export class SchoolFinanceService {
     return String(value || '').trim().toLowerCase();
   }
 
+  private normalizeOptionalNumericId(value: string | number | null | undefined, label: string) {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) {
+      return null;
+    }
+
+    const parsed = Number(normalized);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new BadRequestException(`${label} is invalid.`);
+    }
+
+    return parsed;
+  }
+
+  private async resolveInvoiceStudentTarget(input: {
+    studentUserId?: string;
+    studentEmail?: string;
+    studentName?: string;
+  }) {
+    const requestedStudentUserId = this.normalizeOptionalNumericId(input.studentUserId, 'Student');
+    const requestedStudentEmail = this.normalizeEmail(input.studentEmail || '');
+    const requestedStudentName = this.normalizeOptionalText(input.studentName);
+    let resolvedStudentUser:
+      | {
+          id: number;
+          email: string;
+          name: string | null;
+          role: string;
+        }
+      | null = null;
+
+    if (requestedStudentUserId) {
+      resolvedStudentUser = await this.prisma.user.findUnique({
+        where: { id: requestedStudentUserId },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+        },
+      });
+
+      if (!resolvedStudentUser) {
+        throw new NotFoundException('Selected student account was not found.');
+      }
+
+      if (
+        requestedStudentEmail &&
+        this.normalizeEmail(resolvedStudentUser.email) !== requestedStudentEmail
+      ) {
+        throw new BadRequestException(
+          'Selected student does not match the provided email. Pick one student record.'
+        );
+      }
+    }
+
+    if (!resolvedStudentUser && requestedStudentEmail) {
+      resolvedStudentUser = await this.prisma.user.findFirst({
+        where: {
+          email: {
+            equals: requestedStudentEmail,
+            mode: 'insensitive',
+          },
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+        },
+      });
+    }
+
+    const resolvedEmail = this.normalizeEmail(resolvedStudentUser?.email || requestedStudentEmail);
+    if (!resolvedEmail || !resolvedEmail.includes('@')) {
+      throw new BadRequestException('Choose a student or enter a valid student email.');
+    }
+
+    const resolvedName =
+      requestedStudentName ||
+      this.normalizeOptionalText(resolvedStudentUser?.name || '') ||
+      (await this.resolveStudentNameByEmail(resolvedEmail));
+
+    return {
+      userId: resolvedStudentUser?.id || null,
+      email: resolvedEmail,
+      name: resolvedName,
+    };
+  }
+
+  private async getReadInvoiceNotificationIds(email: string) {
+    const normalizedEmail = this.normalizeEmail(email);
+    if (!normalizedEmail) {
+      return new Set<string>();
+    }
+
+    const reads = await this.prisma.schoolFeeInvoiceNotificationRead.findMany({
+      where: {
+        userEmail: {
+          equals: normalizedEmail,
+          mode: 'insensitive',
+        },
+      },
+      select: {
+        notificationId: true,
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 600,
+    });
+
+    return new Set(reads.map((entry) => entry.notificationId));
+  }
+
+  private async markInvoiceNotificationRead(
+    email: string,
+    notification: SchoolFeeInvoiceNotificationItem
+  ) {
+    const normalizedEmail = this.normalizeEmail(email);
+    if (!normalizedEmail) {
+      return;
+    }
+
+    await this.prisma.schoolFeeInvoiceNotificationRead.upsert({
+      where: {
+        userEmail_notificationId: {
+          userEmail: normalizedEmail,
+          notificationId: notification.id,
+        },
+      },
+      update: {
+        invoicePublicId: notification.invoiceId,
+        kind: notification.kind,
+        readAt: new Date(),
+      },
+      create: {
+        publicId: this.createPublicId('NTR', 0),
+        userEmail: normalizedEmail,
+        notificationId: notification.id,
+        invoicePublicId: notification.invoiceId,
+        kind: notification.kind,
+      },
+    });
+  }
+
+  private async markInvoiceNotificationsRead(
+    email: string,
+    notifications: SchoolFeeInvoiceNotificationItem[]
+  ) {
+    const unreadNotifications = notifications.filter((notification) => !notification.isRead);
+    if (unreadNotifications.length === 0) {
+      return;
+    }
+
+    await Promise.all(
+      unreadNotifications.map((notification) =>
+        this.markInvoiceNotificationRead(email, notification)
+      )
+    );
+  }
+
+  private toStudentInvoiceNotificationItems(
+    invoice: SchoolFeeInvoiceItem & {
+      schoolName: string;
+    },
+    readIds: Set<string>
+  ): SchoolFeeInvoiceNotificationItem[] {
+    const notifications: SchoolFeeInvoiceNotificationItem[] = [];
+    const dueDate = invoice.dueDate ? new Date(invoice.dueDate) : null;
+    const now = new Date();
+    const isOutstanding = invoice.status !== 'paid' && invoice.status !== 'canceled';
+    const isOverdue = Boolean(
+      dueDate && dueDate.getTime() < now.getTime() && isOutstanding
+    );
+
+    notifications.push(
+      this.buildStudentInvoiceNotification(invoice, 'new_invoice', readIds, {
+        title: `${invoice.schoolName} posted a new invoice`,
+        message: `${invoice.title} - ₦${invoice.amount.toLocaleString()}${
+          dueDate ? ` • Due ${dueDate.toLocaleDateString()}` : ''
+        }`,
+        createdAt: invoice.createdAt,
+      })
+    );
+
+    if (!isOverdue && this.isInvoiceDueSoon(dueDate, now) && isOutstanding) {
+      notifications.push(
+        this.buildStudentInvoiceNotification(invoice, 'due_soon', readIds, {
+          title: `${invoice.title} is due soon`,
+          message: `Please pay ₦${invoice.amount.toLocaleString()} before ${dueDate?.toLocaleDateString()} to avoid overdue penalties.`,
+          createdAt: new Date(
+            Math.max(new Date(invoice.createdAt).getTime(), dueDate!.getTime() - 1000)
+          ).toISOString(),
+        })
+      );
+    }
+
+    if (isOverdue) {
+      notifications.push(
+        this.buildStudentInvoiceNotification(invoice, 'overdue_reminder', readIds, {
+          title: `${invoice.title} is overdue`,
+          message: `Your payment of ₦${invoice.amount.toLocaleString()} is overdue. Please settle this invoice as soon as possible.`,
+          createdAt: (dueDate || new Date(invoice.createdAt)).toISOString(),
+        })
+      );
+    }
+
+    return notifications;
+  }
+
+  private buildStudentInvoiceNotification(
+    invoice: SchoolFeeInvoiceItem & {
+      schoolName: string;
+    },
+    kind: SchoolFeeInvoiceNotificationItem['kind'],
+    readIds: Set<string>,
+    input: {
+      title: string;
+      message: string;
+      createdAt: string;
+    }
+  ): SchoolFeeInvoiceNotificationItem {
+    const id = this.buildInvoiceNotificationId(invoice.id, kind);
+    const isLegacyRead = kind === 'new_invoice' && readIds.has(invoice.id);
+
+    return {
+      id,
+      kind,
+      invoiceId: invoice.id,
+      schoolName: invoice.schoolName,
+      title: input.title,
+      message: input.message,
+      amount: invoice.amount,
+      currency: invoice.currency,
+      status: invoice.status,
+      dueDate: invoice.dueDate,
+      createdAt: input.createdAt,
+      isRead: isLegacyRead || readIds.has(id),
+    };
+  }
+
+  private buildInvoiceNotificationId(invoiceId: string, kind: SchoolFeeInvoiceNotificationItem['kind']) {
+    return `${invoiceId}:${kind}`;
+  }
+
+  private isInvoiceDueSoon(dueDate: Date | null, now: Date) {
+    if (!dueDate) {
+      return false;
+    }
+
+    const deltaMs = dueDate.getTime() - now.getTime();
+    const dueSoonWindowMs = 1000 * 60 * 60 * 24 * 3;
+    return deltaMs > 0 && deltaMs <= dueSoonWindowMs;
+  }
+
+  private async resolveStudentNameByEmail(email: string) {
+    const normalizedEmail = this.normalizeEmail(email);
+    if (!normalizedEmail) {
+      return null;
+    }
+
+    const student = await this.prisma.user.findFirst({
+      where: {
+        email: {
+          equals: normalizedEmail,
+          mode: 'insensitive',
+        },
+      },
+      select: {
+        name: true,
+      },
+    });
+
+    return this.normalizeOptionalText(student?.name || '');
+  }
+
   private async resolveOrCreateUser(email: string, displayName: string, defaultRole: string) {
     const normalizedEmail = this.normalizeEmail(email);
     const existing = await this.prisma.user.findFirst({
@@ -1910,13 +2483,36 @@ export class SchoolFinanceService {
       return existing;
     }
 
-    return this.prisma.user.create({
-      data: {
-        email: normalizedEmail,
-        name: displayName,
-        role: defaultRole || 'student',
-      },
-    });
+    try {
+      return await this.prisma.user.create({
+        data: {
+          email: normalizedEmail,
+          name: displayName,
+          role: defaultRole || 'student',
+        },
+      });
+    } catch (error) {
+      // Parallel requests can race on first user creation.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const concurrentUser = await this.prisma.user.findFirst({
+          where: {
+            email: {
+              equals: normalizedEmail,
+              mode: 'insensitive',
+            },
+          },
+        });
+
+        if (concurrentUser) {
+          return concurrentUser;
+        }
+      }
+
+      throw error;
+    }
   }
 
   private async getOrCreateSchoolFinanceAccount(schoolUserId: number) {
@@ -1928,13 +2524,30 @@ export class SchoolFinanceService {
       return existing;
     }
 
-    return this.prisma.schoolFinanceAccount.create({
-      data: {
-        publicId: this.createPublicId('SFA', schoolUserId),
-        schoolUserId,
-        currency: 'NGN',
-      },
-    });
+    try {
+      return await this.prisma.schoolFinanceAccount.create({
+        data: {
+          publicId: this.createPublicId('SFA', schoolUserId),
+          schoolUserId,
+          currency: 'NGN',
+        },
+      });
+    } catch (error) {
+      // Parallel dashboard requests can race on first account creation.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const concurrentAccount = await this.prisma.schoolFinanceAccount.findUnique({
+          where: { schoolUserId },
+        });
+        if (concurrentAccount) {
+          return concurrentAccount;
+        }
+      }
+
+      throw error;
+    }
   }
 
   private createPublicId(prefix: string, userId: number) {
