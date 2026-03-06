@@ -19,10 +19,12 @@ import {
   fetchSchoolFinanceDashboard,
   fetchSchoolWithdrawalLedger,
   paySchoolInvoice,
+  requeueFailedSchoolReminderEmails,
   runSchoolReminderSweep,
   syncSchoolInvoiceCheckout,
   type SchoolFinanceDashboard,
   type SchoolFeeReminderDispatch,
+  type SchoolFeeReminderRequeueResponse,
   type SchoolFeeReminderSweepResponse,
   type SchoolFinanceStudent,
   updateSchoolWithdrawalStatus,
@@ -84,6 +86,7 @@ const SchoolFinance = () => {
     | 'invoice'
     | 'withdraw'
     | 'reminders-run'
+    | 'reminders-requeue'
     | `pay-${string}`
     | `payout-${string}`
     | `ledger-${string}`
@@ -93,6 +96,8 @@ const SchoolFinance = () => {
   const [isWithdrawOpen, setIsWithdrawOpen] = useState(false);
   const [reminderDispatches, setReminderDispatches] = useState<SchoolFeeReminderDispatch[]>([]);
   const [lastReminderSweep, setLastReminderSweep] = useState<SchoolFeeReminderSweepResponse | null>(null);
+  const [lastReminderRequeue, setLastReminderRequeue] =
+    useState<SchoolFeeReminderRequeueResponse | null>(null);
 
   const [planTitle, setPlanTitle] = useState('');
   const [planDescription, setPlanDescription] = useState('');
@@ -246,6 +251,14 @@ const SchoolFinance = () => {
   const selectedInvoicePlan = useMemo(
     () => activeFeePlans.find((plan) => plan.id === invoicePlanId) || null,
     [activeFeePlans, invoicePlanId]
+  );
+
+  const failedEmailReminderCount = useMemo(
+    () =>
+      reminderDispatches.filter(
+        (dispatch) => dispatch.channel === 'email' && dispatch.status === 'failed'
+      ).length,
+    [reminderDispatches]
   );
 
   useEffect(() => {
@@ -423,10 +436,13 @@ const SchoolFinance = () => {
     try {
       const result = await runSchoolReminderSweep();
       setLastReminderSweep(result);
+      // Mirror backend retry metrics so finance admins can see delivery health immediately.
+      const emailSent = Number(result.emailSent || 0);
+      const emailQueuedForRetry = Number(result.emailQueuedForRetry || 0);
+      const emailExhausted = Number(result.emailExhausted || 0);
+      const emailSkipped = Number(result.emailSkipped || 0);
       setNotice(
-        `Reminder sweep completed. ${result.dueSoonInApp + result.overdueInApp} in-app and ${
-          result.dueSoonEmail + result.overdueEmail
-        } email reminders processed.`
+        `Reminder sweep completed. ${result.dueSoonInApp + result.overdueInApp} in-app reminders logged, ${emailSent} email sent, ${emailQueuedForRetry} queued for retry, ${emailExhausted} exhausted, and ${emailSkipped} skipped.`
       );
       await refreshDashboard();
     } catch (requestError) {
@@ -434,6 +450,34 @@ const SchoolFinance = () => {
         requestError instanceof Error
           ? requestError.message
           : 'Could not run reminder sweep right now.';
+      setError(message);
+    } finally {
+      setActiveAction(null);
+    }
+  };
+
+  const handleRequeueFailedReminderEmails = async () => {
+    if (activeAction) {
+      return;
+    }
+
+    setActiveAction('reminders-requeue');
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await requeueFailedSchoolReminderEmails({ limit: 80 });
+      setLastReminderRequeue(result);
+      setNotice(
+        result.requeued > 0
+          ? `Moved ${result.requeued} failed email reminder(s) back to queue.`
+          : 'No failed email reminders were eligible for requeue.'
+      );
+      await refreshDashboard();
+    } catch (requestError) {
+      const message =
+        requestError instanceof Error
+          ? requestError.message
+          : 'Could not requeue failed reminder emails right now.';
       setError(message);
     } finally {
       setActiveAction(null);
@@ -993,20 +1037,41 @@ const SchoolFinance = () => {
                 Track due soon and overdue reminders sent to students.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => void handleRunReminders()}
-              disabled={activeAction === 'reminders-run'}
-              className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {activeAction === 'reminders-run' ? 'Running...' : 'Run Now'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleRunReminders()}
+                disabled={activeAction === 'reminders-run'}
+                className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {activeAction === 'reminders-run' ? 'Running...' : 'Run Now'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleRequeueFailedReminderEmails()}
+                disabled={activeAction === 'reminders-requeue' || failedEmailReminderCount === 0}
+                className="rounded-md border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {activeAction === 'reminders-requeue'
+                  ? 'Requeueing...'
+                  : `Requeue Failed (${failedEmailReminderCount})`}
+              </button>
+            </div>
           </div>
 
           {lastReminderSweep && (
             <p className="mt-2 text-[11px] text-gray-600">
               Last sweep: {new Date(lastReminderSweep.generatedAt).toLocaleString()} • Scanned{' '}
-              {lastReminderSweep.scannedInvoices} invoices.
+              {lastReminderSweep.scannedInvoices} invoices • Email sent{' '}
+              {Number(lastReminderSweep.emailSent || 0)} • Retry queued{' '}
+              {Number(lastReminderSweep.emailQueuedForRetry || 0)} • Exhausted{' '}
+              {Number(lastReminderSweep.emailExhausted || 0)}.
+            </p>
+          )}
+          {lastReminderRequeue && (
+            <p className="mt-1 text-[11px] text-gray-600">
+              Last requeue: {new Date(lastReminderRequeue.generatedAt).toLocaleString()} • Requeued{' '}
+              {lastReminderRequeue.requeued} dispatches.
             </p>
           )}
 
@@ -1036,8 +1101,12 @@ const SchoolFinance = () => {
                     date {new Date(dispatch.reminderDate).toLocaleDateString()}
                   </p>
                   <p className="mt-1 text-[11px] text-gray-500">
-                    Logged {new Date(dispatch.createdAt).toLocaleString()}
-                    {dispatch.failureReason ? ` • ${dispatch.failureReason}` : ''}
+                    Logged {new Date(dispatch.createdAt).toLocaleString()} • Attempt {dispatch.attemptCount}
+                    {dispatch.nextRetryAt
+                      ? ` • Next retry ${new Date(dispatch.nextRetryAt).toLocaleString()}`
+                      : ''}
+                    {dispatch.lastError ? ` • Last error: ${dispatch.lastError}` : ''}
+                    {!dispatch.lastError && dispatch.failureReason ? ` • ${dispatch.failureReason}` : ''}
                   </p>
                 </article>
               ))}

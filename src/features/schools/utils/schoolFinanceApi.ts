@@ -113,6 +113,9 @@ export type SchoolFeeReminderDispatch = {
   reminderType: 'due_soon' | 'overdue';
   channel: 'in_app' | 'email';
   status: 'queued' | 'sent' | 'failed' | 'skipped';
+  attemptCount: number;
+  nextRetryAt: string | null;
+  lastError: string | null;
   reminderDate: string;
   sentAt: string | null;
   failureReason: string | null;
@@ -134,7 +137,22 @@ export type SchoolFeeReminderSweepResponse = {
   overdueInApp: number;
   overdueEmail: number;
   emailDispatchEnabled: boolean;
+  emailProvider?: 'resend' | 'log' | 'disabled';
+  emailAttempted?: number;
+  emailSent?: number;
+  emailFailed?: number;
+  emailSkipped?: number;
+  emailQueuedForRetry?: number;
+  emailExhausted?: number;
   skipped?: boolean;
+};
+
+export type SchoolFeeReminderRequeueResponse = {
+  generatedAt: string;
+  accountId: number | null;
+  selected: number;
+  requeued: number;
+  maxRetries: number;
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
@@ -173,6 +191,58 @@ const createLocalId = (prefix: string) =>
   `${prefix}_LOCAL_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
 const nowIso = () => new Date().toISOString();
+
+const normalizeReminderType = (value: unknown): SchoolFeeReminderDispatch['reminderType'] => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'overdue' ? 'overdue' : 'due_soon';
+};
+
+const normalizeReminderChannel = (value: unknown): SchoolFeeReminderDispatch['channel'] => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'email' ? 'email' : 'in_app';
+};
+
+const normalizeReminderStatus = (value: unknown): SchoolFeeReminderDispatch['status'] => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'sent') {
+    return 'sent';
+  }
+  if (normalized === 'failed') {
+    return 'failed';
+  }
+  if (normalized === 'skipped') {
+    return 'skipped';
+  }
+  return 'queued';
+};
+
+const normalizeLocalReminderDispatch = (value: unknown): SchoolFeeReminderDispatch => {
+  const record = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+
+  // Keep older locally-cached reminder objects readable after we introduced retry fields.
+  const rawAttemptCount = Number(record.attemptCount);
+  const attemptCount =
+    Number.isFinite(rawAttemptCount) && rawAttemptCount > 0
+      ? Math.round(rawAttemptCount)
+      : 0;
+
+  return {
+    id: String(record.id || createLocalId('RMD')),
+    invoiceId: String(record.invoiceId || ''),
+    invoiceTitle: String(record.invoiceTitle || 'Invoice'),
+    studentEmail: String(record.studentEmail || ''),
+    reminderType: normalizeReminderType(record.reminderType),
+    channel: normalizeReminderChannel(record.channel),
+    status: normalizeReminderStatus(record.status),
+    attemptCount,
+    nextRetryAt: record.nextRetryAt ? String(record.nextRetryAt) : null,
+    lastError: record.lastError ? String(record.lastError) : null,
+    reminderDate: String(record.reminderDate || nowIso()),
+    sentAt: record.sentAt ? String(record.sentAt) : null,
+    failureReason: record.failureReason ? String(record.failureReason) : null,
+    createdAt: String(record.createdAt || nowIso()),
+  };
+};
 
 const extractEmailFromToken = (token?: string | null) => {
   const normalizedToken = String(token || '').trim();
@@ -286,7 +356,9 @@ const getLocalFinanceWorkspace = (email: string): LocalFinanceWorkspace => {
       dashboard: existing.dashboard,
       payoutLedgers: existing.payoutLedgers || {},
       reminderDispatches: Array.isArray((existing as LocalFinanceWorkspace).reminderDispatches)
-        ? (existing as LocalFinanceWorkspace).reminderDispatches
+        ? (existing as LocalFinanceWorkspace).reminderDispatches.map((dispatch) =>
+            normalizeLocalReminderDispatch(dispatch)
+          )
         : [],
     };
     store[normalizedEmail] = normalizedExisting;
@@ -925,6 +997,9 @@ const localRunSchoolReminderSweep = () => {
           reminderType: 'due_soon',
           channel: 'in_app',
           status: 'sent',
+          attemptCount: 1,
+          nextRetryAt: null,
+          lastError: null,
           reminderDate,
           sentAt: nowIso(),
           failureReason: null,
@@ -941,6 +1016,9 @@ const localRunSchoolReminderSweep = () => {
           reminderType: 'due_soon',
           channel: 'email',
           status: 'skipped',
+          attemptCount: 1,
+          nextRetryAt: null,
+          lastError: 'Email reminder delivery is disabled in local mode.',
           reminderDate,
           sentAt: nowIso(),
           failureReason: 'Email reminder delivery is disabled in local mode.',
@@ -959,6 +1037,9 @@ const localRunSchoolReminderSweep = () => {
           reminderType: 'overdue',
           channel: 'in_app',
           status: 'sent',
+          attemptCount: 1,
+          nextRetryAt: null,
+          lastError: null,
           reminderDate: overdueReminderDate,
           sentAt: nowIso(),
           failureReason: null,
@@ -975,6 +1056,9 @@ const localRunSchoolReminderSweep = () => {
           reminderType: 'overdue',
           channel: 'email',
           status: 'skipped',
+          attemptCount: 1,
+          nextRetryAt: null,
+          lastError: 'Email reminder delivery is disabled in local mode.',
           reminderDate: overdueReminderDate,
           sentAt: nowIso(),
           failureReason: 'Email reminder delivery is disabled in local mode.',
@@ -997,6 +1081,13 @@ const localRunSchoolReminderSweep = () => {
     overdueInApp,
     overdueEmail,
     emailDispatchEnabled: false,
+    emailProvider: 'disabled',
+    emailAttempted: 0,
+    emailSent: 0,
+    emailFailed: 0,
+    emailSkipped: dueSoonEmail + overdueEmail,
+    emailQueuedForRetry: 0,
+    emailExhausted: 0,
   } as SchoolFeeReminderSweepResponse;
 };
 
@@ -1034,6 +1125,41 @@ const localFetchSchoolReminderDispatches = (input?: {
     generatedAt: nowIso(),
     total: filtered.length,
     dispatches: filtered,
+  };
+};
+
+const localRequeueFailedSchoolReminderEmails = (input?: {
+  limit?: number;
+}): SchoolFeeReminderRequeueResponse => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const parsedLimit = Number(input?.limit);
+  const limit = Math.min(
+    200,
+    Math.max(1, Number.isFinite(parsedLimit) ? Math.round(parsedLimit) : 80)
+  );
+
+  const failedEmailDispatches = workspace.reminderDispatches
+    .filter((dispatch) => dispatch.channel === 'email' && dispatch.status === 'failed')
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, limit);
+
+  failedEmailDispatches.forEach((dispatch) => {
+    dispatch.status = 'queued';
+    dispatch.attemptCount = 0;
+    dispatch.nextRetryAt = null;
+    dispatch.lastError = null;
+    dispatch.failureReason = null;
+    dispatch.sentAt = null;
+  });
+
+  saveLocalFinanceWorkspace(schoolEmail, workspace);
+  return {
+    generatedAt: nowIso(),
+    accountId: null,
+    selected: failedEmailDispatches.length,
+    requeued: failedEmailDispatches.length,
+    maxRetries: 4,
   };
 };
 
@@ -1268,8 +1394,37 @@ export const fetchSchoolReminderDispatches = async (input?: {
       const response = await requestWithSchoolAuth(
         `/school-finance/me/reminders/dispatches${query ? `?${query}` : ''}`
       );
-      return (await response.json()) as SchoolFeeReminderDispatchesResponse;
+      const payload = (await response.json()) as {
+        generatedAt?: string;
+        total?: number;
+        dispatches?: unknown[];
+      };
+      const dispatches = Array.isArray(payload.dispatches)
+        ? payload.dispatches.map((dispatch) => normalizeLocalReminderDispatch(dispatch))
+        : [];
+      return {
+        generatedAt: String(payload.generatedAt || nowIso()),
+        total: Number.isFinite(Number(payload.total)) ? Number(payload.total) : dispatches.length,
+        dispatches,
+      } as SchoolFeeReminderDispatchesResponse;
     },
     () => localFetchSchoolReminderDispatches(input)
+  );
+};
+
+export const requeueFailedSchoolReminderEmails = async (payload?: {
+  limit?: number;
+}) => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth('/school-finance/me/reminders/requeue-failed', {
+        method: 'POST',
+        body: JSON.stringify({
+          limit: payload?.limit,
+        }),
+      });
+      return (await response.json()) as SchoolFeeReminderRequeueResponse;
+    },
+    () => localRequeueFailedSchoolReminderEmails(payload)
   );
 };
