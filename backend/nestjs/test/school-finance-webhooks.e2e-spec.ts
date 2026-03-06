@@ -326,6 +326,125 @@ describe('SchoolFinance + Webhooks (route contract)', () => {
     );
   });
 
+  it('school creates invoice, student pays, and school balance increases', async () => {
+    const nowIso = new Date().toISOString();
+    const invoice = {
+      id: 'INV-0007-TST100',
+      title: 'Second Term Tuition',
+      description: 'Core term fee',
+      studentUserId: '55',
+      studentEmail: 'student@edamaa.dev',
+      studentName: 'Jane Student',
+      amount: 10000,
+      currency: 'NGN',
+      status: 'pending',
+      dueDate: new Date(Date.now() + 7 * 86400000).toISOString(),
+      paidAt: null as string | null,
+      createdAt: nowIso,
+      paymentLink: '/school-finance/pay/INV-0007-TST100',
+    };
+    const settledPayment = {
+      id: 'PAY-0007-TST900',
+      invoiceId: invoice.id,
+      payerEmail: invoice.studentEmail,
+      grossAmount: 10000,
+      platformFee: 500,
+      processingFee: 150,
+      netAmount: 9350,
+      currency: 'NGN',
+      status: 'settled',
+      settledAt: nowIso,
+      createdAt: nowIso,
+    };
+    let availableBalance = 0;
+
+    schoolFinanceServiceMock.createInvoiceForAuthUser.mockImplementation(async () => ({
+      invoice,
+      message: 'Invoice created and ready for student payment.',
+    }));
+    schoolFinanceServiceMock.payInvoiceForAuthUser.mockImplementation(async () => {
+      invoice.status = 'paid';
+      invoice.paidAt = nowIso;
+      availableBalance += settledPayment.netAmount;
+      return {
+        mode: 'settled',
+        checkoutUrl: null,
+        checkoutSessionId: null,
+        message: 'Payment completed successfully.',
+        invoice,
+        payment: settledPayment,
+        wallet: {
+          available: availableBalance,
+          pending: 0,
+          onHold: 0,
+          lifetimeGross: settledPayment.grossAmount,
+          lifetimeNet: settledPayment.netAmount,
+          totalWithdrawn: 0,
+        },
+      };
+    });
+    schoolFinanceServiceMock.getSchoolDashboardForAuthUser.mockImplementation(async () => ({
+      generatedAt: nowIso,
+      school: {
+        financeAccountId: 'SFA-0007-TST300',
+        name: 'Edamaa School',
+        email: 'school@edamaa.dev',
+        currency: 'NGN',
+      },
+      wallet: {
+        available: availableBalance,
+        pending: 0,
+        onHold: 0,
+        lifetimeGross: settledPayment.grossAmount,
+        lifetimeNet: settledPayment.netAmount,
+        totalWithdrawn: 0,
+      },
+      overview: {
+        totalInvoices: 1,
+        outstandingAmount: 0,
+        paidInvoices: 1,
+        pendingInvoices: 0,
+        overdueInvoices: 0,
+      },
+      feePlans: [],
+      recentInvoices: [invoice],
+      recentPayments: [settledPayment],
+      recentPayouts: [],
+    }));
+
+    const studentRequest = {
+      ...authRequest,
+      user: {
+        ...authRequest.user,
+        email: 'student@edamaa.dev',
+        role: 'student',
+        app_metadata: { role: 'student' },
+      },
+    } as unknown as Request;
+
+    const created = await schoolFinanceController.createInvoice(authRequest, {
+      title: invoice.title,
+      amount: invoice.amount,
+      studentUserId: invoice.studentUserId,
+      studentEmail: invoice.studentEmail,
+      studentName: invoice.studentName,
+      dueDate: invoice.dueDate,
+    });
+
+    expect(created.invoice.id).toBe(invoice.id);
+    expect(created.invoice.status).toBe('pending');
+
+    const paid = await schoolFinanceController.payInvoice(studentRequest, invoice.id, {});
+    expect(paid.mode).toBe('settled');
+    expect(paid.invoice.status).toBe('paid');
+
+    const dashboard = await schoolFinanceController.getMyDashboard(authRequest);
+    expect(dashboard.wallet.available).toBe(settledPayment.netAmount);
+    expect(dashboard.recentInvoices[0].status).toBe('paid');
+    expect(dashboard.recentPayments).toHaveLength(1);
+    expect(dashboard.recentPayments[0].invoiceId).toBe(invoice.id);
+  });
+
   it('accepts Stripe webhooks and forwards payload to service', async () => {
     const payload = {
       received: true,

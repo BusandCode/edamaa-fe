@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import NewLogo from '../../../components/common/NewLogo';
 import RecordClasses from "../../tutors/components/RecordClasses";
 import { useNavigate } from 'react-router-dom';
@@ -28,6 +28,71 @@ import QuickAccessGrid from "../components/QuickAccess";
 import ProgressOverview from '../components/ProgressOverview';
 import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
 import { signOutEverywhere } from '../../../utils/signOut';
+import {
+  loadPersistedLocalDevAuthSession,
+  loadPersistedSupabaseAccessToken,
+} from '../../../utils/authSession';
+
+type StudentSchoolInvoiceStatus =
+  | 'draft'
+  | 'pending'
+  | 'partially_paid'
+  | 'paid'
+  | 'overdue'
+  | 'canceled';
+
+type StudentSchoolInvoice = {
+  id: string;
+  title: string;
+  amount: number;
+  currency: string;
+  status: StudentSchoolInvoiceStatus;
+  dueDate: string | null;
+  schoolName?: string;
+};
+
+type StudentSchoolInvoicesResponse = {
+  invoices: StudentSchoolInvoice[];
+};
+
+type PaySchoolInvoiceResponse = {
+  mode: 'checkout' | 'settled';
+  checkoutUrl?: string | null;
+  message?: string;
+};
+
+const STUDENT_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
+
+const studentInvoiceStatusPill = (status: StudentSchoolInvoiceStatus) => {
+  switch (status) {
+    case 'overdue':
+      return 'bg-red-100 text-red-700';
+    case 'pending':
+      return 'bg-[#3D08BA]/10 text-[#3D08BA]';
+    case 'partially_paid':
+      return 'bg-amber-100 text-amber-700';
+    case 'paid':
+      return 'bg-emerald-100 text-emerald-700';
+    case 'canceled':
+      return 'bg-slate-100 text-slate-700';
+    case 'draft':
+    default:
+      return 'bg-gray-100 text-gray-700';
+  }
+};
+
+const extractStudentApiError = async (response: Response) => {
+  try {
+    const payload = (await response.json()) as { message?: string };
+    if (payload?.message && typeof payload.message === 'string') {
+      return payload.message;
+    }
+  } catch {
+    // Ignore JSON parse errors; we fall back to status text.
+  }
+
+  return response.statusText || `Request failed (${response.status})`;
+};
 
 const StudentDashboard = () => {
   const navigate = useNavigate();
@@ -40,6 +105,20 @@ const StudentDashboard = () => {
   const [email, setEmail] = useState('andrew@example.com');
   const [description, setDescription] = useState(
     'I am here to learn, unlearn and relearn'
+  );
+  const [schoolInvoices, setSchoolInvoices] = useState<StudentSchoolInvoice[]>([]);
+  const [isSchoolInvoicesLoading, setIsSchoolInvoicesLoading] = useState(false);
+  const [schoolInvoicesError, setSchoolInvoicesError] = useState<string | null>(null);
+  const [activeSchoolInvoiceId, setActiveSchoolInvoiceId] = useState('');
+  const outstandingSchoolInvoices = useMemo(
+    () =>
+      schoolInvoices.filter(
+        (invoice) =>
+          invoice.status === 'pending' ||
+          invoice.status === 'overdue' ||
+          invoice.status === 'partially_paid'
+      ),
+    [schoolInvoices]
   );
 
   // Use the notification count hook for real-time sync
@@ -93,6 +172,112 @@ const StudentDashboard = () => {
     await signOutEverywhere();
     navigate('/signin', { replace: true });
   };
+
+  const requestWithStudentAuth = async (path: string, init: RequestInit = {}) => {
+    const token = loadPersistedSupabaseAccessToken();
+    const localDevSession = loadPersistedLocalDevAuthSession();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(init.headers as Record<string, string>),
+    };
+
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    } else if (localDevSession?.email) {
+      headers['x-dev-user-email'] = localDevSession.email;
+      headers['x-dev-user-role'] = localDevSession.role || 'student';
+    } else {
+      throw new Error('Please sign in to continue.');
+    }
+
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    let response: Response;
+    try {
+      response = await fetch(`${STUDENT_API_BASE_URL}${normalizedPath}`, {
+        ...init,
+        headers,
+      });
+    } catch (error) {
+      const fallbackMessage =
+        error instanceof Error && error.message.trim() ? error.message : 'Failed to fetch';
+      throw new Error(
+        `${fallbackMessage}. Could not reach the backend API. Start the API with "bash scripts/api-up.sh", then retry.`
+      );
+    }
+
+    if (!response.ok) {
+      throw new Error(await extractStudentApiError(response));
+    }
+
+    return response;
+  };
+
+  const loadSchoolInvoices = async () => {
+    const token = loadPersistedSupabaseAccessToken();
+    const localDevSession = loadPersistedLocalDevAuthSession();
+    if (!token && !localDevSession?.email) {
+      setSchoolInvoices([]);
+      return;
+    }
+
+    setIsSchoolInvoicesLoading(true);
+    setSchoolInvoicesError(null);
+    try {
+      const response = await requestWithStudentAuth('/school-finance/invoices/me');
+      const payload = (await response.json()) as StudentSchoolInvoicesResponse;
+      if (Array.isArray(payload.invoices)) {
+        setSchoolInvoices(payload.invoices);
+      } else {
+        setSchoolInvoices([]);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not load school invoices right now.';
+      setSchoolInvoicesError(message);
+      setSchoolInvoices([]);
+    } finally {
+      setIsSchoolInvoicesLoading(false);
+    }
+  };
+
+  const handlePaySchoolInvoiceFromDashboard = async (invoiceId: string) => {
+    if (activeSchoolInvoiceId) {
+      return;
+    }
+
+    setActiveSchoolInvoiceId(invoiceId);
+    try {
+      const response = await requestWithStudentAuth(
+        `/school-finance/invoices/${encodeURIComponent(invoiceId)}/pay`,
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        }
+      );
+      const payload = (await response.json()) as PaySchoolInvoiceResponse;
+      if (payload.mode === 'checkout' && payload.checkoutUrl) {
+        window.location.assign(payload.checkoutUrl);
+        return;
+      }
+
+      if (payload.message) {
+        window.alert(payload.message);
+      }
+
+      await loadSchoolInvoices();
+      navigate('/payments?view=school-fees');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not process school invoice payment.';
+      window.alert(message);
+    } finally {
+      setActiveSchoolInvoiceId('');
+    }
+  };
+
+  useEffect(() => {
+    void loadSchoolInvoices();
+  }, []);
 
   // Menu items configuration
   const menuItems = [
@@ -302,6 +487,100 @@ const StudentDashboard = () => {
               onJoinClass={handleJoinClassClick}
               onResourceClick={handleResourcesClick}
             />
+
+            <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-6">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-base sm:text-lg font-semibold text-gray-900">
+                    School Fee Invoices
+                  </h3>
+                  <p className="text-xs sm:text-sm text-gray-500">
+                    Pay assigned school invoices quickly from your dashboard.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSchoolFeesClick}
+                  className="inline-flex items-center rounded-lg border border-[#3D08BA]/20 px-3 py-2 text-xs sm:text-sm font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5 transition-colors"
+                >
+                  Open all
+                </button>
+              </div>
+
+              {isSchoolInvoicesLoading && (
+                <p className="mt-4 text-xs sm:text-sm text-gray-500">Loading your school invoices...</p>
+              )}
+
+              {!isSchoolInvoicesLoading && schoolInvoicesError && (
+                <div className="mt-4 rounded-xl border border-red-100 bg-red-50 px-3 py-3 text-xs sm:text-sm text-red-700">
+                  <p>{schoolInvoicesError}</p>
+                  <button
+                    type="button"
+                    onClick={() => void loadSchoolInvoices()}
+                    className="mt-2 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {!isSchoolInvoicesLoading && !schoolInvoicesError && outstandingSchoolInvoices.length === 0 && (
+                <p className="mt-4 text-xs sm:text-sm text-gray-500">
+                  No outstanding school invoices right now.
+                </p>
+              )}
+
+              {!isSchoolInvoicesLoading && !schoolInvoicesError && outstandingSchoolInvoices.length > 0 && (
+                <div className="mt-4 space-y-3">
+                  {outstandingSchoolInvoices.slice(0, 4).map((invoice) => (
+                    <div
+                      key={invoice.id}
+                      className="rounded-xl border border-gray-200 px-3 py-3 sm:px-4 sm:py-4"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm sm:text-base font-semibold text-gray-900 truncate">
+                            {invoice.title}
+                          </p>
+                          <p className="mt-0.5 text-xs sm:text-sm text-gray-500">
+                            {(invoice.schoolName || 'School')} • ₦{invoice.amount.toLocaleString()}
+                          </p>
+                          {invoice.dueDate && (
+                            <p className="mt-1 text-[11px] sm:text-xs text-gray-500">
+                              Due {new Date(invoice.dueDate).toLocaleDateString()}
+                            </p>
+                          )}
+                        </div>
+                        <span
+                          className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] sm:text-xs font-semibold capitalize ${studentInvoiceStatusPill(
+                            invoice.status
+                          )}`}
+                        >
+                          {invoice.status.replace('_', ' ')}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handlePaySchoolInvoiceFromDashboard(invoice.id)}
+                          disabled={activeSchoolInvoiceId === invoice.id}
+                          className="inline-flex items-center rounded-lg bg-[#3D08BA] px-3 py-2 text-xs sm:text-sm font-semibold text-white hover:bg-[#2e06a1] disabled:opacity-60"
+                        >
+                          {activeSchoolInvoiceId === invoice.id ? 'Processing...' : 'Pay now'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/payments?view=school-fees&invoice=${encodeURIComponent(invoice.id)}`)}
+                          className="inline-flex items-center rounded-lg border border-gray-200 px-3 py-2 text-xs sm:text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                        >
+                          View details
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Upcoming Classes */}
             <UpcomingClasses />

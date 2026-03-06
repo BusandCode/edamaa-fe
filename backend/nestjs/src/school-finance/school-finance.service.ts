@@ -1108,6 +1108,11 @@ export class SchoolFinanceService {
     const displayName = this.normalizeDisplayName(authUser.name, email);
     try {
       const studentUser = await this.resolveOrCreateUser(email, displayName, 'student');
+      await this.linkInvoicesToStudentAccount(
+        email,
+        studentUser.id,
+        this.normalizeOptionalText(studentUser.name)
+      );
       await this.refreshOverdueInvoicesForStudent(email, studentUser.id);
       const invoices = await this.prisma.schoolFeeInvoice.findMany({
         where: {
@@ -1994,6 +1999,30 @@ export class SchoolFinanceService {
         where: { providerReference },
       });
 
+      let resolvedPayerUserId =
+        typeof input.payerUserId === 'number' && Number.isFinite(input.payerUserId)
+          ? input.payerUserId
+          : null;
+      let resolvedPayerName: string | null = null;
+      if (payerEmail) {
+        const payerUser = await tx.user.findFirst({
+          where: {
+            email: {
+              equals: payerEmail,
+              mode: 'insensitive',
+            },
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+        });
+        if (payerUser) {
+          resolvedPayerUserId = payerUser.id;
+          resolvedPayerName = this.normalizeOptionalText(payerUser.name);
+        }
+      }
+
       if (invoice.status === SchoolFeeInvoiceStatus.PAID) {
         if (existingByReference) {
           return {
@@ -2058,7 +2087,7 @@ export class SchoolFinanceService {
               return tx.schoolFeePayment.update({
                 where: { id: payment.id },
                 data: {
-                  payerUserId: input.payerUserId || payment.payerUserId || null,
+                  payerUserId: resolvedPayerUserId || payment.payerUserId || null,
                   payerEmail: payerEmail || payment.payerEmail || invoice.studentEmail,
                   grossAmountMinor,
                   platformFeeMinor: breakdown.platformFeeMinor,
@@ -2074,6 +2103,20 @@ export class SchoolFinanceService {
               });
             })();
 
+      const invoiceEmail = this.normalizeEmail(invoice.studentEmail);
+      const shouldLinkInvoiceToPayer =
+        !invoice.studentUserId &&
+        typeof resolvedPayerUserId === 'number' &&
+        Number.isFinite(resolvedPayerUserId) &&
+        Boolean(payerEmail) &&
+        payerEmail === invoiceEmail;
+      const shouldRefreshStudentName =
+        Boolean(resolvedPayerName) &&
+        ((shouldLinkInvoiceToPayer && !this.normalizeOptionalText(invoice.studentName)) ||
+          (typeof invoice.studentUserId === 'number' &&
+            invoice.studentUserId === resolvedPayerUserId &&
+            !this.normalizeOptionalText(invoice.studentName)));
+
       const settledInvoice = await tx.schoolFeeInvoice.update({
         where: { id: invoice.id },
         data: {
@@ -2082,6 +2125,16 @@ export class SchoolFinanceService {
           stripeCheckoutSessionId:
             input.provider === PaymentProvider.STRIPE ? providerReference : invoice.stripeCheckoutSessionId,
           stripePaymentIntentId: input.stripePaymentIntentId || invoice.stripePaymentIntentId,
+          ...(shouldLinkInvoiceToPayer
+            ? {
+                studentUserId: resolvedPayerUserId,
+              }
+            : {}),
+          ...(shouldRefreshStudentName && resolvedPayerName
+            ? {
+                studentName: resolvedPayerName,
+              }
+            : {}),
         },
       });
 
@@ -3699,8 +3752,8 @@ export class SchoolFinanceService {
     }
 
     const resolvedName =
-      requestedStudentName ||
       this.normalizeOptionalText(resolvedStudentUser?.name || '') ||
+      requestedStudentName ||
       (await this.resolveStudentNameByEmail(resolvedEmail));
 
     return {
@@ -3708,6 +3761,51 @@ export class SchoolFinanceService {
       email: resolvedEmail,
       name: resolvedName,
     };
+  }
+
+  private async linkInvoicesToStudentAccount(
+    studentEmail: string,
+    studentUserId: number,
+    studentName: string | null
+  ) {
+    const normalizedEmail = this.normalizeEmail(studentEmail);
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      return;
+    }
+
+    if (!Number.isInteger(studentUserId) || studentUserId <= 0) {
+      return;
+    }
+
+    await this.prisma.schoolFeeInvoice.updateMany({
+      where: {
+        studentUserId: null,
+        studentEmail: {
+          equals: normalizedEmail,
+          mode: 'insensitive',
+        },
+      },
+      data: {
+        studentUserId,
+      },
+    });
+
+    if (!studentName) {
+      return;
+    }
+
+    await this.prisma.schoolFeeInvoice.updateMany({
+      where: {
+        studentUserId,
+        OR: [
+          { studentName: null },
+          { studentName: '' },
+        ],
+      },
+      data: {
+        studentName,
+      },
+    });
   }
 
   private async getReadInvoiceNotificationIds(email: string) {
