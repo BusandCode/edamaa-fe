@@ -10,6 +10,9 @@ API_HOST="${API_HOST:-127.0.0.1}"
 API_PORT="${API_PORT:-3001}"
 API_HEALTH_PATH="${API_HEALTH_PATH:-/auth/ready}"
 API_COMPAT_PATH="${API_COMPAT_PATH:-/school-finance/me/reminders/health?days=7}"
+API_COMPAT_POST_PATH="${API_COMPAT_POST_PATH:-/school-finance/me/reminders/exports/audit}"
+API_COMPAT_POST_DEV_EMAIL="${API_COMPAT_POST_DEV_EMAIL:-compat.school@edamaa.dev}"
+API_COMPAT_POST_DEV_ROLE="${API_COMPAT_POST_DEV_ROLE:-school}"
 LOG_DIR="${LOG_DIR:-/tmp}"
 API_UP_LOCK_DIR="${LOG_DIR}/edamaa-api-up.lock"
 API_UP_LOCK_OWNER_FILE="${API_UP_LOCK_DIR}/owner.pid"
@@ -23,15 +26,27 @@ api_health_code="$(curl -s -o /dev/null -w '%{http_code}' "$api_health_url" || t
 if [ "$api_health_code" = "200" ]; then
   compat_url="http://${API_HOST}:${API_PORT}${API_COMPAT_PATH}"
   compat_code="$(curl -s -o /dev/null -w '%{http_code}' "$compat_url" || true)"
+  compat_post_url="http://${API_HOST}:${API_PORT}${API_COMPAT_POST_PATH}"
+  compat_post_code="$(
+    curl -s -o /dev/null -w '%{http_code}' \
+      -X POST \
+      -H "Content-Type: application/json" \
+      -H "x-dev-user-email: ${API_COMPAT_POST_DEV_EMAIL}" \
+      -H "x-dev-user-role: ${API_COMPAT_POST_DEV_ROLE}" \
+      --data '{"format":"invalid"}' \
+      "$compat_post_url" || true
+  )"
 
-  # A 404 here usually means an old/stale NestJS build is still running.
-  # Non-404 responses (200/401/403/etc.) are considered route-compatible.
-  if [ "$compat_code" != "404" ]; then
+  # A 404 on either probe usually means an old/stale NestJS build is running.
+  # Non-404 responses (200/201/400/401/403/etc.) are considered route-compatible.
+  if [ "$compat_code" != "404" ] && [ "$compat_post_code" != "404" ]; then
     echo "API already running: http://${API_HOST}:${API_PORT}"
     exit 0
   fi
 
-  echo "API is running but missing ${API_COMPAT_PATH} (status=404). Restarting stale process..."
+  echo "API is running but missing one or more compatibility routes."
+  echo "GET ${API_COMPAT_PATH} -> ${compat_code}, POST ${API_COMPAT_POST_PATH} -> ${compat_post_code}"
+  echo "Restarting stale process..."
   stale_pid=""
   if [ -f "$NEST_PID_FILE" ]; then
     stale_pid="$(cat "$NEST_PID_FILE" 2>/dev/null || true)"
