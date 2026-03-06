@@ -189,6 +189,14 @@ export type SchoolFeeReminderDeliveryHealthResponse = {
   };
 };
 
+export type SchoolFeeReminderExportAuditResponse = {
+  auditId: string;
+  generatedAt: string;
+  accountId: number | null;
+  format: 'csv' | 'pdf';
+  filters: Record<string, unknown>;
+};
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
 
 const isLocalhostHost = (host: string) => host === '127.0.0.1' || host === 'localhost';
@@ -220,6 +228,7 @@ type LocalFinanceWorkspace = {
 };
 
 const LOCAL_FINANCE_STORAGE_KEY = 'edamaa_school_finance_local_v1';
+const LOCAL_REMINDER_EXPORT_AUDIT_STORAGE_KEY = 'edamaa_school_reminder_export_audit_v1';
 
 const createLocalId = (prefix: string) =>
   `${prefix}_LOCAL_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1351,6 +1360,37 @@ const localRequeueExhaustedSchoolReminderEmails = (input?: {
   };
 };
 
+const localRecordSchoolReminderExportAudit = (payload: {
+  format?: string;
+  filters?: Record<string, unknown>;
+}): SchoolFeeReminderExportAuditResponse => {
+  const normalizedFormat = String(payload.format || '').trim().toLowerCase();
+  if (normalizedFormat !== 'csv' && normalizedFormat !== 'pdf') {
+    throw new Error('Export format must be one of: csv, pdf.');
+  }
+
+  const auditRecord: SchoolFeeReminderExportAuditResponse = {
+    auditId: createLocalId('RPT'),
+    generatedAt: nowIso(),
+    accountId: null,
+    format: normalizedFormat,
+    filters: payload.filters && typeof payload.filters === 'object' ? payload.filters : {},
+  };
+
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = window.localStorage.getItem(LOCAL_REMINDER_EXPORT_AUDIT_STORAGE_KEY);
+      const parsed = raw ? (JSON.parse(raw) as SchoolFeeReminderExportAuditResponse[]) : [];
+      const next = [auditRecord, ...(Array.isArray(parsed) ? parsed : [])].slice(0, 100);
+      window.localStorage.setItem(LOCAL_REMINDER_EXPORT_AUDIT_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Ignore local audit storage write failures.
+    }
+  }
+
+  return auditRecord;
+};
+
 export const fetchSchoolFinanceDashboard = async () => {
   return runWithLocalFinanceFallback(
     async () => {
@@ -1654,14 +1694,22 @@ export const requeueExhaustedSchoolReminderEmails = async (payload?: {
 }) => {
   return runWithLocalFinanceFallback(
     async () => {
-      const response = await requestWithSchoolAuth('/school-finance/me/reminders/requeue-exhausted', {
-        method: 'POST',
-        body: JSON.stringify({
-          limit: payload?.limit,
-          confirm: payload?.confirm,
-        }),
-      });
-      return (await response.json()) as SchoolFeeReminderRequeueResponse;
+      try {
+        const response = await requestWithSchoolAuth('/school-finance/me/reminders/requeue-exhausted', {
+          method: 'POST',
+          body: JSON.stringify({
+            limit: payload?.limit,
+            confirm: payload?.confirm,
+          }),
+        });
+        return (await response.json()) as SchoolFeeReminderRequeueResponse;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (message.includes('Cannot POST /school-finance/me/reminders/requeue-exhausted')) {
+          return localRequeueExhaustedSchoolReminderEmails(payload);
+        }
+        throw error;
+      }
     },
     () => localRequeueExhaustedSchoolReminderEmails(payload)
   );
@@ -1670,17 +1718,56 @@ export const requeueExhaustedSchoolReminderEmails = async (payload?: {
 export const fetchSchoolReminderDeliveryHealth = async (input?: { days?: number }) => {
   return runWithLocalFinanceFallback(
     async () => {
-      const params = new URLSearchParams();
-      if (typeof input?.days === 'number' && Number.isFinite(input.days)) {
-        params.set('days', String(Math.max(1, Math.round(input.days))));
+      try {
+        const params = new URLSearchParams();
+        if (typeof input?.days === 'number' && Number.isFinite(input.days)) {
+          params.set('days', String(Math.max(1, Math.round(input.days))));
+        }
+        const query = params.toString();
+        const response = await requestWithSchoolAuth(
+          `/school-finance/me/reminders/health${query ? `?${query}` : ''}`
+        );
+        return (await response.json()) as SchoolFeeReminderDeliveryHealthResponse;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (message.includes('Cannot GET /school-finance/me/reminders/health')) {
+          return localFetchSchoolReminderDeliveryHealth(input);
+        }
+        throw error;
       }
-      const query = params.toString();
-      const response = await requestWithSchoolAuth(
-        `/school-finance/me/reminders/health${query ? `?${query}` : ''}`
-      );
-      return (await response.json()) as SchoolFeeReminderDeliveryHealthResponse;
     },
     () => localFetchSchoolReminderDeliveryHealth(input)
+  );
+};
+
+export const recordSchoolReminderExportAudit = async (payload: {
+  format: 'csv' | 'pdf';
+  filters?: Record<string, unknown>;
+}) => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      try {
+        const response = await requestWithSchoolAuth('/school-finance/me/reminders/exports/audit', {
+          method: 'POST',
+          body: JSON.stringify({
+            format: payload.format,
+            filters: payload.filters || {},
+          }),
+        });
+        return (await response.json()) as SchoolFeeReminderExportAuditResponse;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (message.includes('Cannot POST /school-finance/me/reminders/exports/audit')) {
+          return localRecordSchoolReminderExportAudit(payload);
+        }
+        throw error;
+      }
+    },
+    () =>
+      localRecordSchoolReminderExportAudit({
+        format: payload.format,
+        filters: payload.filters || {},
+      })
   );
 };
 

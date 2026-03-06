@@ -111,6 +111,7 @@ School finance reminder endpoints (school role):
 
 - `GET /school-finance/me/reminders/dispatches?type=due_soon|overdue&channel=in_app|email&status=queued|sent|failed|skipped&limit=80&page=1`
 - `GET /school-finance/me/reminders/health?days=7`
+- `POST /school-finance/me/reminders/exports/audit`
 - `POST /school-finance/me/reminders/run`
 - `POST /school-finance/me/reminders/email-drain`
 - `POST /school-finance/me/reminders/requeue-failed`

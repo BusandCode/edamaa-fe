@@ -39,6 +39,11 @@ type RequeueExhaustedReminderEmailsBody = {
   confirm?: string;
 };
 
+type RecordReminderExportAuditBody = {
+  format?: string;
+  filters?: Record<string, unknown>;
+};
+
 type UpdateWithdrawalStatusBody = {
   status?: string;
   failureReason?: string;
@@ -100,6 +105,17 @@ export class SchoolFinanceController {
       this.getAuthUser(request),
       {
         days: typeof days === 'string' && days.trim() ? Number(days) : undefined,
+      }
+    );
+  }
+
+  @Post('me/reminders/exports/audit')
+  recordMyReminderExportAudit(@Req() request: Request, @Body() body: RecordReminderExportAuditBody) {
+    return this.schoolFinanceService.recordReminderExportAuditForAuthUser(
+      this.getAuthUser(request),
+      {
+        format: body.format,
+        filters: body.filters,
       }
     );
   }

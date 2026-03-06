@@ -21,6 +21,7 @@ import {
   fetchSchoolFinanceDashboard,
   fetchSchoolWithdrawalLedger,
   paySchoolInvoice,
+  recordSchoolReminderExportAudit,
   requeueExhaustedSchoolReminderEmails,
   requeueFailedSchoolReminderEmails,
   runSchoolReminderSweep,
@@ -81,6 +82,14 @@ type ReminderExportSnapshot = {
   generatedAt: string;
   health: SchoolFeeReminderDeliveryHealthResponse;
   dispatches: SchoolFeeReminderDispatch[];
+  filters: {
+    channel: 'all' | 'in_app' | 'email';
+    status: 'all' | 'queued' | 'sent' | 'failed' | 'skipped';
+    reminderType: 'all';
+    pageAtExport: number;
+    batchLimit: number;
+    exportedPages: number;
+  };
 };
 
 type PdfDocumentLike = {
@@ -710,6 +719,7 @@ const SchoolFinance = () => {
     let page = 1;
     let hasMore = true;
     const maxPages = 25;
+    let exportedPages = 0;
 
     while (hasMore && page <= maxPages) {
       const payload = await fetchSchoolReminderDispatches({
@@ -720,6 +730,7 @@ const SchoolFinance = () => {
       });
       collectedDispatches.push(...(Array.isArray(payload.dispatches) ? payload.dispatches : []));
       hasMore = Boolean(payload.hasMore);
+      exportedPages += 1;
       page += 1;
     }
 
@@ -727,7 +738,35 @@ const SchoolFinance = () => {
       generatedAt: new Date().toISOString(),
       health,
       dispatches: collectedDispatches,
+      filters: {
+        channel: reminderChannelFilter || 'all',
+        status: reminderStatusFilter || 'all',
+        reminderType: 'all',
+        pageAtExport: reminderPage,
+        batchLimit: limit,
+        exportedPages,
+      },
     };
+  };
+
+  const recordReminderExportAuditSafely = async (
+    format: 'csv' | 'pdf',
+    snapshot: ReminderExportSnapshot
+  ) => {
+    try {
+      await recordSchoolReminderExportAudit({
+        format,
+        filters: {
+          ...snapshot.filters,
+          windowDays: snapshot.health.windowDays,
+          totalExported: snapshot.dispatches.length,
+        },
+      });
+    } catch (auditError) {
+      // Export should still succeed even when audit logging is temporarily unavailable.
+      // eslint-disable-next-line no-console
+      console.warn('Reminder export audit could not be recorded.', auditError);
+    }
   };
 
   const handleExportReminderCsv = async () => {
@@ -747,6 +786,10 @@ const SchoolFinance = () => {
         joinCsvRow(['Reminder Analytics', 'Generated At', new Date(snapshot.generatedAt).toLocaleString()]),
         joinCsvRow(['Reminder Analytics', 'Window (days)', snapshot.health.windowDays]),
         joinCsvRow(['Reminder Analytics', 'Total dispatches exported', snapshot.dispatches.length]),
+        joinCsvRow(['Reminder Analytics', 'Channel filter', snapshot.filters.channel]),
+        joinCsvRow(['Reminder Analytics', 'Status filter', snapshot.filters.status]),
+        joinCsvRow(['Reminder Analytics', 'Page at export', snapshot.filters.pageAtExport]),
+        joinCsvRow(['Reminder Analytics', 'Exported pages', snapshot.filters.exportedPages]),
         joinCsvRow(['Email Health', 'Sent', snapshot.health.email.sent]),
         joinCsvRow(['Email Health', 'Failed', snapshot.health.email.failed]),
         joinCsvRow(['Email Health', 'Queued', snapshot.health.email.queued]),
@@ -801,6 +844,8 @@ const SchoolFinance = () => {
         new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }),
         `edamaa-reminder-analytics-${dateStamp}.csv`
       );
+
+      await recordReminderExportAuditSafely('csv', snapshot);
       setNotice('Reminder analytics CSV download started.');
     } catch (requestError) {
       const message =
@@ -837,6 +882,10 @@ const SchoolFinance = () => {
         ['Generated', new Date(snapshot.generatedAt).toLocaleString()],
         ['Window', `${snapshot.health.windowDays} days`],
         ['Dispatches (export set)', String(snapshot.dispatches.length)],
+        ['Channel filter', snapshot.filters.channel],
+        ['Status filter', snapshot.filters.status],
+        ['Page at export', String(snapshot.filters.pageAtExport)],
+        ['Exported pages', String(snapshot.filters.exportedPages)],
         ['Email sent', String(snapshot.health.email.sent)],
         ['Email failed', String(snapshot.health.email.failed)],
         ['Email queued', String(snapshot.health.email.queued)],
@@ -929,6 +978,8 @@ const SchoolFinance = () => {
       const pdfDocument = pdfMake.createPdf(docDefinition);
       const pdfBlob = await pdfDocument.getBlob();
       downloadFile(pdfBlob, `edamaa-reminder-analytics-${dateStamp}.pdf`);
+
+      await recordReminderExportAuditSafely('pdf', snapshot);
       setNotice('Reminder analytics PDF download started.');
     } catch (requestError) {
       console.error('Unable to export reminder analytics PDF.', requestError);

@@ -14,6 +14,13 @@ describe('SchoolFinance + Webhooks (route contract)', () => {
     getSchoolDashboardForAuthUser: jest.fn(),
     createFeePlanForAuthUser: jest.fn(),
     listSchoolInvoicesForAuthUser: jest.fn(),
+    listReminderDispatchesForAuthUser: jest.fn(),
+    getReminderDeliveryHealthForAuthUser: jest.fn(),
+    recordReminderExportAuditForAuthUser: jest.fn(),
+    runReminderSweepForAuthUser: jest.fn(),
+    processQueuedReminderEmailsForAuthUser: jest.fn(),
+    requeueFailedReminderEmailsForAuthUser: jest.fn(),
+    requeueExhaustedReminderEmailsForAuthUser: jest.fn(),
     createInvoiceForAuthUser: jest.fn(),
     listStudentInvoicesForAuthUser: jest.fn(),
     payInvoiceForAuthUser: jest.fn(),
@@ -182,6 +189,140 @@ describe('SchoolFinance + Webhooks (route contract)', () => {
         email: 'school@edamaa.dev',
       }),
       'WDR-TEST-2'
+    );
+  });
+
+  it('passes reminder dispatch pagination filters', async () => {
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      total: 42,
+      page: 2,
+      limit: 10,
+      totalPages: 5,
+      hasMore: true,
+      dispatches: [],
+    };
+    schoolFinanceServiceMock.listReminderDispatchesForAuthUser.mockResolvedValue(payload);
+
+    const response = await schoolFinanceController.listMyReminderDispatches(
+      authRequest,
+      'due_soon',
+      'email',
+      'failed',
+      '10',
+      '2'
+    );
+
+    expect(response).toEqual(payload);
+    expect(schoolFinanceServiceMock.listReminderDispatchesForAuthUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'school@edamaa.dev',
+        role: 'school',
+      }),
+      expect.objectContaining({
+        reminderType: 'due_soon',
+        channel: 'email',
+        status: 'failed',
+        limit: 10,
+        page: 2,
+      })
+    );
+  });
+
+  it('returns reminder health summary with days filter', async () => {
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      accountId: 12,
+      windowDays: 7,
+      windowStart: new Date(Date.now() - 7 * 86400000).toISOString(),
+      email: {
+        queued: 1,
+        sent: 12,
+        failed: 3,
+        skipped: 0,
+        retryableFailed: 2,
+        exhausted: 1,
+        attempted: 15,
+        successRate: 0.8,
+        failureRate: 0.2,
+        retryRate: 0.1333,
+        exhaustedRate: 0.0667,
+      },
+    };
+    schoolFinanceServiceMock.getReminderDeliveryHealthForAuthUser.mockResolvedValue(payload);
+
+    const response = await schoolFinanceController.getMyReminderHealth(authRequest, '7');
+
+    expect(response).toEqual(payload);
+    expect(schoolFinanceServiceMock.getReminderDeliveryHealthForAuthUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'school@edamaa.dev',
+      }),
+      expect.objectContaining({
+        days: 7,
+      })
+    );
+  });
+
+  it('requires and forwards confirm phrase for exhausted reminder requeue', async () => {
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      accountId: 12,
+      selected: 4,
+      requeued: 4,
+      maxRetries: 4,
+    };
+    schoolFinanceServiceMock.requeueExhaustedReminderEmailsForAuthUser.mockResolvedValue(payload);
+
+    const response = await schoolFinanceController.requeueExhaustedReminderEmails(authRequest, {
+      limit: 20,
+      confirm: 'REQUEUE_EXHAUSTED',
+    });
+
+    expect(response).toEqual(payload);
+    expect(
+      schoolFinanceServiceMock.requeueExhaustedReminderEmailsForAuthUser
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'school@edamaa.dev',
+      }),
+      expect.objectContaining({
+        limit: 20,
+        confirm: 'REQUEUE_EXHAUSTED',
+      })
+    );
+  });
+
+  it('records reminder export audit payload', async () => {
+    const payload = {
+      auditId: 'RPT-0001-ABC123',
+      generatedAt: new Date().toISOString(),
+      accountId: 12,
+      format: 'csv',
+      filters: {
+        channel: 'email',
+        status: 'failed',
+        page: 1,
+        limit: 200,
+        totalExported: 64,
+      },
+    };
+    schoolFinanceServiceMock.recordReminderExportAuditForAuthUser.mockResolvedValue(payload);
+
+    const response = await schoolFinanceController.recordMyReminderExportAudit(authRequest, {
+      format: 'csv',
+      filters: payload.filters,
+    });
+
+    expect(response).toEqual(payload);
+    expect(schoolFinanceServiceMock.recordReminderExportAuditForAuthUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'school@edamaa.dev',
+      }),
+      expect.objectContaining({
+        format: 'csv',
+        filters: payload.filters,
+      })
     );
   });
 

@@ -203,6 +203,14 @@ type ReminderDeliveryHealthSummary = {
   };
 };
 
+type ReminderExportAuditSummary = {
+  auditId: string;
+  generatedAt: string;
+  accountId: number | null;
+  format: 'csv' | 'pdf';
+  filters: Record<string, unknown>;
+};
+
 type CreateFeePlanInput = {
   title?: string;
   description?: string;
@@ -231,6 +239,11 @@ type ListReminderDispatchesInput = {
   status?: string;
   limit?: number;
   page?: number;
+};
+
+type RecordReminderExportAuditInput = {
+  format?: string;
+  filters?: Record<string, unknown>;
 };
 
 type PayInvoiceInput = {
@@ -778,6 +791,57 @@ export class SchoolFinanceService {
       if (this.isFinanceWorkspaceUnavailableError(error)) {
         this.logger.warn('School finance store is unavailable. Returning empty reminder health summary.');
         return this.createEmptyReminderDeliveryHealthSummary(null, windowDays);
+      }
+
+      throw this.rethrowUnexpectedError(error);
+    }
+  }
+
+  async recordReminderExportAuditForAuthUser(
+    authUser: AuthUser,
+    input: RecordReminderExportAuditInput = {}
+  ): Promise<ReminderExportAuditSummary> {
+    const email = this.requireEmail(authUser);
+    const normalizedRole = this.normalizeRole(authUser.role);
+    this.assertSchoolRole(normalizedRole);
+    const displayName = this.normalizeDisplayName(authUser.name, email);
+    const format = this.normalizeReminderExportFormat(input.format);
+    const filters = this.normalizeReminderExportAuditFilters(input.filters);
+
+    try {
+      const schoolUser = await this.resolveOrCreateUser(email, displayName, 'school');
+      const account = await this.getOrCreateSchoolFinanceAccount(schoolUser.id);
+      const auditId = this.createPublicId('RPT', account.id);
+      const generatedAt = new Date().toISOString();
+
+      // Keep export audit lightweight: emit a structured log for support/compliance traces.
+      this.logger.log(
+        `Reminder export audit ${auditId} account=${account.id} format=${format} filters=${JSON.stringify(
+          filters
+        )}`
+      );
+
+      return {
+        auditId,
+        generatedAt,
+        accountId: account.id,
+        format,
+        filters,
+      };
+    } catch (error) {
+      if (this.isFinanceWorkspaceUnavailableError(error)) {
+        const auditId = this.createPublicId('RPT', 0);
+        const generatedAt = new Date().toISOString();
+        this.logger.warn(
+          `Reminder export audit ${auditId} recorded without finance account (workspace unavailable).`
+        );
+        return {
+          auditId,
+          generatedAt,
+          accountId: null,
+          format,
+          filters,
+        };
       }
 
       throw this.rethrowUnexpectedError(error);
@@ -3209,6 +3273,74 @@ export class SchoolFinanceService {
     }
 
     return Math.min(90, Math.max(1, Math.round(parsed)));
+  }
+
+  private normalizeReminderExportFormat(value: string | undefined): 'csv' | 'pdf' {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'csv') {
+      return 'csv';
+    }
+    if (normalized === 'pdf') {
+      return 'pdf';
+    }
+    throw new BadRequestException('Export format must be one of: csv, pdf.');
+  }
+
+  private normalizeReminderExportAuditFilters(
+    value: Record<string, unknown> | undefined
+  ): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return {};
+    }
+
+    const filters: Record<string, unknown> = {};
+    const addIfPresent = (key: string, raw: unknown) => {
+      const normalized = this.normalizeOptionalText(typeof raw === 'string' ? raw : null);
+      if (normalized) {
+        filters[key] = normalized;
+      }
+    };
+
+    addIfPresent('channel', value.channel);
+    addIfPresent('status', value.status);
+    addIfPresent('reminderType', value.reminderType);
+
+    const parsedPage = Number(value.page);
+    if (Number.isFinite(parsedPage) && parsedPage > 0) {
+      filters.page = Math.round(parsedPage);
+    }
+
+    const parsedLimit = Number(value.limit);
+    if (Number.isFinite(parsedLimit) && parsedLimit > 0) {
+      filters.limit = Math.round(parsedLimit);
+    }
+
+    const parsedPageAtExport = Number(value.pageAtExport);
+    if (Number.isFinite(parsedPageAtExport) && parsedPageAtExport > 0) {
+      filters.pageAtExport = Math.round(parsedPageAtExport);
+    }
+
+    const parsedBatchLimit = Number(value.batchLimit);
+    if (Number.isFinite(parsedBatchLimit) && parsedBatchLimit > 0) {
+      filters.batchLimit = Math.round(parsedBatchLimit);
+    }
+
+    const parsedExportedPages = Number(value.exportedPages);
+    if (Number.isFinite(parsedExportedPages) && parsedExportedPages >= 0) {
+      filters.exportedPages = Math.round(parsedExportedPages);
+    }
+
+    const parsedWindowDays = Number(value.windowDays);
+    if (Number.isFinite(parsedWindowDays) && parsedWindowDays > 0) {
+      filters.windowDays = Math.round(parsedWindowDays);
+    }
+
+    const parsedTotalExported = Number(value.totalExported);
+    if (Number.isFinite(parsedTotalExported) && parsedTotalExported >= 0) {
+      filters.totalExported = Math.round(parsedTotalExported);
+    }
+
+    return filters;
   }
 
   private createEmptyReminderDeliveryHealthSummary(
