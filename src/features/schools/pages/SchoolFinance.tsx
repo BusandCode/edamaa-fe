@@ -77,6 +77,83 @@ const reminderChannelLabel: Record<SchoolFeeReminderDispatch['channel'], string>
   email: 'Email',
 };
 
+type ReminderExportSnapshot = {
+  generatedAt: string;
+  health: SchoolFeeReminderDeliveryHealthResponse;
+  dispatches: SchoolFeeReminderDispatch[];
+};
+
+type PdfDocumentLike = {
+  getBlob: () => Promise<Blob>;
+};
+
+type PdfMakeLike = {
+  createPdf: (docDefinition: Record<string, unknown>) => PdfDocumentLike;
+  vfs?: Record<string, string>;
+};
+
+const csvEscape = (value: string | number) => {
+  const rawValue = String(value);
+  if (/[",\n]/.test(rawValue)) {
+    return `"${rawValue.replaceAll('"', '""')}"`;
+  }
+  return rawValue;
+};
+
+const joinCsvRow = (values: Array<string | number>) => values.map(csvEscape).join(',');
+
+const downloadFile = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
+const looksLikeVfsMap = (value: unknown): value is Record<string, string> => {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) {
+    return false;
+  }
+  return entries.every(([key, item]) => key.toLowerCase().endsWith('.ttf') && typeof item === 'string');
+};
+
+const resolvePdfMake = (pdfMakeModule: unknown, pdfFontsModule: unknown): PdfMakeLike => {
+  const resolvedPdfMake =
+    (pdfMakeModule as { default?: PdfMakeLike }).default || (pdfMakeModule as PdfMakeLike);
+
+  const fontsModule = pdfFontsModule as {
+    default?: { pdfMake?: { vfs?: Record<string, string> }; vfs?: Record<string, string> } | Record<string, string>;
+    pdfMake?: { vfs?: Record<string, string> };
+    vfs?: Record<string, string>;
+  };
+
+  const defaultFonts = fontsModule.default;
+  const resolvedVfs =
+    fontsModule.pdfMake?.vfs ||
+    fontsModule.vfs ||
+    (defaultFonts && 'pdfMake' in defaultFonts
+      ? (defaultFonts as { pdfMake?: { vfs?: Record<string, string> } }).pdfMake?.vfs
+      : undefined) ||
+    (defaultFonts && 'vfs' in defaultFonts
+      ? (defaultFonts as { vfs?: Record<string, string> }).vfs
+      : undefined) ||
+    (looksLikeVfsMap(defaultFonts) ? defaultFonts : undefined) ||
+    (looksLikeVfsMap(fontsModule) ? (fontsModule as Record<string, string>) : undefined);
+
+  if (resolvedVfs) {
+    resolvedPdfMake.vfs = resolvedVfs;
+  }
+
+  return resolvedPdfMake;
+};
+
 const SchoolFinance = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -94,6 +171,8 @@ const SchoolFinance = () => {
     | 'reminders-drain'
     | 'reminders-requeue'
     | 'reminders-requeue-exhausted'
+    | 'reminders-export-csv'
+    | 'reminders-export-pdf'
     | 'reminders-refresh'
     | `pay-${string}`
     | `payout-${string}`
@@ -618,6 +697,243 @@ const SchoolFinance = () => {
     } catch (requestError) {
       const message =
         requestError instanceof Error ? requestError.message : 'Could not refresh reminder dispatches.';
+      setError(message);
+    } finally {
+      setActiveAction(null);
+    }
+  };
+
+  const fetchReminderExportSnapshot = async (): Promise<ReminderExportSnapshot> => {
+    const health = await fetchSchoolReminderDeliveryHealth({ days: 7 });
+    const collectedDispatches: SchoolFeeReminderDispatch[] = [];
+    const limit = 200;
+    let page = 1;
+    let hasMore = true;
+    const maxPages = 25;
+
+    while (hasMore && page <= maxPages) {
+      const payload = await fetchSchoolReminderDispatches({
+        limit,
+        page,
+        status: reminderStatusFilter || undefined,
+        channel: reminderChannelFilter || undefined,
+      });
+      collectedDispatches.push(...(Array.isArray(payload.dispatches) ? payload.dispatches : []));
+      hasMore = Boolean(payload.hasMore);
+      page += 1;
+    }
+
+    return {
+      generatedAt: new Date().toISOString(),
+      health,
+      dispatches: collectedDispatches,
+    };
+  };
+
+  const handleExportReminderCsv = async () => {
+    if (activeAction) {
+      return;
+    }
+
+    setActiveAction('reminders-export-csv');
+    setError(null);
+    setNotice(null);
+    try {
+      const snapshot = await fetchReminderExportSnapshot();
+      setLastReminderHealth(snapshot.health);
+
+      const lines: string[] = [
+        joinCsvRow(['Section', 'Metric', 'Value']),
+        joinCsvRow(['Reminder Analytics', 'Generated At', new Date(snapshot.generatedAt).toLocaleString()]),
+        joinCsvRow(['Reminder Analytics', 'Window (days)', snapshot.health.windowDays]),
+        joinCsvRow(['Reminder Analytics', 'Total dispatches exported', snapshot.dispatches.length]),
+        joinCsvRow(['Email Health', 'Sent', snapshot.health.email.sent]),
+        joinCsvRow(['Email Health', 'Failed', snapshot.health.email.failed]),
+        joinCsvRow(['Email Health', 'Queued', snapshot.health.email.queued]),
+        joinCsvRow(['Email Health', 'Skipped', snapshot.health.email.skipped]),
+        joinCsvRow(['Email Health', 'Retryable failed', snapshot.health.email.retryableFailed]),
+        joinCsvRow(['Email Health', 'Exhausted', snapshot.health.email.exhausted]),
+        joinCsvRow([
+          'Email Health',
+          'Success Rate (%)',
+          Number((snapshot.health.email.successRate * 100).toFixed(2)),
+        ]),
+        joinCsvRow([
+          'Email Health',
+          'Failure Rate (%)',
+          Number((snapshot.health.email.failureRate * 100).toFixed(2)),
+        ]),
+        '',
+        joinCsvRow(['Reminder Dispatches']),
+        joinCsvRow([
+          'Invoice Title',
+          'Student Email',
+          'Type',
+          'Channel',
+          'Status',
+          'Attempt Count',
+          'Reminder Date',
+          'Next Retry',
+          'Logged At',
+          'Last Error',
+        ]),
+      ];
+
+      snapshot.dispatches.forEach((dispatch) => {
+        lines.push(
+          joinCsvRow([
+            dispatch.invoiceTitle,
+            dispatch.studentEmail,
+            dispatch.reminderType,
+            dispatch.channel,
+            dispatch.status,
+            dispatch.attemptCount,
+            dispatch.reminderDate,
+            dispatch.nextRetryAt || '',
+            dispatch.createdAt,
+            dispatch.lastError || dispatch.failureReason || '',
+          ])
+        );
+      });
+
+      const dateStamp = new Date().toISOString().split('T')[0];
+      downloadFile(
+        new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }),
+        `edamaa-reminder-analytics-${dateStamp}.csv`
+      );
+      setNotice('Reminder analytics CSV download started.');
+    } catch (requestError) {
+      const message =
+        requestError instanceof Error ? requestError.message : 'CSV export failed for reminder analytics.';
+      setError(message);
+    } finally {
+      setActiveAction(null);
+    }
+  };
+
+  const handleExportReminderPdf = async () => {
+    if (activeAction) {
+      return;
+    }
+
+    setActiveAction('reminders-export-pdf');
+    setError(null);
+    setNotice(null);
+    try {
+      const snapshot = await fetchReminderExportSnapshot();
+      setLastReminderHealth(snapshot.health);
+
+      const [pdfMakeModule, pdfFontsModule] = await Promise.all([
+        import('pdfmake/build/pdfmake'),
+        import('pdfmake/build/vfs_fonts'),
+      ]);
+      const pdfMake = resolvePdfMake(pdfMakeModule, pdfFontsModule);
+      const dateStamp = new Date().toISOString().split('T')[0];
+      const maxRows = 80;
+      const displayDispatches = snapshot.dispatches.slice(0, maxRows);
+
+      const summaryTableBody: Array<Array<string>> = [
+        ['Metric', 'Value'],
+        ['Generated', new Date(snapshot.generatedAt).toLocaleString()],
+        ['Window', `${snapshot.health.windowDays} days`],
+        ['Dispatches (export set)', String(snapshot.dispatches.length)],
+        ['Email sent', String(snapshot.health.email.sent)],
+        ['Email failed', String(snapshot.health.email.failed)],
+        ['Email queued', String(snapshot.health.email.queued)],
+        ['Retryable failed', String(snapshot.health.email.retryableFailed)],
+        ['Exhausted', String(snapshot.health.email.exhausted)],
+        ['Success rate', `${(snapshot.health.email.successRate * 100).toFixed(1)}%`],
+      ];
+
+      const dispatchTableBody: Array<Array<string>> = [
+        ['Invoice', 'Student', 'Type', 'Channel', 'Status', 'Attempts', 'Next retry'],
+        ...displayDispatches.map((dispatch) => [
+          dispatch.invoiceTitle,
+          dispatch.studentEmail,
+          dispatch.reminderType,
+          dispatch.channel,
+          dispatch.status,
+          String(dispatch.attemptCount),
+          dispatch.nextRetryAt ? new Date(dispatch.nextRetryAt).toLocaleString() : '-',
+        ]),
+      ];
+
+      const content: Record<string, unknown>[] = [
+        { text: 'EDAMAA Reminder Analytics Report', style: 'title' },
+        {
+          text: `Generated ${new Date(snapshot.generatedAt).toLocaleString()}`,
+          style: 'meta',
+          margin: [0, 2, 0, 12],
+        },
+        { text: 'Delivery Health (7 days)', style: 'sectionTitle', margin: [0, 0, 0, 6] },
+        {
+          table: {
+            headerRows: 1,
+            widths: ['*', '*'],
+            body: summaryTableBody,
+          },
+          layout: 'lightHorizontalLines',
+        },
+        { text: 'Recent Reminder Dispatches', style: 'sectionTitle', margin: [0, 12, 0, 6] },
+        {
+          table: {
+            headerRows: 1,
+            widths: [115, 120, 44, 44, 44, 44, '*'],
+            body: dispatchTableBody,
+          },
+          layout: 'lightHorizontalLines',
+          fontSize: 8,
+        },
+      ];
+
+      if (snapshot.dispatches.length > maxRows) {
+        content.push({
+          text: `Showing first ${maxRows} rows out of ${snapshot.dispatches.length}. Use CSV export for full detail.`,
+          style: 'meta',
+          margin: [0, 6, 0, 0],
+        });
+      }
+
+      const docDefinition: Record<string, unknown> = {
+        pageSize: 'A4',
+        pageMargins: [20, 22, 20, 22],
+        defaultStyle: {
+          font: 'Roboto',
+          fontSize: 10,
+          color: '#111827',
+        },
+        content,
+        styles: {
+          title: {
+            fontSize: 16,
+            bold: true,
+            color: '#111827',
+          },
+          sectionTitle: {
+            fontSize: 11,
+            bold: true,
+            color: '#1f2937',
+          },
+          meta: {
+            fontSize: 9,
+            color: '#6b7280',
+          },
+        },
+        info: {
+          title: 'Edamaa Reminder Analytics Report',
+          author: 'Edamaa Finance',
+          subject: 'School reminder delivery analytics',
+        },
+      };
+
+      const pdfDocument = pdfMake.createPdf(docDefinition);
+      const pdfBlob = await pdfDocument.getBlob();
+      downloadFile(pdfBlob, `edamaa-reminder-analytics-${dateStamp}.pdf`);
+      setNotice('Reminder analytics PDF download started.');
+    } catch (requestError) {
+      console.error('Unable to export reminder analytics PDF.', requestError);
+      const message =
+        requestError instanceof Error ? requestError.message : 'PDF export failed for reminder analytics.';
       setError(message);
     } finally {
       setActiveAction(null);
@@ -1274,6 +1590,22 @@ const SchoolFinance = () => {
               className="rounded-md border border-gray-200 bg-gray-100 px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {activeAction === 'reminders-refresh' ? 'Refreshing...' : 'Refresh List'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleExportReminderCsv()}
+              disabled={activeAction === 'reminders-export-csv'}
+              className="rounded-md border border-[#3D08BA]/20 bg-white px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {activeAction === 'reminders-export-csv' ? 'Exporting CSV...' : 'Export CSV'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleExportReminderPdf()}
+              disabled={activeAction === 'reminders-export-pdf'}
+              className="rounded-md border border-[#3D08BA]/20 bg-white px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {activeAction === 'reminders-export-pdf' ? 'Exporting PDF...' : 'Export PDF'}
             </button>
           </div>
 
