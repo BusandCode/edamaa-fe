@@ -13,6 +13,7 @@ import {
   createSchoolFeePlan,
   createSchoolInvoice,
   drainQueuedSchoolReminderEmails,
+  fetchSchoolReminderDeliveryHealth,
   fetchSchoolReminderDispatches,
   createSchoolWithdrawal,
   fetchSchoolFinanceStudents,
@@ -20,10 +21,12 @@ import {
   fetchSchoolFinanceDashboard,
   fetchSchoolWithdrawalLedger,
   paySchoolInvoice,
+  requeueExhaustedSchoolReminderEmails,
   requeueFailedSchoolReminderEmails,
   runSchoolReminderSweep,
   syncSchoolInvoiceCheckout,
   type SchoolFinanceDashboard,
+  type SchoolFeeReminderDeliveryHealthResponse,
   type SchoolFeeReminderEmailDrainResponse,
   type SchoolFeeReminderDispatch,
   type SchoolFeeReminderRequeueResponse,
@@ -90,6 +93,7 @@ const SchoolFinance = () => {
     | 'reminders-run'
     | 'reminders-drain'
     | 'reminders-requeue'
+    | 'reminders-requeue-exhausted'
     | 'reminders-refresh'
     | `pay-${string}`
     | `payout-${string}`
@@ -104,10 +108,15 @@ const SchoolFinance = () => {
     useState<SchoolFeeReminderRequeueResponse | null>(null);
   const [lastReminderEmailDrain, setLastReminderEmailDrain] =
     useState<SchoolFeeReminderEmailDrainResponse | null>(null);
+  const [lastReminderHealth, setLastReminderHealth] =
+    useState<SchoolFeeReminderDeliveryHealthResponse | null>(null);
   const [reminderStatusFilter, setReminderStatusFilter] = useState<
     '' | 'queued' | 'sent' | 'failed' | 'skipped'
   >('');
   const [reminderChannelFilter, setReminderChannelFilter] = useState<'' | 'in_app' | 'email'>('');
+  const [reminderPage, setReminderPage] = useState(1);
+  const [reminderTotal, setReminderTotal] = useState(0);
+  const [reminderTotalPages, setReminderTotalPages] = useState(0);
 
   const [planTitle, setPlanTitle] = useState('');
   const [planDescription, setPlanDescription] = useState('');
@@ -137,15 +146,20 @@ const SchoolFinance = () => {
         limit: 24,
         status: reminderStatusFilter || undefined,
         channel: reminderChannelFilter || undefined,
+        page: reminderPage,
       };
-      const [dashboardPayload, studentsPayload, reminderPayload] = await Promise.all([
+      const [dashboardPayload, studentsPayload, reminderPayload, reminderHealthPayload] = await Promise.all([
         fetchSchoolFinanceDashboard(),
         fetchSchoolFinanceStudents(),
         fetchSchoolReminderDispatches(reminderQuery),
+        fetchSchoolReminderDeliveryHealth({ days: 7 }),
       ]);
       setDashboard(dashboardPayload);
       setStudents(studentsPayload.students || []);
       setReminderDispatches(Array.isArray(reminderPayload.dispatches) ? reminderPayload.dispatches : []);
+      setReminderTotal(Number(reminderPayload.total || 0));
+      setReminderTotalPages(Number(reminderPayload.totalPages || 0));
+      setLastReminderHealth(reminderHealthPayload);
     } catch (requestError) {
       const message =
         requestError instanceof Error
@@ -159,7 +173,7 @@ const SchoolFinance = () => {
 
   useEffect(() => {
     void refreshDashboard();
-  }, [reminderStatusFilter, reminderChannelFilter]);
+  }, [reminderStatusFilter, reminderChannelFilter, reminderPage]);
 
   useEffect(() => {
     const shouldSync = checkoutStatus === 'success' && checkoutSessionId;
@@ -280,6 +294,17 @@ const SchoolFinance = () => {
     () =>
       reminderDispatches.filter(
         (dispatch) => dispatch.channel === 'email' && dispatch.status === 'queued'
+      ).length,
+    [reminderDispatches]
+  );
+
+  const exhaustedEmailReminderCount = useMemo(
+    () =>
+      reminderDispatches.filter(
+        (dispatch) =>
+          dispatch.channel === 'email' &&
+          dispatch.status === 'failed' &&
+          Number(dispatch.attemptCount || 0) >= 4
       ).length,
     [reminderDispatches]
   );
@@ -533,6 +558,46 @@ const SchoolFinance = () => {
     }
   };
 
+  const handleRequeueExhaustedReminderEmails = async () => {
+    if (activeAction) {
+      return;
+    }
+
+    const confirmPhrase = 'REQUEUE_EXHAUSTED';
+    const confirmation = window.prompt(
+      `This will retry exhausted reminder emails. Type ${confirmPhrase} to continue.`,
+      ''
+    );
+    if (!confirmation) {
+      return;
+    }
+
+    setActiveAction('reminders-requeue-exhausted');
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await requeueExhaustedSchoolReminderEmails({
+        limit: 80,
+        confirm: confirmation,
+      });
+      setLastReminderRequeue(result);
+      setNotice(
+        result.requeued > 0
+          ? `Moved ${result.requeued} exhausted email reminder(s) back to queue.`
+          : 'No exhausted reminder emails were eligible for requeue.'
+      );
+      await refreshDashboard();
+    } catch (requestError) {
+      const message =
+        requestError instanceof Error
+          ? requestError.message
+          : 'Could not requeue exhausted reminder emails right now.';
+      setError(message);
+    } finally {
+      setActiveAction(null);
+    }
+  };
+
   const handleRefreshReminderDispatches = async () => {
     if (activeAction) {
       return;
@@ -545,8 +610,11 @@ const SchoolFinance = () => {
         limit: 24,
         status: reminderStatusFilter || undefined,
         channel: reminderChannelFilter || undefined,
+        page: reminderPage,
       });
       setReminderDispatches(Array.isArray(payload.dispatches) ? payload.dispatches : []);
+      setReminderTotal(Number(payload.total || 0));
+      setReminderTotalPages(Number(payload.totalPages || 0));
     } catch (requestError) {
       const message =
         requestError instanceof Error ? requestError.message : 'Could not refresh reminder dispatches.';
@@ -554,6 +622,23 @@ const SchoolFinance = () => {
     } finally {
       setActiveAction(null);
     }
+  };
+
+  const handlePreviousReminderPage = () => {
+    if (activeAction || reminderPage <= 1) {
+      return;
+    }
+    setReminderPage((current) => Math.max(1, current - 1));
+  };
+
+  const handleNextReminderPage = () => {
+    if (activeAction) {
+      return;
+    }
+    if (reminderTotalPages > 0 && reminderPage >= reminderTotalPages) {
+      return;
+    }
+    setReminderPage((current) => current + 1);
   };
 
   const handleUpdateWithdrawalStatus = async (
@@ -1138,15 +1223,28 @@ const SchoolFinance = () => {
                   ? 'Requeueing...'
                   : `Requeue Failed (shown ${failedEmailReminderCount})`}
               </button>
+              <button
+                type="button"
+                onClick={() => void handleRequeueExhaustedReminderEmails()}
+                disabled={
+                  activeAction === 'reminders-requeue-exhausted' || exhaustedEmailReminderCount === 0
+                }
+                className="rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {activeAction === 'reminders-requeue-exhausted'
+                  ? 'Retrying...'
+                  : `Retry Exhausted (shown ${exhaustedEmailReminderCount})`}
+              </button>
             </div>
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <select
               value={reminderChannelFilter}
-              onChange={(event) =>
-                setReminderChannelFilter(event.target.value as '' | 'in_app' | 'email')
-              }
+              onChange={(event) => {
+                setReminderChannelFilter(event.target.value as '' | 'in_app' | 'email');
+                setReminderPage(1);
+              }}
               className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-700 focus:border-[#3D08BA] focus:outline-none"
             >
               <option value="">All channels</option>
@@ -1155,11 +1253,12 @@ const SchoolFinance = () => {
             </select>
             <select
               value={reminderStatusFilter}
-              onChange={(event) =>
+              onChange={(event) => {
                 setReminderStatusFilter(
                   event.target.value as '' | 'queued' | 'sent' | 'failed' | 'skipped'
-                )
-              }
+                );
+                setReminderPage(1);
+              }}
               className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-700 focus:border-[#3D08BA] focus:outline-none"
             >
               <option value="">All statuses</option>
@@ -1200,6 +1299,23 @@ const SchoolFinance = () => {
               {lastReminderEmailDrain.queuedForRetry} • exhausted {lastReminderEmailDrain.exhausted}.
             </p>
           )}
+          {lastReminderHealth && (
+            <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+              <p className="text-[11px] font-semibold text-gray-700">
+                7-day delivery health
+              </p>
+              <p className="mt-1 text-[11px] text-gray-600">
+                Sent {lastReminderHealth.email.sent} • Failed {lastReminderHealth.email.failed} • Queued{' '}
+                {lastReminderHealth.email.queued} • Retryable {lastReminderHealth.email.retryableFailed} • Exhausted{' '}
+                {lastReminderHealth.email.exhausted}
+              </p>
+              <p className="mt-1 text-[11px] text-gray-600">
+                Success {(lastReminderHealth.email.successRate * 100).toFixed(1)}% • Failure{' '}
+                {(lastReminderHealth.email.failureRate * 100).toFixed(1)}% • Retry{' '}
+                {(lastReminderHealth.email.retryRate * 100).toFixed(1)}%
+              </p>
+            </div>
+          )}
 
           {reminderDispatches.length === 0 ? (
             <p className="mt-3 text-xs text-gray-500">
@@ -1238,6 +1354,35 @@ const SchoolFinance = () => {
               ))}
             </div>
           )}
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[11px] text-gray-600">
+              Showing page {reminderPage}
+              {reminderTotalPages > 0 ? ` of ${reminderTotalPages}` : ''} • Total dispatches {reminderTotal}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handlePreviousReminderPage}
+                disabled={activeAction !== null || reminderPage <= 1}
+                className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                onClick={handleNextReminderPage}
+                disabled={
+                  activeAction !== null ||
+                  reminderTotalPages === 0 ||
+                  reminderPage >= reminderTotalPages
+                }
+                className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+          </div>
         </section>
 
         <section className="mt-6 rounded-2xl bg-white p-4 shadow-sm">

@@ -46,6 +46,7 @@ SCHOOL_FEE_REMINDER_EMAIL_TIMEOUT_MS=15000
 SCHOOL_FEE_REMINDER_EMAIL_MAX_RETRIES=4
 SCHOOL_FEE_REMINDER_EMAIL_RETRY_BASE_MS=60000
 SCHOOL_FEE_REMINDER_EMAIL_RETRY_MAX_MS=1800000
+SCHOOL_FEE_REMINDER_REQUEUE_CONFIRM=REQUEUE_EXHAUSTED
 RESEND_API_KEY=re_...
 ```
 
@@ -108,10 +109,12 @@ Subscription endpoints (requires `Authorization: Bearer <supabase_access_token>`
 
 School finance reminder endpoints (school role):
 
-- `GET /school-finance/me/reminders/dispatches?type=due_soon|overdue&channel=in_app|email&status=queued|sent|failed|skipped&limit=80`
+- `GET /school-finance/me/reminders/dispatches?type=due_soon|overdue&channel=in_app|email&status=queued|sent|failed|skipped&limit=80&page=1`
+- `GET /school-finance/me/reminders/health?days=7`
 - `POST /school-finance/me/reminders/run`
 - `POST /school-finance/me/reminders/email-drain`
 - `POST /school-finance/me/reminders/requeue-failed`
+- `POST /school-finance/me/reminders/requeue-exhausted` (requires `confirm` phrase)
 
 Account roles endpoints (requires `Authorization: Bearer <supabase_access_token>`):
 

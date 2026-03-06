@@ -183,6 +183,26 @@ type ReminderEmailRequeueSummary = {
   maxRetries: number;
 };
 
+type ReminderDeliveryHealthSummary = {
+  generatedAt: string;
+  accountId: number | null;
+  windowDays: number;
+  windowStart: string;
+  email: {
+    queued: number;
+    sent: number;
+    failed: number;
+    skipped: number;
+    retryableFailed: number;
+    exhausted: number;
+    attempted: number;
+    successRate: number;
+    failureRate: number;
+    retryRate: number;
+    exhaustedRate: number;
+  };
+};
+
 type CreateFeePlanInput = {
   title?: string;
   description?: string;
@@ -210,6 +230,7 @@ type ListReminderDispatchesInput = {
   channel?: string;
   status?: string;
   limit?: number;
+  page?: number;
 };
 
 type PayInvoiceInput = {
@@ -679,29 +700,41 @@ export class SchoolFinanceService {
       const reminderChannel = this.normalizeReminderChannel(input.channel);
       const reminderStatus = this.normalizeReminderDispatchStatus(input.status);
       const limit = this.normalizeReminderDispatchLimit(input.limit);
+      const page = this.normalizeReminderDispatchPage(input.page);
+      const where: Prisma.SchoolFeeReminderDispatchWhereInput = {
+        accountId: account.id,
+        ...(reminderType ? { reminderType } : {}),
+        ...(reminderChannel ? { channel: reminderChannel } : {}),
+        ...(reminderStatus ? { status: reminderStatus } : {}),
+      };
+      const skip = (page - 1) * limit;
 
-      const dispatches = await this.prisma.schoolFeeReminderDispatch.findMany({
-        where: {
-          accountId: account.id,
-          ...(reminderType ? { reminderType } : {}),
-          ...(reminderChannel ? { channel: reminderChannel } : {}),
-          ...(reminderStatus ? { status: reminderStatus } : {}),
-        },
-        include: {
-          invoice: {
-            select: {
-              publicId: true,
-              title: true,
+      const [dispatches, total] = await Promise.all([
+        this.prisma.schoolFeeReminderDispatch.findMany({
+          where,
+          include: {
+            invoice: {
+              select: {
+                publicId: true,
+                title: true,
+              },
             },
           },
-        },
-        orderBy: [{ createdAt: 'desc' }],
-        take: limit,
-      });
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          skip,
+          take: limit,
+        }),
+        this.prisma.schoolFeeReminderDispatch.count({ where }),
+      ]);
+      const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
 
       return {
         generatedAt: new Date().toISOString(),
-        total: dispatches.length,
+        total,
+        page,
+        limit,
+        totalPages,
+        hasMore: page * limit < total,
         dispatches: dispatches.map((dispatch) =>
           this.mapReminderDispatch(dispatch, dispatch.invoice?.publicId || '', dispatch.invoice?.title || 'Invoice')
         ),
@@ -712,8 +745,39 @@ export class SchoolFinanceService {
         return {
           generatedAt: new Date().toISOString(),
           total: 0,
+          page: this.normalizeReminderDispatchPage(input.page),
+          limit: this.normalizeReminderDispatchLimit(input.limit),
+          totalPages: 0,
+          hasMore: false,
           dispatches: [] as SchoolFeeReminderDispatchItem[],
         };
+      }
+
+      throw this.rethrowUnexpectedError(error);
+    }
+  }
+
+  async getReminderDeliveryHealthForAuthUser(
+    authUser: AuthUser,
+    input: { days?: number } = {}
+  ): Promise<ReminderDeliveryHealthSummary> {
+    const email = this.requireEmail(authUser);
+    const normalizedRole = this.normalizeRole(authUser.role);
+    this.assertSchoolRole(normalizedRole);
+    const displayName = this.normalizeDisplayName(authUser.name, email);
+    const windowDays = this.normalizeReminderHealthDays(input.days);
+
+    try {
+      const schoolUser = await this.resolveOrCreateUser(email, displayName, 'school');
+      const account = await this.getOrCreateSchoolFinanceAccount(schoolUser.id);
+      return this.getReminderDeliveryHealth({
+        accountId: account.id,
+        days: windowDays,
+      });
+    } catch (error) {
+      if (this.isFinanceWorkspaceUnavailableError(error)) {
+        this.logger.warn('School finance store is unavailable. Returning empty reminder health summary.');
+        return this.createEmptyReminderDeliveryHealthSummary(null, windowDays);
       }
 
       throw this.rethrowUnexpectedError(error);
@@ -760,6 +824,31 @@ export class SchoolFinanceService {
     const schoolUser = await this.resolveOrCreateUser(email, displayName, 'school');
     const account = await this.getOrCreateSchoolFinanceAccount(schoolUser.id);
     return this.requeueFailedReminderEmails({
+      accountId: account.id,
+      initiatedBy: email,
+      limit: input.limit,
+    });
+  }
+
+  async requeueExhaustedReminderEmailsForAuthUser(
+    authUser: AuthUser,
+    input: { limit?: number; confirm?: string } = {}
+  ): Promise<ReminderEmailRequeueSummary> {
+    const email = this.requireEmail(authUser);
+    const normalizedRole = this.normalizeRole(authUser.role);
+    this.assertSchoolRole(normalizedRole);
+    const displayName = this.normalizeDisplayName(authUser.name, email);
+    const requiredConfirmPhrase = this.resolveReminderRequeueConfirmPhrase();
+
+    if (String(input.confirm || '').trim() !== requiredConfirmPhrase) {
+      throw new BadRequestException(
+        `Confirmation phrase is required to retry exhausted reminders. Send confirm="${requiredConfirmPhrase}".`
+      );
+    }
+
+    const schoolUser = await this.resolveOrCreateUser(email, displayName, 'school');
+    const account = await this.getOrCreateSchoolFinanceAccount(schoolUser.id);
+    return this.requeueExhaustedReminderEmails({
       accountId: account.id,
       initiatedBy: email,
       limit: input.limit,
@@ -2749,6 +2838,154 @@ export class SchoolFinanceService {
     }
   }
 
+  private async requeueExhaustedReminderEmails(input: {
+    accountId?: number;
+    initiatedBy?: string;
+    limit?: number;
+  } = {}): Promise<ReminderEmailRequeueSummary> {
+    const maxRetries = this.resolveReminderEmailMaxRetries();
+    const limit = this.normalizeReminderDispatchLimit(input.limit);
+
+    try {
+      const dispatches = await this.prisma.schoolFeeReminderDispatch.findMany({
+        where: {
+          ...(typeof input.accountId === 'number' ? { accountId: input.accountId } : {}),
+          channel: SchoolFeeReminderChannel.EMAIL,
+          status: SchoolFeeReminderDispatchStatus.FAILED,
+          attemptCount: {
+            gte: maxRetries,
+          },
+        },
+        select: {
+          id: true,
+          attemptCount: true,
+          metadata: true,
+        },
+        orderBy: [{ updatedAt: 'desc' }],
+        take: limit,
+      });
+
+      for (const dispatch of dispatches) {
+        await this.prisma.schoolFeeReminderDispatch.update({
+          where: { id: dispatch.id },
+          data: {
+            status: SchoolFeeReminderDispatchStatus.QUEUED,
+            sentAt: null,
+            attemptCount: 0,
+            nextRetryAt: null,
+            failureReason: null,
+            lastError: null,
+            metadata: this.mergeReminderDispatchMetadata(dispatch.metadata, {
+              initiatedBy: input.initiatedBy || 'manual',
+              outcome: 'manual_requeue_exhausted',
+              previousAttemptCount: dispatch.attemptCount,
+              maxRetries,
+            }),
+          },
+        });
+      }
+
+      return {
+        generatedAt: new Date().toISOString(),
+        accountId: typeof input.accountId === 'number' ? input.accountId : null,
+        selected: dispatches.length,
+        requeued: dispatches.length,
+        maxRetries,
+      };
+    } catch (error) {
+      if (this.isFinanceWorkspaceUnavailableError(error)) {
+        this.logger.warn('School finance store is unavailable. Skipping exhausted reminder requeue.');
+        return {
+          generatedAt: new Date().toISOString(),
+          accountId: typeof input.accountId === 'number' ? input.accountId : null,
+          selected: 0,
+          requeued: 0,
+          maxRetries,
+        };
+      }
+
+      throw this.rethrowUnexpectedError(error);
+    }
+  }
+
+  private async getReminderDeliveryHealth(input: {
+    accountId?: number;
+    days?: number;
+  } = {}): Promise<ReminderDeliveryHealthSummary> {
+    const windowDays = this.normalizeReminderHealthDays(input.days);
+    const windowStart = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+    const maxRetries = this.resolveReminderEmailMaxRetries();
+    const where: Prisma.SchoolFeeReminderDispatchWhereInput = {
+      ...(typeof input.accountId === 'number' ? { accountId: input.accountId } : {}),
+      channel: SchoolFeeReminderChannel.EMAIL,
+      createdAt: {
+        gte: windowStart,
+      },
+    };
+
+    const [statusGroups, exhaustedCount, retryableFailedCount] = await Promise.all([
+      this.prisma.schoolFeeReminderDispatch.groupBy({
+        by: ['status'],
+        where,
+        _count: {
+          _all: true,
+        },
+      }),
+      this.prisma.schoolFeeReminderDispatch.count({
+        where: {
+          ...where,
+          status: SchoolFeeReminderDispatchStatus.FAILED,
+          attemptCount: {
+            gte: maxRetries,
+          },
+        },
+      }),
+      this.prisma.schoolFeeReminderDispatch.count({
+        where: {
+          ...where,
+          status: SchoolFeeReminderDispatchStatus.FAILED,
+          attemptCount: {
+            lt: maxRetries,
+          },
+        },
+      }),
+    ]);
+
+    const countsByStatus = new Map<SchoolFeeReminderDispatchStatus, number>();
+    statusGroups.forEach((entry) => {
+      countsByStatus.set(entry.status, entry._count._all);
+    });
+
+    const queued = countsByStatus.get(SchoolFeeReminderDispatchStatus.QUEUED) || 0;
+    const sent = countsByStatus.get(SchoolFeeReminderDispatchStatus.SENT) || 0;
+    const failed = countsByStatus.get(SchoolFeeReminderDispatchStatus.FAILED) || 0;
+    const skipped = countsByStatus.get(SchoolFeeReminderDispatchStatus.SKIPPED) || 0;
+    const attempted = sent + failed + skipped;
+
+    const toRate = (value: number, total: number) =>
+      total > 0 ? Number((value / total).toFixed(4)) : 0;
+
+    return {
+      generatedAt: new Date().toISOString(),
+      accountId: typeof input.accountId === 'number' ? input.accountId : null,
+      windowDays,
+      windowStart: windowStart.toISOString(),
+      email: {
+        queued,
+        sent,
+        failed,
+        skipped,
+        retryableFailed: retryableFailedCount,
+        exhausted: exhaustedCount,
+        attempted,
+        successRate: toRate(sent, attempted),
+        failureRate: toRate(failed, attempted),
+        retryRate: toRate(retryableFailedCount, attempted),
+        exhaustedRate: toRate(exhaustedCount, attempted),
+      },
+    };
+  }
+
   private async sendReminderEmail(input: {
     provider: ReminderEmailProvider;
     toEmail: string;
@@ -2956,6 +3193,50 @@ export class SchoolFinanceService {
     return Math.min(200, Math.max(1, Math.round(parsed)));
   }
 
+  private normalizeReminderDispatchPage(value: number | string | undefined) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return 1;
+    }
+
+    return Math.max(1, Math.round(parsed));
+  }
+
+  private normalizeReminderHealthDays(value: number | string | undefined) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return 7;
+    }
+
+    return Math.min(90, Math.max(1, Math.round(parsed)));
+  }
+
+  private createEmptyReminderDeliveryHealthSummary(
+    accountId: number | null,
+    windowDays: number
+  ): ReminderDeliveryHealthSummary {
+    const windowStart = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+    return {
+      generatedAt: new Date().toISOString(),
+      accountId,
+      windowDays,
+      windowStart: windowStart.toISOString(),
+      email: {
+        queued: 0,
+        sent: 0,
+        failed: 0,
+        skipped: 0,
+        retryableFailed: 0,
+        exhausted: 0,
+        attempted: 0,
+        successRate: 0,
+        failureRate: 0,
+        retryRate: 0,
+        exhaustedRate: 0,
+      },
+    };
+  }
+
   private resolveReminderDueSoonWindowMs() {
     const fromEnv = Number(process.env.SCHOOL_FEE_DUE_SOON_WINDOW_HOURS || '');
     const hours = Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : 72;
@@ -3039,6 +3320,11 @@ export class SchoolFinanceService {
   private resolveReminderEmailReplyTo() {
     const value = String(process.env.SCHOOL_FEE_REMINDER_EMAIL_REPLY_TO || '').trim();
     return value || '';
+  }
+
+  private resolveReminderRequeueConfirmPhrase() {
+    const value = String(process.env.SCHOOL_FEE_REMINDER_REQUEUE_CONFIRM || '').trim();
+    return value || 'REQUEUE_EXHAUSTED';
   }
 
   private toUtcDateBucket(value: Date) {

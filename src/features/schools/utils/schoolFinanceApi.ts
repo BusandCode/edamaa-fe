@@ -125,6 +125,10 @@ export type SchoolFeeReminderDispatch = {
 export type SchoolFeeReminderDispatchesResponse = {
   generatedAt: string;
   total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  hasMore: boolean;
   dispatches: SchoolFeeReminderDispatch[];
 };
 
@@ -163,6 +167,26 @@ export type SchoolFeeReminderEmailDrainResponse = {
   skipped: number;
   queuedForRetry: number;
   exhausted: number;
+};
+
+export type SchoolFeeReminderDeliveryHealthResponse = {
+  generatedAt: string;
+  accountId: number | null;
+  windowDays: number;
+  windowStart: string;
+  email: {
+    queued: number;
+    sent: number;
+    failed: number;
+    skipped: number;
+    retryableFailed: number;
+    exhausted: number;
+    attempted: number;
+    successRate: number;
+    failureRate: number;
+    retryRate: number;
+    exhaustedRate: number;
+  };
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
@@ -1106,6 +1130,7 @@ const localFetchSchoolReminderDispatches = (input?: {
   channel?: 'in_app' | 'email';
   status?: 'queued' | 'sent' | 'failed' | 'skipped';
   limit?: number;
+  page?: number;
 }): SchoolFeeReminderDispatchesResponse => {
   const schoolEmail = resolveSchoolEmailForLocalFallback();
   const workspace = getLocalFinanceWorkspace(schoolEmail);
@@ -1114,6 +1139,8 @@ const localFetchSchoolReminderDispatches = (input?: {
     200,
     Math.max(1, Number.isFinite(parsedLimit) ? Math.round(parsedLimit) : 80)
   );
+  const parsedPage = Number(input?.page);
+  const page = Math.max(1, Number.isFinite(parsedPage) ? Math.round(parsedPage) : 1);
 
   const filtered = workspace.reminderDispatches
     .filter((dispatch) => {
@@ -1128,13 +1155,21 @@ const localFetchSchoolReminderDispatches = (input?: {
       }
       return true;
     })
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, limit);
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const total = filtered.length;
+  const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
+  const offset = (page - 1) * limit;
+  const pagedDispatches = filtered.slice(offset, offset + limit);
 
   return {
     generatedAt: nowIso(),
-    total: filtered.length,
-    dispatches: filtered,
+    total,
+    page,
+    limit,
+    totalPages,
+    hasMore: page * limit < total,
+    dispatches: pagedDispatches,
   };
 };
 
@@ -1205,6 +1240,114 @@ const localDrainQueuedSchoolReminderEmails = (): SchoolFeeReminderEmailDrainResp
     skipped,
     queuedForRetry: 0,
     exhausted,
+  };
+};
+
+const localFetchSchoolReminderDeliveryHealth = (input?: {
+  days?: number;
+}): SchoolFeeReminderDeliveryHealthResponse => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const parsedDays = Number(input?.days);
+  const windowDays = Math.min(
+    90,
+    Math.max(1, Number.isFinite(parsedDays) ? Math.round(parsedDays) : 7)
+  );
+  const maxRetries = 4;
+  const windowStart = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+
+  const recentEmailDispatches = workspace.reminderDispatches.filter((dispatch) => {
+    if (dispatch.channel !== 'email') {
+      return false;
+    }
+    const createdAt = new Date(dispatch.createdAt);
+    if (Number.isNaN(createdAt.getTime())) {
+      return false;
+    }
+    return createdAt.getTime() >= windowStart.getTime();
+  });
+
+  const queued = recentEmailDispatches.filter((dispatch) => dispatch.status === 'queued').length;
+  const sent = recentEmailDispatches.filter((dispatch) => dispatch.status === 'sent').length;
+  const failed = recentEmailDispatches.filter((dispatch) => dispatch.status === 'failed').length;
+  const skipped = recentEmailDispatches.filter((dispatch) => dispatch.status === 'skipped').length;
+  const retryableFailed = recentEmailDispatches.filter(
+    (dispatch) => dispatch.status === 'failed' && Number(dispatch.attemptCount || 0) < maxRetries
+  ).length;
+  const exhausted = recentEmailDispatches.filter(
+    (dispatch) => dispatch.status === 'failed' && Number(dispatch.attemptCount || 0) >= maxRetries
+  ).length;
+  const attempted = sent + failed + skipped;
+  const toRate = (value: number, total: number) =>
+    total > 0 ? Number((value / total).toFixed(4)) : 0;
+
+  return {
+    generatedAt: nowIso(),
+    accountId: null,
+    windowDays,
+    windowStart: windowStart.toISOString(),
+    email: {
+      queued,
+      sent,
+      failed,
+      skipped,
+      retryableFailed,
+      exhausted,
+      attempted,
+      successRate: toRate(sent, attempted),
+      failureRate: toRate(failed, attempted),
+      retryRate: toRate(retryableFailed, attempted),
+      exhaustedRate: toRate(exhausted, attempted),
+    },
+  };
+};
+
+const localRequeueExhaustedSchoolReminderEmails = (input?: {
+  limit?: number;
+  confirm?: string;
+}): SchoolFeeReminderRequeueResponse => {
+  const requiredConfirm = 'REQUEUE_EXHAUSTED';
+  if (String(input?.confirm || '').trim() !== requiredConfirm) {
+    throw new Error(
+      `Confirmation phrase is required to retry exhausted reminders. Send confirm="${requiredConfirm}".`
+    );
+  }
+
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const parsedLimit = Number(input?.limit);
+  const limit = Math.min(
+    200,
+    Math.max(1, Number.isFinite(parsedLimit) ? Math.round(parsedLimit) : 80)
+  );
+  const maxRetries = 4;
+
+  const exhaustedDispatches = workspace.reminderDispatches
+    .filter(
+      (dispatch) =>
+        dispatch.channel === 'email' &&
+        dispatch.status === 'failed' &&
+        Number(dispatch.attemptCount || 0) >= maxRetries
+    )
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, limit);
+
+  exhaustedDispatches.forEach((dispatch) => {
+    dispatch.status = 'queued';
+    dispatch.attemptCount = 0;
+    dispatch.nextRetryAt = null;
+    dispatch.lastError = null;
+    dispatch.failureReason = null;
+    dispatch.sentAt = null;
+  });
+
+  saveLocalFinanceWorkspace(schoolEmail, workspace);
+  return {
+    generatedAt: nowIso(),
+    accountId: null,
+    selected: exhaustedDispatches.length,
+    requeued: exhaustedDispatches.length,
+    maxRetries,
   };
 };
 
@@ -1418,6 +1561,7 @@ export const fetchSchoolReminderDispatches = async (input?: {
   channel?: 'in_app' | 'email';
   status?: 'queued' | 'sent' | 'failed' | 'skipped';
   limit?: number;
+  page?: number;
 }) => {
   return runWithLocalFinanceFallback(
     async () => {
@@ -1434,6 +1578,9 @@ export const fetchSchoolReminderDispatches = async (input?: {
       if (typeof input?.limit === 'number' && Number.isFinite(input.limit)) {
         params.set('limit', String(Math.round(input.limit)));
       }
+      if (typeof input?.page === 'number' && Number.isFinite(input.page)) {
+        params.set('page', String(Math.max(1, Math.round(input.page))));
+      }
 
       const query = params.toString();
       const response = await requestWithSchoolAuth(
@@ -1442,14 +1589,41 @@ export const fetchSchoolReminderDispatches = async (input?: {
       const payload = (await response.json()) as {
         generatedAt?: string;
         total?: number;
+        page?: number;
+        limit?: number;
+        totalPages?: number;
+        hasMore?: boolean;
         dispatches?: unknown[];
       };
       const dispatches = Array.isArray(payload.dispatches)
         ? payload.dispatches.map((dispatch) => normalizeLocalReminderDispatch(dispatch))
         : [];
+      const total = Number.isFinite(Number(payload.total)) ? Number(payload.total) : dispatches.length;
+      const limit =
+        Number.isFinite(Number(payload.limit)) && Number(payload.limit) > 0
+          ? Number(payload.limit)
+          : typeof input?.limit === 'number' && Number.isFinite(input.limit)
+            ? Math.max(1, Math.round(input.limit))
+            : 80;
+      const page =
+        Number.isFinite(Number(payload.page)) && Number(payload.page) > 0
+          ? Number(payload.page)
+          : typeof input?.page === 'number' && Number.isFinite(input.page)
+            ? Math.max(1, Math.round(input.page))
+            : 1;
+      const totalPages =
+        Number.isFinite(Number(payload.totalPages)) && Number(payload.totalPages) >= 0
+          ? Number(payload.totalPages)
+          : total > 0
+            ? Math.ceil(total / limit)
+            : 0;
       return {
         generatedAt: String(payload.generatedAt || nowIso()),
-        total: Number.isFinite(Number(payload.total)) ? Number(payload.total) : dispatches.length,
+        total,
+        page,
+        limit,
+        totalPages,
+        hasMore: Boolean(payload.hasMore) || page * limit < total,
         dispatches,
       } as SchoolFeeReminderDispatchesResponse;
     },
@@ -1471,6 +1645,42 @@ export const requeueFailedSchoolReminderEmails = async (payload?: {
       return (await response.json()) as SchoolFeeReminderRequeueResponse;
     },
     () => localRequeueFailedSchoolReminderEmails(payload)
+  );
+};
+
+export const requeueExhaustedSchoolReminderEmails = async (payload?: {
+  limit?: number;
+  confirm?: string;
+}) => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth('/school-finance/me/reminders/requeue-exhausted', {
+        method: 'POST',
+        body: JSON.stringify({
+          limit: payload?.limit,
+          confirm: payload?.confirm,
+        }),
+      });
+      return (await response.json()) as SchoolFeeReminderRequeueResponse;
+    },
+    () => localRequeueExhaustedSchoolReminderEmails(payload)
+  );
+};
+
+export const fetchSchoolReminderDeliveryHealth = async (input?: { days?: number }) => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      const params = new URLSearchParams();
+      if (typeof input?.days === 'number' && Number.isFinite(input.days)) {
+        params.set('days', String(Math.max(1, Math.round(input.days))));
+      }
+      const query = params.toString();
+      const response = await requestWithSchoolAuth(
+        `/school-finance/me/reminders/health${query ? `?${query}` : ''}`
+      );
+      return (await response.json()) as SchoolFeeReminderDeliveryHealthResponse;
+    },
+    () => localFetchSchoolReminderDeliveryHealth(input)
   );
 };
 

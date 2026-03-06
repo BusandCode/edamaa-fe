@@ -34,6 +34,11 @@ type RequeueFailedReminderEmailsBody = {
   limit?: number;
 };
 
+type RequeueExhaustedReminderEmailsBody = {
+  limit?: number;
+  confirm?: string;
+};
+
 type UpdateWithdrawalStatusBody = {
   status?: string;
   failureReason?: string;
@@ -77,14 +82,26 @@ export class SchoolFinanceController {
     @Query('type') reminderType?: string,
     @Query('channel') channel?: string,
     @Query('status') status?: string,
-    @Query('limit') limit?: string
+    @Query('limit') limit?: string,
+    @Query('page') page?: string
   ) {
     return this.schoolFinanceService.listReminderDispatchesForAuthUser(this.getAuthUser(request), {
       reminderType,
       channel,
       status,
       limit: typeof limit === 'string' && limit.trim() ? Number(limit) : undefined,
+      page: typeof page === 'string' && page.trim() ? Number(page) : undefined,
     });
+  }
+
+  @Get('me/reminders/health')
+  getMyReminderHealth(@Req() request: Request, @Query('days') days?: string) {
+    return this.schoolFinanceService.getReminderDeliveryHealthForAuthUser(
+      this.getAuthUser(request),
+      {
+        days: typeof days === 'string' && days.trim() ? Number(days) : undefined,
+      }
+    );
   }
 
   @Post('me/reminders/run')
@@ -107,6 +124,20 @@ export class SchoolFinanceController {
     return this.schoolFinanceService.requeueFailedReminderEmailsForAuthUser(
       this.getAuthUser(request),
       { limit: body.limit }
+    );
+  }
+
+  @Post('me/reminders/requeue-exhausted')
+  requeueExhaustedReminderEmails(
+    @Req() request: Request,
+    @Body() body: RequeueExhaustedReminderEmailsBody
+  ) {
+    return this.schoolFinanceService.requeueExhaustedReminderEmailsForAuthUser(
+      this.getAuthUser(request),
+      {
+        limit: body.limit,
+        confirm: body.confirm,
+      }
     );
   }
 
