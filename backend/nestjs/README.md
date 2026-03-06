@@ -38,6 +38,12 @@ SCHOOL_FEE_REMINDERS_ENABLED=1
 SCHOOL_FEE_REMINDERS_INTERVAL_MS=300000
 SCHOOL_FEE_DUE_SOON_WINDOW_HOURS=72
 SCHOOL_FEE_REMINDER_EMAIL_ENABLED=0
+SCHOOL_FEE_REMINDER_EMAIL_PROVIDER=resend
+SCHOOL_FEE_REMINDER_EMAIL_FROM=Edamaa <reminders@edamaa.app>
+SCHOOL_FEE_REMINDER_EMAIL_REPLY_TO=support@edamaa.app
+SCHOOL_FEE_REMINDER_EMAIL_BATCH_SIZE=40
+SCHOOL_FEE_REMINDER_EMAIL_TIMEOUT_MS=15000
+RESEND_API_KEY=re_...
 ```
 
 Note:
@@ -100,6 +106,7 @@ School finance reminder endpoints (school role):
 
 - `GET /school-finance/me/reminders/dispatches?type=due_soon|overdue&channel=in_app|email&status=queued|sent|failed|skipped&limit=80`
 - `POST /school-finance/me/reminders/run`
+- `POST /school-finance/me/reminders/email-drain`
 
 Account roles endpoints (requires `Authorization: Bearer <supabase_access_token>`):
 

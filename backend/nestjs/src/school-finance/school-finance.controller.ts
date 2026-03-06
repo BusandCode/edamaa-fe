@@ -88,6 +88,13 @@ export class SchoolFinanceController {
     return this.schoolFinanceService.runReminderSweepForAuthUser(this.getAuthUser(request));
   }
 
+  @Post('me/reminders/email-drain')
+  drainMyReminderEmails(@Req() request: Request) {
+    return this.schoolFinanceService.processQueuedReminderEmailsForAuthUser(
+      this.getAuthUser(request)
+    );
+  }
+
   @Post('me/invoices')
   createInvoice(@Req() request: Request, @Body() body: CreateInvoiceBody) {
     return this.schoolFinanceService.createInvoiceForAuthUser(this.getAuthUser(request), {

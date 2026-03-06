@@ -160,6 +160,16 @@ type SchoolFeeReminderDispatchItem = {
   createdAt: string;
 };
 
+type ReminderEmailProvider = 'resend' | 'log';
+
+type ReminderEmailProcessingSummary = {
+  provider: ReminderEmailProvider | 'disabled';
+  attempted: number;
+  sent: number;
+  failed: number;
+  skipped: number;
+};
+
 type CreateFeePlanInput = {
   title?: string;
   description?: string;
@@ -711,6 +721,20 @@ export class SchoolFinanceService {
     });
   }
 
+  async processQueuedReminderEmailsForAuthUser(authUser: AuthUser) {
+    const email = this.requireEmail(authUser);
+    const normalizedRole = this.normalizeRole(authUser.role);
+    this.assertSchoolRole(normalizedRole);
+    const displayName = this.normalizeDisplayName(authUser.name, email);
+
+    const schoolUser = await this.resolveOrCreateUser(email, displayName, 'school');
+    const account = await this.getOrCreateSchoolFinanceAccount(schoolUser.id);
+    return this.processQueuedReminderEmails({
+      accountId: account.id,
+      initiatedBy: email,
+    });
+  }
+
   async dispatchScheduledInvoiceReminders(input: {
     now?: Date;
     accountId?: number;
@@ -846,6 +870,11 @@ export class SchoolFinanceService {
         }
       }
 
+      const emailDelivery = await this.processQueuedReminderEmails({
+        accountId: input.accountId,
+        initiatedBy: input.initiatedBy || 'scheduler',
+      });
+
       return {
         generatedAt: new Date().toISOString(),
         accountId: input.accountId || null,
@@ -855,6 +884,11 @@ export class SchoolFinanceService {
         overdueInApp,
         overdueEmail,
         emailDispatchEnabled,
+        emailProvider: emailDelivery.provider,
+        emailAttempted: emailDelivery.attempted,
+        emailSent: emailDelivery.sent,
+        emailFailed: emailDelivery.failed,
+        emailSkipped: emailDelivery.skipped,
       };
     } catch (error) {
       if (this.isFinanceWorkspaceUnavailableError(error)) {
@@ -868,6 +902,11 @@ export class SchoolFinanceService {
           overdueInApp: 0,
           overdueEmail: 0,
           emailDispatchEnabled,
+          emailProvider: 'disabled',
+          emailAttempted: 0,
+          emailSent: 0,
+          emailFailed: 0,
+          emailSkipped: 0,
           skipped: true,
         };
       }
@@ -2412,6 +2451,279 @@ export class SchoolFinanceService {
     }
   }
 
+  private async processQueuedReminderEmails(input: {
+    accountId?: number;
+    initiatedBy?: string;
+  } = {}): Promise<ReminderEmailProcessingSummary> {
+    if (!this.isReminderEmailDispatchEnabled()) {
+      return {
+        provider: 'disabled',
+        attempted: 0,
+        sent: 0,
+        failed: 0,
+        skipped: 0,
+      };
+    }
+
+    const provider = this.resolveReminderEmailProvider();
+    const batchSize = this.resolveReminderEmailBatchSize();
+    const queuedDispatches = await this.prisma.schoolFeeReminderDispatch.findMany({
+      where: {
+        ...(typeof input.accountId === 'number' ? { accountId: input.accountId } : {}),
+        channel: SchoolFeeReminderChannel.EMAIL,
+        status: SchoolFeeReminderDispatchStatus.QUEUED,
+      },
+      include: {
+        invoice: {
+          include: {
+            account: {
+              include: {
+                schoolUser: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ createdAt: 'asc' }],
+      take: batchSize,
+    });
+
+    let sent = 0;
+    let failed = 0;
+    let skipped = 0;
+
+    for (const dispatch of queuedDispatches) {
+      const normalizedEmail = this.normalizeEmail(dispatch.studentEmail);
+      if (!normalizedEmail || !normalizedEmail.includes('@')) {
+        await this.prisma.schoolFeeReminderDispatch.update({
+          where: { id: dispatch.id },
+          data: {
+            status: SchoolFeeReminderDispatchStatus.SKIPPED,
+            sentAt: new Date(),
+            failureReason: 'Student email is missing or invalid for reminder delivery.',
+            metadata: this.mergeReminderDispatchMetadata(dispatch.metadata, {
+              initiatedBy: input.initiatedBy || 'scheduler',
+              outcome: 'skipped_invalid_email',
+            }),
+          },
+        });
+        skipped += 1;
+        continue;
+      }
+
+      const invoice = dispatch.invoice;
+      const schoolName = invoice.account.schoolUser.name || invoice.account.schoolUser.email || 'School';
+
+      try {
+        const providerResponse = await this.sendReminderEmail({
+          provider,
+          toEmail: normalizedEmail,
+          subject: this.buildReminderEmailSubject({
+            reminderType: dispatch.reminderType,
+            schoolName,
+            invoiceTitle: invoice.title,
+          }),
+          text: this.buildReminderEmailText({
+            reminderType: dispatch.reminderType,
+            schoolName,
+            studentEmail: normalizedEmail,
+            invoiceTitle: invoice.title,
+            invoiceAmountMinor: invoice.amountMinor,
+            currency: invoice.currency,
+            dueAt: invoice.dueAt,
+            paymentLink: `/school-finance/pay/${encodeURIComponent(invoice.publicId)}`,
+          }),
+        });
+
+        await this.prisma.schoolFeeReminderDispatch.update({
+          where: { id: dispatch.id },
+          data: {
+            status: SchoolFeeReminderDispatchStatus.SENT,
+            sentAt: new Date(),
+            failureReason: null,
+            metadata: this.mergeReminderDispatchMetadata(dispatch.metadata, {
+              initiatedBy: input.initiatedBy || 'scheduler',
+              provider: providerResponse.provider,
+              providerMessageId: providerResponse.providerMessageId || null,
+              outcome: 'sent',
+            }),
+          },
+        });
+        sent += 1;
+      } catch (error) {
+        const reason = this.truncateText(
+          error instanceof Error ? error.message : 'Email dispatch failed.',
+          500
+        );
+        await this.prisma.schoolFeeReminderDispatch.update({
+          where: { id: dispatch.id },
+          data: {
+            status: SchoolFeeReminderDispatchStatus.FAILED,
+            sentAt: null,
+            failureReason: reason,
+            metadata: this.mergeReminderDispatchMetadata(dispatch.metadata, {
+              initiatedBy: input.initiatedBy || 'scheduler',
+              provider,
+              outcome: 'failed',
+              failureReason: reason,
+            }),
+          },
+        });
+        failed += 1;
+      }
+    }
+
+    return {
+      provider,
+      attempted: queuedDispatches.length,
+      sent,
+      failed,
+      skipped,
+    };
+  }
+
+  private async sendReminderEmail(input: {
+    provider: ReminderEmailProvider;
+    toEmail: string;
+    subject: string;
+    text: string;
+  }) {
+    if (input.provider === 'log') {
+      this.logger.log(
+        `Reminder email (log provider) to ${input.toEmail}: ${input.subject}`
+      );
+      return {
+        provider: 'log' as const,
+        providerMessageId: null,
+      };
+    }
+
+    if (input.provider === 'resend') {
+      return this.sendReminderEmailWithResend(input);
+    }
+
+    throw new BadRequestException('Unsupported reminder email provider.');
+  }
+
+  private async sendReminderEmailWithResend(input: {
+    toEmail: string;
+    subject: string;
+    text: string;
+  }) {
+    const apiKey = String(process.env.RESEND_API_KEY || '').trim();
+    if (!apiKey) {
+      throw new BadRequestException(
+        'RESEND_API_KEY is required when SCHOOL_FEE_REMINDER_EMAIL_PROVIDER=resend.'
+      );
+    }
+
+    const controller = new AbortController();
+    const timeoutMs = this.resolveReminderEmailTimeoutMs();
+    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: this.resolveReminderEmailFrom(),
+          reply_to: this.resolveReminderEmailReplyTo() || undefined,
+          to: [input.toEmail],
+          subject: input.subject,
+          text: input.text,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const responseBody = await response.text();
+        throw new Error(
+          `Resend API request failed (${response.status}): ${this.truncateText(
+            responseBody || 'no response body',
+            300
+          )}`
+        );
+      }
+
+      const payload = (await response.json()) as { id?: string };
+      return {
+        provider: 'resend' as const,
+        providerMessageId: String(payload.id || '').trim() || null,
+      };
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+  }
+
+  private buildReminderEmailSubject(input: {
+    reminderType: SchoolFeeReminderType;
+    schoolName: string;
+    invoiceTitle: string;
+  }) {
+    if (input.reminderType === SchoolFeeReminderType.OVERDUE) {
+      return `${input.schoolName}: overdue payment reminder for ${input.invoiceTitle}`;
+    }
+    return `${input.schoolName}: payment due soon for ${input.invoiceTitle}`;
+  }
+
+  private buildReminderEmailText(input: {
+    reminderType: SchoolFeeReminderType;
+    schoolName: string;
+    studentEmail: string;
+    invoiceTitle: string;
+    invoiceAmountMinor: number;
+    currency: string;
+    dueAt: Date | null;
+    paymentLink: string;
+  }) {
+    const dueLabel = input.dueAt
+      ? input.dueAt.toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+        })
+      : 'No due date set';
+
+    const amountLabel = `${input.currency} ${this.toNaira(input.invoiceAmountMinor).toLocaleString()}`;
+    const opening =
+      input.reminderType === SchoolFeeReminderType.OVERDUE
+        ? `Your payment for "${input.invoiceTitle}" is overdue.`
+        : `Your payment for "${input.invoiceTitle}" is due soon.`;
+
+    return [
+      `Hello,`,
+      '',
+      `${input.schoolName} sent you a school fee reminder.`,
+      opening,
+      `Amount: ${amountLabel}`,
+      `Due date: ${dueLabel}`,
+      '',
+      `Pay here: ${this.resolveAppBaseUrl()}${input.paymentLink}`,
+      '',
+      `If you already paid, please ignore this message.`,
+      '',
+      `- Edamaa`,
+    ].join('\n');
+  }
+
+  private mergeReminderDispatchMetadata(
+    existing: Prisma.JsonValue | null | undefined,
+    patch: Record<string, unknown>
+  ): Prisma.InputJsonValue {
+    const baseline =
+      existing && typeof existing === 'object' && !Array.isArray(existing)
+        ? (existing as Record<string, unknown>)
+        : {};
+    return {
+      ...baseline,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    } as Prisma.InputJsonValue;
+  }
+
   private normalizeReminderType(value: string | undefined): SchoolFeeReminderType | null {
     const normalized = String(value || '').trim().toLowerCase();
     if (!normalized) {
@@ -2488,8 +2800,55 @@ export class SchoolFinanceService {
     return value === '1' || value === 'true' || value === 'yes' || value === 'on';
   }
 
+  private resolveReminderEmailProvider(): ReminderEmailProvider {
+    const value = String(process.env.SCHOOL_FEE_REMINDER_EMAIL_PROVIDER || '')
+      .trim()
+      .toLowerCase();
+    if (!value || value === 'resend') {
+      return 'resend';
+    }
+    if (value === 'log') {
+      return 'log';
+    }
+    throw new BadRequestException('SCHOOL_FEE_REMINDER_EMAIL_PROVIDER must be "resend" or "log".');
+  }
+
+  private resolveReminderEmailBatchSize() {
+    const fromEnv = Number(process.env.SCHOOL_FEE_REMINDER_EMAIL_BATCH_SIZE || '');
+    if (!Number.isFinite(fromEnv)) {
+      return 40;
+    }
+    return Math.min(200, Math.max(1, Math.round(fromEnv)));
+  }
+
+  private resolveReminderEmailTimeoutMs() {
+    const fromEnv = Number(process.env.SCHOOL_FEE_REMINDER_EMAIL_TIMEOUT_MS || '');
+    if (!Number.isFinite(fromEnv) || fromEnv < 1000) {
+      return 15000;
+    }
+    return Math.round(fromEnv);
+  }
+
+  private resolveReminderEmailFrom() {
+    const value = String(process.env.SCHOOL_FEE_REMINDER_EMAIL_FROM || '').trim();
+    return value || 'Edamaa <reminders@edamaa.app>';
+  }
+
+  private resolveReminderEmailReplyTo() {
+    const value = String(process.env.SCHOOL_FEE_REMINDER_EMAIL_REPLY_TO || '').trim();
+    return value || '';
+  }
+
   private toUtcDateBucket(value: Date) {
     return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate(), 0, 0, 0, 0));
+  }
+
+  private truncateText(value: string, maxLength: number) {
+    const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+    if (normalized.length <= maxLength) {
+      return normalized;
+    }
+    return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
   }
 
   private normalizeInvoiceStatus(value: string | undefined): SchoolFeeInvoiceStatus | null {
