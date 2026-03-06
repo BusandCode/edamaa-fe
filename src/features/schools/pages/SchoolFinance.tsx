@@ -12,14 +12,18 @@ import {
 import {
   createSchoolFeePlan,
   createSchoolInvoice,
+  fetchSchoolReminderDispatches,
   createSchoolWithdrawal,
   fetchSchoolFinanceStudents,
   fetchSchoolInvoiceCheckoutStatus,
   fetchSchoolFinanceDashboard,
   fetchSchoolWithdrawalLedger,
   paySchoolInvoice,
+  runSchoolReminderSweep,
   syncSchoolInvoiceCheckout,
   type SchoolFinanceDashboard,
+  type SchoolFeeReminderDispatch,
+  type SchoolFeeReminderSweepResponse,
   type SchoolFinanceStudent,
   updateSchoolWithdrawalStatus,
 } from '../utils/schoolFinanceApi';
@@ -49,6 +53,23 @@ const payoutStatusStyles: Record<
   canceled: 'bg-slate-100 text-slate-700',
 };
 
+const reminderStatusStyles: Record<SchoolFeeReminderDispatch['status'], string> = {
+  queued: 'bg-amber-100 text-amber-700',
+  sent: 'bg-emerald-100 text-emerald-700',
+  failed: 'bg-red-100 text-red-700',
+  skipped: 'bg-slate-100 text-slate-700',
+};
+
+const reminderTypeLabel: Record<SchoolFeeReminderDispatch['reminderType'], string> = {
+  due_soon: 'Due soon',
+  overdue: 'Overdue',
+};
+
+const reminderChannelLabel: Record<SchoolFeeReminderDispatch['channel'], string> = {
+  in_app: 'In-app',
+  email: 'Email',
+};
+
 const SchoolFinance = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -58,11 +79,20 @@ const SchoolFinance = () => {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeAction, setActiveAction] = useState<
-    null | 'plan' | 'invoice' | 'withdraw' | `pay-${string}` | `payout-${string}` | `ledger-${string}`
+    | null
+    | 'plan'
+    | 'invoice'
+    | 'withdraw'
+    | 'reminders-run'
+    | `pay-${string}`
+    | `payout-${string}`
+    | `ledger-${string}`
   >(null);
   const [isCreatePlanOpen, setIsCreatePlanOpen] = useState(false);
   const [isCreateInvoiceOpen, setIsCreateInvoiceOpen] = useState(false);
   const [isWithdrawOpen, setIsWithdrawOpen] = useState(false);
+  const [reminderDispatches, setReminderDispatches] = useState<SchoolFeeReminderDispatch[]>([]);
+  const [lastReminderSweep, setLastReminderSweep] = useState<SchoolFeeReminderSweepResponse | null>(null);
 
   const [planTitle, setPlanTitle] = useState('');
   const [planDescription, setPlanDescription] = useState('');
@@ -88,12 +118,14 @@ const SchoolFinance = () => {
     setIsLoading(true);
     setError(null);
     try {
-      const [dashboardPayload, studentsPayload] = await Promise.all([
+      const [dashboardPayload, studentsPayload, reminderPayload] = await Promise.all([
         fetchSchoolFinanceDashboard(),
         fetchSchoolFinanceStudents(),
+        fetchSchoolReminderDispatches({ limit: 8 }),
       ]);
       setDashboard(dashboardPayload);
       setStudents(studentsPayload.students || []);
+      setReminderDispatches(Array.isArray(reminderPayload.dispatches) ? reminderPayload.dispatches : []);
     } catch (requestError) {
       const message =
         requestError instanceof Error
@@ -380,6 +412,34 @@ const SchoolFinance = () => {
     }
   };
 
+  const handleRunReminders = async () => {
+    if (activeAction) {
+      return;
+    }
+
+    setActiveAction('reminders-run');
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await runSchoolReminderSweep();
+      setLastReminderSweep(result);
+      setNotice(
+        `Reminder sweep completed. ${result.dueSoonInApp + result.overdueInApp} in-app and ${
+          result.dueSoonEmail + result.overdueEmail
+        } email reminders processed.`
+      );
+      await refreshDashboard();
+    } catch (requestError) {
+      const message =
+        requestError instanceof Error
+          ? requestError.message
+          : 'Could not run reminder sweep right now.';
+      setError(message);
+    } finally {
+      setActiveAction(null);
+    }
+  };
+
   const handleUpdateWithdrawalStatus = async (
     payoutId: string,
     status: 'requested' | 'processing' | 'paid' | 'failed' | 'canceled'
@@ -520,6 +580,14 @@ const SchoolFinance = () => {
               className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
             >
               Withdraw Funds
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleRunReminders()}
+              disabled={activeAction === 'reminders-run'}
+              className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {activeAction === 'reminders-run' ? 'Running Reminders...' : 'Run Reminders Now'}
             </button>
           </div>
         </div>
@@ -916,6 +984,66 @@ const SchoolFinance = () => {
             )}
           </section>
         </div>
+
+        <section className="mt-6 rounded-2xl bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">Reminder Dispatches</h2>
+              <p className="text-[11px] text-gray-500">
+                Track due soon and overdue reminders sent to students.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleRunReminders()}
+              disabled={activeAction === 'reminders-run'}
+              className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {activeAction === 'reminders-run' ? 'Running...' : 'Run Now'}
+            </button>
+          </div>
+
+          {lastReminderSweep && (
+            <p className="mt-2 text-[11px] text-gray-600">
+              Last sweep: {new Date(lastReminderSweep.generatedAt).toLocaleString()} • Scanned{' '}
+              {lastReminderSweep.scannedInvoices} invoices.
+            </p>
+          )}
+
+          {reminderDispatches.length === 0 ? (
+            <p className="mt-3 text-xs text-gray-500">
+              No reminder dispatches yet. Run reminders now to generate due soon and overdue prompts.
+            </p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {reminderDispatches.map((dispatch) => (
+                <article
+                  key={dispatch.id}
+                  className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-gray-900">
+                      {dispatch.invoiceTitle} • {dispatch.studentEmail}
+                    </p>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${reminderStatusStyles[dispatch.status]}`}
+                    >
+                      {dispatch.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    {reminderTypeLabel[dispatch.reminderType]} via {reminderChannelLabel[dispatch.channel]} • Reminder
+                    date {new Date(dispatch.reminderDate).toLocaleDateString()}
+                  </p>
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Logged {new Date(dispatch.createdAt).toLocaleString()}
+                    {dispatch.failureReason ? ` • ${dispatch.failureReason}` : ''}
+                  </p>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section className="mt-6 rounded-2xl bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center gap-2">

@@ -34,6 +34,10 @@ STRIPE_API_KEY=sk_...
 STRIPE_PUBLISHABLE_KEY=pk_...
 STRIPE_TUTOR_SUBSCRIPTION_PRICE_ID=price_...
 STRIPE_SCHOOL_SUBSCRIPTION_PRICE_ID=price_...
+SCHOOL_FEE_REMINDERS_ENABLED=1
+SCHOOL_FEE_REMINDERS_INTERVAL_MS=300000
+SCHOOL_FEE_DUE_SOON_WINDOW_HOURS=72
+SCHOOL_FEE_REMINDER_EMAIL_ENABLED=0
 ```
 
 Note:
@@ -65,6 +69,7 @@ If `prisma db push` cannot run in your environment, apply the SQL manually:
 ```bash
 psql "$DATABASE_URL" -f prisma/manual/20260224_add_call_signal_event.sql
 psql "$DATABASE_URL" -f prisma/manual/20260303_add_account_roles.sql
+psql "$DATABASE_URL" -f prisma/manual/20260306_add_school_fee_reminder_dispatches.sql
 ```
 
 Start API:
@@ -90,6 +95,11 @@ Subscription endpoints (requires `Authorization: Bearer <supabase_access_token>`
 - `GET /subscriptions/me/status?actor=tutor|school`
 - `POST /subscriptions/me/checkout`
 - `POST /subscriptions/me/sync`
+
+School finance reminder endpoints (school role):
+
+- `GET /school-finance/me/reminders/dispatches?type=due_soon|overdue&channel=in_app|email&status=queued|sent|failed|skipped&limit=80`
+- `POST /school-finance/me/reminders/run`
 
 Account roles endpoints (requires `Authorization: Bearer <supabase_access_token>`):
 

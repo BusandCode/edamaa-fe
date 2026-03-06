@@ -13,6 +13,9 @@ import {
   PaymentProvider,
   SchoolFeeInvoiceStatus,
   SchoolFeePaymentStatus,
+  SchoolFeeReminderChannel,
+  SchoolFeeReminderDispatchStatus,
+  SchoolFeeReminderType,
   SchoolPayoutStatus,
   type SchoolFeeInvoice,
   type SchoolFeePayment,
@@ -143,6 +146,20 @@ type SchoolPayoutLedgerItem = {
   createdAt: string;
 };
 
+type SchoolFeeReminderDispatchItem = {
+  id: string;
+  invoiceId: string;
+  invoiceTitle: string;
+  studentEmail: string;
+  reminderType: 'due_soon' | 'overdue';
+  channel: 'in_app' | 'email';
+  status: 'queued' | 'sent' | 'failed' | 'skipped';
+  reminderDate: string;
+  sentAt: string | null;
+  failureReason: string | null;
+  createdAt: string;
+};
+
 type CreateFeePlanInput = {
   title?: string;
   description?: string;
@@ -163,6 +180,13 @@ type CreateInvoiceInput = {
 
 type ListSchoolInvoicesInput = {
   status?: string;
+};
+
+type ListReminderDispatchesInput = {
+  reminderType?: string;
+  channel?: string;
+  status?: string;
+  limit?: number;
 };
 
 type PayInvoiceInput = {
@@ -238,6 +262,32 @@ const PAYOUT_STATUS_FROM_PRISMA: Record<
   [SchoolPayoutStatus.PAID]: 'paid',
   [SchoolPayoutStatus.FAILED]: 'failed',
   [SchoolPayoutStatus.CANCELED]: 'canceled',
+};
+
+const REMINDER_TYPE_FROM_PRISMA: Record<
+  SchoolFeeReminderType,
+  SchoolFeeReminderDispatchItem['reminderType']
+> = {
+  [SchoolFeeReminderType.DUE_SOON]: 'due_soon',
+  [SchoolFeeReminderType.OVERDUE]: 'overdue',
+};
+
+const REMINDER_CHANNEL_FROM_PRISMA: Record<
+  SchoolFeeReminderChannel,
+  SchoolFeeReminderDispatchItem['channel']
+> = {
+  [SchoolFeeReminderChannel.IN_APP]: 'in_app',
+  [SchoolFeeReminderChannel.EMAIL]: 'email',
+};
+
+const REMINDER_DISPATCH_STATUS_FROM_PRISMA: Record<
+  SchoolFeeReminderDispatchStatus,
+  SchoolFeeReminderDispatchItem['status']
+> = {
+  [SchoolFeeReminderDispatchStatus.QUEUED]: 'queued',
+  [SchoolFeeReminderDispatchStatus.SENT]: 'sent',
+  [SchoolFeeReminderDispatchStatus.FAILED]: 'failed',
+  [SchoolFeeReminderDispatchStatus.SKIPPED]: 'skipped',
 };
 
 @Injectable()
@@ -584,6 +634,242 @@ export class SchoolFinanceService {
       if (this.isFinanceWorkspaceUnavailableError(error)) {
         this.logger.warn('School finance store is unavailable. Returning empty school invoices list.');
         return { invoices: [] };
+      }
+
+      throw this.rethrowUnexpectedError(error);
+    }
+  }
+
+  async listReminderDispatchesForAuthUser(
+    authUser: AuthUser,
+    input: ListReminderDispatchesInput = {}
+  ) {
+    const email = this.requireEmail(authUser);
+    const normalizedRole = this.normalizeRole(authUser.role);
+    this.assertSchoolRole(normalizedRole);
+    const displayName = this.normalizeDisplayName(authUser.name, email);
+
+    try {
+      const schoolUser = await this.resolveOrCreateUser(email, displayName, 'school');
+      const account = await this.getOrCreateSchoolFinanceAccount(schoolUser.id);
+      const reminderType = this.normalizeReminderType(input.reminderType);
+      const reminderChannel = this.normalizeReminderChannel(input.channel);
+      const reminderStatus = this.normalizeReminderDispatchStatus(input.status);
+      const limit = this.normalizeReminderDispatchLimit(input.limit);
+
+      const dispatches = await this.prisma.schoolFeeReminderDispatch.findMany({
+        where: {
+          accountId: account.id,
+          ...(reminderType ? { reminderType } : {}),
+          ...(reminderChannel ? { channel: reminderChannel } : {}),
+          ...(reminderStatus ? { status: reminderStatus } : {}),
+        },
+        include: {
+          invoice: {
+            select: {
+              publicId: true,
+              title: true,
+            },
+          },
+        },
+        orderBy: [{ createdAt: 'desc' }],
+        take: limit,
+      });
+
+      return {
+        generatedAt: new Date().toISOString(),
+        total: dispatches.length,
+        dispatches: dispatches.map((dispatch) =>
+          this.mapReminderDispatch(dispatch, dispatch.invoice?.publicId || '', dispatch.invoice?.title || 'Invoice')
+        ),
+      };
+    } catch (error) {
+      if (this.isFinanceWorkspaceUnavailableError(error)) {
+        this.logger.warn('School finance store is unavailable. Returning empty reminder dispatch list.');
+        return {
+          generatedAt: new Date().toISOString(),
+          total: 0,
+          dispatches: [] as SchoolFeeReminderDispatchItem[],
+        };
+      }
+
+      throw this.rethrowUnexpectedError(error);
+    }
+  }
+
+  async runReminderSweepForAuthUser(authUser: AuthUser) {
+    const email = this.requireEmail(authUser);
+    const normalizedRole = this.normalizeRole(authUser.role);
+    this.assertSchoolRole(normalizedRole);
+    const displayName = this.normalizeDisplayName(authUser.name, email);
+
+    const schoolUser = await this.resolveOrCreateUser(email, displayName, 'school');
+    const account = await this.getOrCreateSchoolFinanceAccount(schoolUser.id);
+    return this.dispatchScheduledInvoiceReminders({
+      accountId: account.id,
+      initiatedBy: email,
+    });
+  }
+
+  async dispatchScheduledInvoiceReminders(input: {
+    now?: Date;
+    accountId?: number;
+    initiatedBy?: string;
+  } = {}) {
+    const now = input.now || new Date();
+    const dueSoonWindowMs = this.resolveReminderDueSoonWindowMs();
+    const dueSoonCutoff = new Date(now.getTime() + dueSoonWindowMs);
+    const reminderDateToday = this.toUtcDateBucket(now);
+    const emailDispatchEnabled = this.isReminderEmailDispatchEnabled();
+
+    try {
+      await this.refreshOverdueInvoicesGlobal(now, input.accountId);
+
+      const invoices = await this.prisma.schoolFeeInvoice.findMany({
+        where: {
+          ...(typeof input.accountId === 'number' ? { accountId: input.accountId } : {}),
+          status: {
+            in: [SchoolFeeInvoiceStatus.PENDING, SchoolFeeInvoiceStatus.OVERDUE],
+          },
+          dueAt: {
+            not: null,
+            lte: dueSoonCutoff,
+          },
+        },
+        orderBy: [{ dueAt: 'asc' }, { createdAt: 'desc' }],
+        take: 600,
+      });
+
+      let dueSoonInApp = 0;
+      let dueSoonEmail = 0;
+      let overdueInApp = 0;
+      let overdueEmail = 0;
+
+      for (const invoice of invoices) {
+        if (!invoice.dueAt) {
+          continue;
+        }
+
+        const normalizedStudentEmail = this.normalizeEmail(invoice.studentEmail);
+        if (!normalizedStudentEmail || !normalizedStudentEmail.includes('@')) {
+          continue;
+        }
+
+        const isOverdue = invoice.dueAt.getTime() <= now.getTime();
+        const isDueSoon = invoice.dueAt.getTime() > now.getTime() && invoice.dueAt.getTime() <= dueSoonCutoff.getTime();
+
+        if (isDueSoon) {
+          const dueSoonReminderDate = this.toUtcDateBucket(invoice.dueAt);
+          const inAppCreated = await this.createReminderDispatchIfMissing({
+            invoice,
+            studentEmail: normalizedStudentEmail,
+            reminderType: SchoolFeeReminderType.DUE_SOON,
+            channel: SchoolFeeReminderChannel.IN_APP,
+            reminderDate: dueSoonReminderDate,
+            status: SchoolFeeReminderDispatchStatus.SENT,
+            sentAt: now,
+            metadata: {
+              initiatedBy: input.initiatedBy || 'scheduler',
+              reason: 'due-soon-window',
+              dueAt: invoice.dueAt.toISOString(),
+            },
+          });
+          if (inAppCreated) {
+            dueSoonInApp += 1;
+          }
+
+          const emailCreated = await this.createReminderDispatchIfMissing({
+            invoice,
+            studentEmail: normalizedStudentEmail,
+            reminderType: SchoolFeeReminderType.DUE_SOON,
+            channel: SchoolFeeReminderChannel.EMAIL,
+            reminderDate: dueSoonReminderDate,
+            status: emailDispatchEnabled
+              ? SchoolFeeReminderDispatchStatus.QUEUED
+              : SchoolFeeReminderDispatchStatus.SKIPPED,
+            sentAt: emailDispatchEnabled ? null : now,
+            failureReason: emailDispatchEnabled
+              ? null
+              : 'Email reminder delivery is disabled in the backend environment.',
+            metadata: {
+              initiatedBy: input.initiatedBy || 'scheduler',
+              reason: 'due-soon-window',
+              dueAt: invoice.dueAt.toISOString(),
+            },
+          });
+          if (emailCreated) {
+            dueSoonEmail += 1;
+          }
+        }
+
+        if (isOverdue) {
+          const inAppCreated = await this.createReminderDispatchIfMissing({
+            invoice,
+            studentEmail: normalizedStudentEmail,
+            reminderType: SchoolFeeReminderType.OVERDUE,
+            channel: SchoolFeeReminderChannel.IN_APP,
+            reminderDate: reminderDateToday,
+            status: SchoolFeeReminderDispatchStatus.SENT,
+            sentAt: now,
+            metadata: {
+              initiatedBy: input.initiatedBy || 'scheduler',
+              reason: 'overdue-daily',
+              dueAt: invoice.dueAt.toISOString(),
+            },
+          });
+          if (inAppCreated) {
+            overdueInApp += 1;
+          }
+
+          const emailCreated = await this.createReminderDispatchIfMissing({
+            invoice,
+            studentEmail: normalizedStudentEmail,
+            reminderType: SchoolFeeReminderType.OVERDUE,
+            channel: SchoolFeeReminderChannel.EMAIL,
+            reminderDate: reminderDateToday,
+            status: emailDispatchEnabled
+              ? SchoolFeeReminderDispatchStatus.QUEUED
+              : SchoolFeeReminderDispatchStatus.SKIPPED,
+            sentAt: emailDispatchEnabled ? null : now,
+            failureReason: emailDispatchEnabled
+              ? null
+              : 'Email reminder delivery is disabled in the backend environment.',
+            metadata: {
+              initiatedBy: input.initiatedBy || 'scheduler',
+              reason: 'overdue-daily',
+              dueAt: invoice.dueAt.toISOString(),
+            },
+          });
+          if (emailCreated) {
+            overdueEmail += 1;
+          }
+        }
+      }
+
+      return {
+        generatedAt: new Date().toISOString(),
+        accountId: input.accountId || null,
+        scannedInvoices: invoices.length,
+        dueSoonInApp,
+        dueSoonEmail,
+        overdueInApp,
+        overdueEmail,
+        emailDispatchEnabled,
+      };
+    } catch (error) {
+      if (this.isFinanceWorkspaceUnavailableError(error)) {
+        this.logger.warn('School finance store is unavailable. Skipping reminder dispatch sweep.');
+        return {
+          generatedAt: new Date().toISOString(),
+          accountId: input.accountId || null,
+          scannedInvoices: 0,
+          dueSoonInApp: 0,
+          dueSoonEmail: 0,
+          overdueInApp: 0,
+          overdueEmail: 0,
+          emailDispatchEnabled,
+          skipped: true,
+        };
       }
 
       throw this.rethrowUnexpectedError(error);
@@ -1796,6 +2082,36 @@ export class SchoolFinanceService {
     };
   }
 
+  private mapReminderDispatch(
+    dispatch: {
+      publicId: string;
+      studentEmail: string;
+      reminderType: SchoolFeeReminderType;
+      channel: SchoolFeeReminderChannel;
+      status: SchoolFeeReminderDispatchStatus;
+      reminderDate: Date;
+      sentAt: Date | null;
+      failureReason: string | null;
+      createdAt: Date;
+    },
+    invoicePublicId: string,
+    invoiceTitle: string
+  ): SchoolFeeReminderDispatchItem {
+    return {
+      id: dispatch.publicId,
+      invoiceId: invoicePublicId,
+      invoiceTitle,
+      studentEmail: dispatch.studentEmail,
+      reminderType: REMINDER_TYPE_FROM_PRISMA[dispatch.reminderType],
+      channel: REMINDER_CHANNEL_FROM_PRISMA[dispatch.channel],
+      status: REMINDER_DISPATCH_STATUS_FROM_PRISMA[dispatch.status],
+      reminderDate: dispatch.reminderDate.toISOString(),
+      sentAt: dispatch.sentAt ? dispatch.sentAt.toISOString() : null,
+      failureReason: dispatch.failureReason,
+      createdAt: dispatch.createdAt.toISOString(),
+    };
+  }
+
   private mapPayoutLedgerEntry(
     entry: {
       publicId: string;
@@ -1997,6 +2313,22 @@ export class SchoolFinanceService {
     });
   }
 
+  private async refreshOverdueInvoicesGlobal(now: Date, accountId?: number) {
+    await this.prisma.schoolFeeInvoice.updateMany({
+      where: {
+        ...(typeof accountId === 'number' ? { accountId } : {}),
+        status: SchoolFeeInvoiceStatus.PENDING,
+        dueAt: {
+          not: null,
+          lt: now,
+        },
+      },
+      data: {
+        status: SchoolFeeInvoiceStatus.OVERDUE,
+      },
+    });
+  }
+
   private async refreshOverdueInvoicesForStudent(studentEmail: string, studentUserId: number | null) {
     const normalizedEmail = this.normalizeEmail(studentEmail);
     const targetFilters: Prisma.SchoolFeeInvoiceWhereInput[] = [];
@@ -2031,6 +2363,133 @@ export class SchoolFinanceService {
         status: SchoolFeeInvoiceStatus.OVERDUE,
       },
     });
+  }
+
+  private async createReminderDispatchIfMissing(input: {
+    invoice: {
+      id: number;
+      publicId: string;
+      accountId: number;
+    };
+    studentEmail: string;
+    reminderType: SchoolFeeReminderType;
+    channel: SchoolFeeReminderChannel;
+    reminderDate: Date;
+    status: SchoolFeeReminderDispatchStatus;
+    sentAt?: Date | null;
+    failureReason?: string | null;
+    metadata?: Record<string, unknown>;
+  }) {
+    try {
+      await this.prisma.schoolFeeReminderDispatch.create({
+        data: {
+          publicId: this.createPublicId('RMD', input.invoice.accountId),
+          invoiceId: input.invoice.id,
+          invoicePublicId: input.invoice.publicId,
+          accountId: input.invoice.accountId,
+          studentEmail: input.studentEmail,
+          reminderType: input.reminderType,
+          channel: input.channel,
+          status: input.status,
+          reminderDate: input.reminderDate,
+          sentAt: input.sentAt ?? null,
+          failureReason: input.failureReason ?? null,
+          metadata: input.metadata
+            ? (input.metadata as Prisma.InputJsonValue)
+            : undefined,
+        },
+      });
+      return true;
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        return false;
+      }
+
+      throw error;
+    }
+  }
+
+  private normalizeReminderType(value: string | undefined): SchoolFeeReminderType | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+
+    if (normalized === 'due_soon' || normalized === 'due-soon') {
+      return SchoolFeeReminderType.DUE_SOON;
+    }
+    if (normalized === 'overdue') {
+      return SchoolFeeReminderType.OVERDUE;
+    }
+
+    throw new BadRequestException('Reminder type must be one of: due_soon, overdue.');
+  }
+
+  private normalizeReminderChannel(value: string | undefined): SchoolFeeReminderChannel | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+
+    if (normalized === 'in_app' || normalized === 'in-app' || normalized === 'inapp') {
+      return SchoolFeeReminderChannel.IN_APP;
+    }
+    if (normalized === 'email') {
+      return SchoolFeeReminderChannel.EMAIL;
+    }
+
+    throw new BadRequestException('Reminder channel must be one of: in_app, email.');
+  }
+
+  private normalizeReminderDispatchStatus(
+    value: string | undefined
+  ): SchoolFeeReminderDispatchStatus | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+
+    if (normalized === 'queued') {
+      return SchoolFeeReminderDispatchStatus.QUEUED;
+    }
+    if (normalized === 'sent') {
+      return SchoolFeeReminderDispatchStatus.SENT;
+    }
+    if (normalized === 'failed') {
+      return SchoolFeeReminderDispatchStatus.FAILED;
+    }
+    if (normalized === 'skipped') {
+      return SchoolFeeReminderDispatchStatus.SKIPPED;
+    }
+
+    throw new BadRequestException('Reminder status must be one of: queued, sent, failed, skipped.');
+  }
+
+  private normalizeReminderDispatchLimit(value: number | string | undefined) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return 80;
+    }
+
+    return Math.min(200, Math.max(1, Math.round(parsed)));
+  }
+
+  private resolveReminderDueSoonWindowMs() {
+    const fromEnv = Number(process.env.SCHOOL_FEE_DUE_SOON_WINDOW_HOURS || '');
+    const hours = Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : 72;
+    return Math.round(hours * 60 * 60 * 1000);
+  }
+
+  private isReminderEmailDispatchEnabled() {
+    const value = String(process.env.SCHOOL_FEE_REMINDER_EMAIL_ENABLED || '').trim().toLowerCase();
+    return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+  }
+
+  private toUtcDateBucket(value: Date) {
+    return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate(), 0, 0, 0, 0));
   }
 
   private normalizeInvoiceStatus(value: string | undefined): SchoolFeeInvoiceStatus | null {

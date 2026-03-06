@@ -105,6 +105,38 @@ export type SchoolPayoutLedgerEntry = {
   createdAt: string;
 };
 
+export type SchoolFeeReminderDispatch = {
+  id: string;
+  invoiceId: string;
+  invoiceTitle: string;
+  studentEmail: string;
+  reminderType: 'due_soon' | 'overdue';
+  channel: 'in_app' | 'email';
+  status: 'queued' | 'sent' | 'failed' | 'skipped';
+  reminderDate: string;
+  sentAt: string | null;
+  failureReason: string | null;
+  createdAt: string;
+};
+
+export type SchoolFeeReminderDispatchesResponse = {
+  generatedAt: string;
+  total: number;
+  dispatches: SchoolFeeReminderDispatch[];
+};
+
+export type SchoolFeeReminderSweepResponse = {
+  generatedAt: string;
+  accountId: number | null;
+  scannedInvoices: number;
+  dueSoonInApp: number;
+  dueSoonEmail: number;
+  overdueInApp: number;
+  overdueEmail: number;
+  emailDispatchEnabled: boolean;
+  skipped?: boolean;
+};
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
 
 const isLocalhostHost = (host: string) => host === '127.0.0.1' || host === 'localhost';
@@ -132,6 +164,7 @@ const resolveApiBaseCandidates = () => {
 type LocalFinanceWorkspace = {
   dashboard: SchoolFinanceDashboard;
   payoutLedgers: Record<string, SchoolPayoutLedgerEntry[]>;
+  reminderDispatches: SchoolFeeReminderDispatch[];
 };
 
 const LOCAL_FINANCE_STORAGE_KEY = 'edamaa_school_finance_local_v1';
@@ -249,12 +282,22 @@ const getLocalFinanceWorkspace = (email: string): LocalFinanceWorkspace => {
   const store = readLocalFinanceStore();
   const existing = store[normalizedEmail];
   if (existing?.dashboard) {
-    return existing;
+    const normalizedExisting: LocalFinanceWorkspace = {
+      dashboard: existing.dashboard,
+      payoutLedgers: existing.payoutLedgers || {},
+      reminderDispatches: Array.isArray((existing as LocalFinanceWorkspace).reminderDispatches)
+        ? (existing as LocalFinanceWorkspace).reminderDispatches
+        : [],
+    };
+    store[normalizedEmail] = normalizedExisting;
+    writeLocalFinanceStore(store);
+    return normalizedExisting;
   }
 
   const created: LocalFinanceWorkspace = {
     dashboard: buildEmptyLocalDashboard(normalizedEmail),
     payoutLedgers: {},
+    reminderDispatches: [],
   };
   store[normalizedEmail] = created;
   writeLocalFinanceStore(store);
@@ -284,7 +327,8 @@ const hasLocalFinanceActivity = (workspace?: LocalFinanceWorkspace | null) => {
     dashboard.wallet.onHold > 0 ||
     dashboard.wallet.lifetimeGross > 0 ||
     dashboard.wallet.lifetimeNet > 0 ||
-    dashboard.wallet.totalWithdrawn > 0
+    dashboard.wallet.totalWithdrawn > 0 ||
+    (workspace.reminderDispatches || []).length > 0
   );
 };
 
@@ -798,6 +842,201 @@ const localFetchSchoolWithdrawalLedger = (payoutId: string) => {
   };
 };
 
+const toUtcDateBucketIso = (value: Date) =>
+  new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate(), 0, 0, 0, 0)).toISOString();
+
+const upsertLocalReminderDispatch = (
+  workspace: LocalFinanceWorkspace,
+  payload: Omit<SchoolFeeReminderDispatch, 'id' | 'createdAt'>
+) => {
+  const existing = workspace.reminderDispatches.find(
+    (dispatch) =>
+      dispatch.invoiceId === payload.invoiceId &&
+      dispatch.studentEmail === payload.studentEmail &&
+      dispatch.reminderType === payload.reminderType &&
+      dispatch.channel === payload.channel &&
+      dispatch.reminderDate === payload.reminderDate
+  );
+
+  if (existing) {
+    return false;
+  }
+
+  const created: SchoolFeeReminderDispatch = {
+    ...payload,
+    id: createLocalId('RMD'),
+    createdAt: nowIso(),
+  };
+  workspace.reminderDispatches.unshift(created);
+  workspace.reminderDispatches = workspace.reminderDispatches.slice(0, 300);
+  return true;
+};
+
+const localRunSchoolReminderSweep = () => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const now = new Date();
+  const dueSoonWindowMs = 72 * 60 * 60 * 1000;
+  const dueSoonCutoff = new Date(now.getTime() + dueSoonWindowMs);
+  const overdueReminderDate = toUtcDateBucketIso(now);
+
+  let dueSoonInApp = 0;
+  let dueSoonEmail = 0;
+  let overdueInApp = 0;
+  let overdueEmail = 0;
+  let scannedInvoices = 0;
+
+  workspace.dashboard.recentInvoices.forEach((invoice) => {
+    const dueDateValue = String(invoice.dueDate || '').trim();
+    if (!dueDateValue) {
+      return;
+    }
+
+    const dueDate = new Date(dueDateValue);
+    if (Number.isNaN(dueDate.getTime())) {
+      return;
+    }
+
+    const isOutstanding = invoice.status !== 'paid' && invoice.status !== 'canceled';
+    if (!isOutstanding) {
+      return;
+    }
+
+    scannedInvoices += 1;
+    const normalizedStudentEmail = String(invoice.studentEmail || '').trim().toLowerCase();
+    if (!normalizedStudentEmail || !normalizedStudentEmail.includes('@')) {
+      return;
+    }
+
+    const isOverdue = dueDate.getTime() <= now.getTime();
+    const isDueSoon = dueDate.getTime() > now.getTime() && dueDate.getTime() <= dueSoonCutoff.getTime();
+
+    if (isOverdue && invoice.status === 'pending') {
+      invoice.status = 'overdue';
+    }
+
+    if (isDueSoon) {
+      const reminderDate = toUtcDateBucketIso(dueDate);
+      if (
+        upsertLocalReminderDispatch(workspace, {
+          invoiceId: invoice.id,
+          invoiceTitle: invoice.title,
+          studentEmail: normalizedStudentEmail,
+          reminderType: 'due_soon',
+          channel: 'in_app',
+          status: 'sent',
+          reminderDate,
+          sentAt: nowIso(),
+          failureReason: null,
+        })
+      ) {
+        dueSoonInApp += 1;
+      }
+
+      if (
+        upsertLocalReminderDispatch(workspace, {
+          invoiceId: invoice.id,
+          invoiceTitle: invoice.title,
+          studentEmail: normalizedStudentEmail,
+          reminderType: 'due_soon',
+          channel: 'email',
+          status: 'skipped',
+          reminderDate,
+          sentAt: nowIso(),
+          failureReason: 'Email reminder delivery is disabled in local mode.',
+        })
+      ) {
+        dueSoonEmail += 1;
+      }
+    }
+
+    if (isOverdue) {
+      if (
+        upsertLocalReminderDispatch(workspace, {
+          invoiceId: invoice.id,
+          invoiceTitle: invoice.title,
+          studentEmail: normalizedStudentEmail,
+          reminderType: 'overdue',
+          channel: 'in_app',
+          status: 'sent',
+          reminderDate: overdueReminderDate,
+          sentAt: nowIso(),
+          failureReason: null,
+        })
+      ) {
+        overdueInApp += 1;
+      }
+
+      if (
+        upsertLocalReminderDispatch(workspace, {
+          invoiceId: invoice.id,
+          invoiceTitle: invoice.title,
+          studentEmail: normalizedStudentEmail,
+          reminderType: 'overdue',
+          channel: 'email',
+          status: 'skipped',
+          reminderDate: overdueReminderDate,
+          sentAt: nowIso(),
+          failureReason: 'Email reminder delivery is disabled in local mode.',
+        })
+      ) {
+        overdueEmail += 1;
+      }
+    }
+  });
+
+  refreshDashboardOverview(workspace.dashboard);
+  saveLocalFinanceWorkspace(schoolEmail, workspace);
+
+  return {
+    generatedAt: nowIso(),
+    accountId: null,
+    scannedInvoices,
+    dueSoonInApp,
+    dueSoonEmail,
+    overdueInApp,
+    overdueEmail,
+    emailDispatchEnabled: false,
+  } as SchoolFeeReminderSweepResponse;
+};
+
+const localFetchSchoolReminderDispatches = (input?: {
+  reminderType?: 'due_soon' | 'overdue';
+  channel?: 'in_app' | 'email';
+  status?: 'queued' | 'sent' | 'failed' | 'skipped';
+  limit?: number;
+}): SchoolFeeReminderDispatchesResponse => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const parsedLimit = Number(input?.limit);
+  const limit = Math.min(
+    200,
+    Math.max(1, Number.isFinite(parsedLimit) ? Math.round(parsedLimit) : 80)
+  );
+
+  const filtered = workspace.reminderDispatches
+    .filter((dispatch) => {
+      if (input?.reminderType && dispatch.reminderType !== input.reminderType) {
+        return false;
+      }
+      if (input?.channel && dispatch.channel !== input.channel) {
+        return false;
+      }
+      if (input?.status && dispatch.status !== input.status) {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, limit);
+
+  return {
+    generatedAt: nowIso(),
+    total: filtered.length,
+    dispatches: filtered,
+  };
+};
+
 export const fetchSchoolFinanceDashboard = async () => {
   return runWithLocalFinanceFallback(
     async () => {
@@ -988,5 +1227,49 @@ export const fetchSchoolWithdrawalLedger = async (payoutId: string) => {
       };
     },
     () => localFetchSchoolWithdrawalLedger(payoutId)
+  );
+};
+
+export const runSchoolReminderSweep = async () => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth('/school-finance/me/reminders/run', {
+        method: 'POST',
+      });
+      return (await response.json()) as SchoolFeeReminderSweepResponse;
+    },
+    () => localRunSchoolReminderSweep()
+  );
+};
+
+export const fetchSchoolReminderDispatches = async (input?: {
+  reminderType?: 'due_soon' | 'overdue';
+  channel?: 'in_app' | 'email';
+  status?: 'queued' | 'sent' | 'failed' | 'skipped';
+  limit?: number;
+}) => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      const params = new URLSearchParams();
+      if (input?.reminderType) {
+        params.set('type', input.reminderType);
+      }
+      if (input?.channel) {
+        params.set('channel', input.channel);
+      }
+      if (input?.status) {
+        params.set('status', input.status);
+      }
+      if (typeof input?.limit === 'number' && Number.isFinite(input.limit)) {
+        params.set('limit', String(Math.round(input.limit)));
+      }
+
+      const query = params.toString();
+      const response = await requestWithSchoolAuth(
+        `/school-finance/me/reminders/dispatches${query ? `?${query}` : ''}`
+      );
+      return (await response.json()) as SchoolFeeReminderDispatchesResponse;
+    },
+    () => localFetchSchoolReminderDispatches(input)
   );
 };

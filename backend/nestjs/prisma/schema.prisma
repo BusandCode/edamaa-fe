@@ -193,6 +193,23 @@ enum SchoolPayoutStatus {
   CANCELED
 }
 
+enum SchoolFeeReminderType {
+  DUE_SOON
+  OVERDUE
+}
+
+enum SchoolFeeReminderChannel {
+  IN_APP
+  EMAIL
+}
+
+enum SchoolFeeReminderDispatchStatus {
+  QUEUED
+  SENT
+  FAILED
+  SKIPPED
+}
+
 model PaymentMethod {
   id                Int               @id @default(autoincrement())
   publicId          String            @unique
@@ -327,6 +344,7 @@ model SchoolFeeInvoice {
   updatedAt             DateTime             @updatedAt
 
   payments SchoolFeePayment[]
+  reminderDispatches SchoolFeeReminderDispatch[]
 
   @@index([accountId, status, createdAt])
   @@index([studentEmail, status, dueAt])
@@ -347,6 +365,30 @@ model SchoolFeeInvoiceNotificationRead {
   @@unique([userEmail, notificationId])
   @@index([invoicePublicId, createdAt])
   @@index([userEmail, createdAt])
+}
+
+model SchoolFeeReminderDispatch {
+  id             Int                           @id @default(autoincrement())
+  publicId       String                        @unique
+  invoice        SchoolFeeInvoice              @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceId      Int
+  invoicePublicId String
+  accountId      Int
+  studentEmail   String
+  reminderType   SchoolFeeReminderType
+  channel        SchoolFeeReminderChannel
+  status         SchoolFeeReminderDispatchStatus @default(QUEUED)
+  reminderDate   DateTime
+  sentAt         DateTime?
+  failureReason  String?
+  metadata       Json?
+  createdAt      DateTime                      @default(now())
+  updatedAt      DateTime                      @updatedAt
+
+  @@unique([invoiceId, studentEmail, reminderType, channel, reminderDate], name: "SchoolFeeReminderDispatch_invoice_student_type_channel_date_key")
+  @@index([accountId, createdAt])
+  @@index([studentEmail, createdAt])
+  @@index([channel, status, createdAt])
 }
 
 model SchoolFeePayment {

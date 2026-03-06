@@ -67,6 +67,27 @@ export class SchoolFinanceController {
     });
   }
 
+  @Get('me/reminders/dispatches')
+  listMyReminderDispatches(
+    @Req() request: Request,
+    @Query('type') reminderType?: string,
+    @Query('channel') channel?: string,
+    @Query('status') status?: string,
+    @Query('limit') limit?: string
+  ) {
+    return this.schoolFinanceService.listReminderDispatchesForAuthUser(this.getAuthUser(request), {
+      reminderType,
+      channel,
+      status,
+      limit: typeof limit === 'string' && limit.trim() ? Number(limit) : undefined,
+    });
+  }
+
+  @Post('me/reminders/run')
+  runMyReminderSweep(@Req() request: Request) {
+    return this.schoolFinanceService.runReminderSweepForAuthUser(this.getAuthUser(request));
+  }
+
   @Post('me/invoices')
   createInvoice(@Req() request: Request, @Body() body: CreateInvoiceBody) {
     return this.schoolFinanceService.createInvoiceForAuthUser(this.getAuthUser(request), {
