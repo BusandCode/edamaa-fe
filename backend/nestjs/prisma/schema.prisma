@@ -378,6 +378,9 @@ model SchoolFeeReminderDispatch {
   reminderType   SchoolFeeReminderType
   channel        SchoolFeeReminderChannel
   status         SchoolFeeReminderDispatchStatus @default(QUEUED)
+  attemptCount   Int                           @default(0)
+  nextRetryAt    DateTime?
+  lastError      String?
   reminderDate   DateTime
   sentAt         DateTime?
   failureReason  String?
@@ -389,6 +392,7 @@ model SchoolFeeReminderDispatch {
   @@index([accountId, createdAt])
   @@index([studentEmail, createdAt])
   @@index([channel, status, createdAt])
+  @@index([channel, status, nextRetryAt, createdAt])
 }
 
 model SchoolFeePayment {

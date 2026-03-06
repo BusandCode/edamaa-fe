@@ -40,7 +40,7 @@ export class SchoolFinanceRemindersScheduler implements OnModuleInit, OnModuleDe
         initiatedBy: `scheduler:${trigger}`,
       });
       this.logger.log(
-        `Reminder sweep (${trigger}) scanned=${result.scannedInvoices} dueSoon(in_app/email)=${result.dueSoonInApp}/${result.dueSoonEmail} overdue(in_app/email)=${result.overdueInApp}/${result.overdueEmail} email(provider/attempted/sent/failed/skipped)=${result.emailProvider}/${result.emailAttempted}/${result.emailSent}/${result.emailFailed}/${result.emailSkipped}`
+        `Reminder sweep (${trigger}) scanned=${result.scannedInvoices} dueSoon(in_app/email)=${result.dueSoonInApp}/${result.dueSoonEmail} overdue(in_app/email)=${result.overdueInApp}/${result.overdueEmail} email(provider/attempted/sent/failed/skipped/retry/exhausted)=${result.emailProvider}/${result.emailAttempted}/${result.emailSent}/${result.emailFailed}/${result.emailSkipped}/${result.emailQueuedForRetry}/${result.emailExhausted}`
       );
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'unknown error';

@@ -156,6 +156,9 @@ type SchoolFeeReminderDispatchItem = {
   status: 'queued' | 'sent' | 'failed' | 'skipped';
   reminderDate: string;
   sentAt: string | null;
+  attemptCount: number;
+  nextRetryAt: string | null;
+  lastError: string | null;
   failureReason: string | null;
   createdAt: string;
 };
@@ -168,6 +171,16 @@ type ReminderEmailProcessingSummary = {
   sent: number;
   failed: number;
   skipped: number;
+  queuedForRetry: number;
+  exhausted: number;
+};
+
+type ReminderEmailRequeueSummary = {
+  generatedAt: string;
+  accountId: number | null;
+  selected: number;
+  requeued: number;
+  maxRetries: number;
 };
 
 type CreateFeePlanInput = {
@@ -735,6 +748,24 @@ export class SchoolFinanceService {
     });
   }
 
+  async requeueFailedReminderEmailsForAuthUser(
+    authUser: AuthUser,
+    input: { limit?: number } = {}
+  ): Promise<ReminderEmailRequeueSummary> {
+    const email = this.requireEmail(authUser);
+    const normalizedRole = this.normalizeRole(authUser.role);
+    this.assertSchoolRole(normalizedRole);
+    const displayName = this.normalizeDisplayName(authUser.name, email);
+
+    const schoolUser = await this.resolveOrCreateUser(email, displayName, 'school');
+    const account = await this.getOrCreateSchoolFinanceAccount(schoolUser.id);
+    return this.requeueFailedReminderEmails({
+      accountId: account.id,
+      initiatedBy: email,
+      limit: input.limit,
+    });
+  }
+
   async dispatchScheduledInvoiceReminders(input: {
     now?: Date;
     accountId?: number;
@@ -889,6 +920,8 @@ export class SchoolFinanceService {
         emailSent: emailDelivery.sent,
         emailFailed: emailDelivery.failed,
         emailSkipped: emailDelivery.skipped,
+        emailQueuedForRetry: emailDelivery.queuedForRetry,
+        emailExhausted: emailDelivery.exhausted,
       };
     } catch (error) {
       if (this.isFinanceWorkspaceUnavailableError(error)) {
@@ -907,6 +940,8 @@ export class SchoolFinanceService {
           emailSent: 0,
           emailFailed: 0,
           emailSkipped: 0,
+          emailQueuedForRetry: 0,
+          emailExhausted: 0,
           skipped: true,
         };
       }
@@ -2128,6 +2163,9 @@ export class SchoolFinanceService {
       reminderType: SchoolFeeReminderType;
       channel: SchoolFeeReminderChannel;
       status: SchoolFeeReminderDispatchStatus;
+      attemptCount: number;
+      nextRetryAt: Date | null;
+      lastError: string | null;
       reminderDate: Date;
       sentAt: Date | null;
       failureReason: string | null;
@@ -2144,6 +2182,9 @@ export class SchoolFinanceService {
       reminderType: REMINDER_TYPE_FROM_PRISMA[dispatch.reminderType],
       channel: REMINDER_CHANNEL_FROM_PRISMA[dispatch.channel],
       status: REMINDER_DISPATCH_STATUS_FROM_PRISMA[dispatch.status],
+      attemptCount: dispatch.attemptCount,
+      nextRetryAt: dispatch.nextRetryAt ? dispatch.nextRetryAt.toISOString() : null,
+      lastError: dispatch.lastError,
       reminderDate: dispatch.reminderDate.toISOString(),
       sentAt: dispatch.sentAt ? dispatch.sentAt.toISOString() : null,
       failureReason: dispatch.failureReason,
@@ -2462,16 +2503,40 @@ export class SchoolFinanceService {
         sent: 0,
         failed: 0,
         skipped: 0,
+        queuedForRetry: 0,
+        exhausted: 0,
       };
     }
 
+    const now = new Date();
     const provider = this.resolveReminderEmailProvider();
     const batchSize = this.resolveReminderEmailBatchSize();
+    const maxRetries = this.resolveReminderEmailMaxRetries();
     const queuedDispatches = await this.prisma.schoolFeeReminderDispatch.findMany({
       where: {
         ...(typeof input.accountId === 'number' ? { accountId: input.accountId } : {}),
         channel: SchoolFeeReminderChannel.EMAIL,
-        status: SchoolFeeReminderDispatchStatus.QUEUED,
+        OR: [
+          {
+            status: SchoolFeeReminderDispatchStatus.QUEUED,
+          },
+          {
+            status: SchoolFeeReminderDispatchStatus.FAILED,
+            attemptCount: {
+              lt: maxRetries,
+            },
+            OR: [
+              {
+                nextRetryAt: null,
+              },
+              {
+                nextRetryAt: {
+                  lte: now,
+                },
+              },
+            ],
+          },
+        ],
       },
       include: {
         invoice: {
@@ -2484,26 +2549,42 @@ export class SchoolFinanceService {
           },
         },
       },
-      orderBy: [{ createdAt: 'asc' }],
+      orderBy: [{ status: 'asc' }, { nextRetryAt: 'asc' }, { createdAt: 'asc' }],
       take: batchSize,
     });
 
+    let attempted = 0;
     let sent = 0;
     let failed = 0;
     let skipped = 0;
+    let queuedForRetry = 0;
+    let exhausted = 0;
 
     for (const dispatch of queuedDispatches) {
+      attempted += 1;
+      const attemptedAt = new Date();
+      const currentAttemptCount =
+        Number.isFinite(dispatch.attemptCount) && dispatch.attemptCount > 0
+          ? Math.round(dispatch.attemptCount)
+          : 0;
+      const nextAttemptCount = currentAttemptCount + 1;
+
       const normalizedEmail = this.normalizeEmail(dispatch.studentEmail);
       if (!normalizedEmail || !normalizedEmail.includes('@')) {
+        const reason = 'Student email is missing or invalid for reminder delivery.';
         await this.prisma.schoolFeeReminderDispatch.update({
           where: { id: dispatch.id },
           data: {
             status: SchoolFeeReminderDispatchStatus.SKIPPED,
-            sentAt: new Date(),
-            failureReason: 'Student email is missing or invalid for reminder delivery.',
+            sentAt: attemptedAt,
+            attemptCount: nextAttemptCount,
+            nextRetryAt: null,
+            failureReason: reason,
+            lastError: reason,
             metadata: this.mergeReminderDispatchMetadata(dispatch.metadata, {
               initiatedBy: input.initiatedBy || 'scheduler',
               outcome: 'skipped_invalid_email',
+              attemptCount: nextAttemptCount,
             }),
           },
         });
@@ -2539,13 +2620,17 @@ export class SchoolFinanceService {
           where: { id: dispatch.id },
           data: {
             status: SchoolFeeReminderDispatchStatus.SENT,
-            sentAt: new Date(),
+            sentAt: attemptedAt,
+            attemptCount: nextAttemptCount,
+            nextRetryAt: null,
             failureReason: null,
+            lastError: null,
             metadata: this.mergeReminderDispatchMetadata(dispatch.metadata, {
               initiatedBy: input.initiatedBy || 'scheduler',
               provider: providerResponse.provider,
               providerMessageId: providerResponse.providerMessageId || null,
               outcome: 'sent',
+              attemptCount: nextAttemptCount,
             }),
           },
         });
@@ -2555,31 +2640,113 @@ export class SchoolFinanceService {
           error instanceof Error ? error.message : 'Email dispatch failed.',
           500
         );
+        const shouldRetry = nextAttemptCount < maxRetries;
+        const nextRetryAt = shouldRetry
+          ? this.computeReminderEmailRetryAt(nextAttemptCount, attemptedAt)
+          : null;
         await this.prisma.schoolFeeReminderDispatch.update({
           where: { id: dispatch.id },
           data: {
             status: SchoolFeeReminderDispatchStatus.FAILED,
             sentAt: null,
+            attemptCount: nextAttemptCount,
+            nextRetryAt,
             failureReason: reason,
+            lastError: reason,
             metadata: this.mergeReminderDispatchMetadata(dispatch.metadata, {
               initiatedBy: input.initiatedBy || 'scheduler',
               provider,
-              outcome: 'failed',
+              outcome: shouldRetry ? 'retry_scheduled' : 'failed_exhausted',
+              attemptCount: nextAttemptCount,
+              maxRetries,
+              nextRetryAt: nextRetryAt ? nextRetryAt.toISOString() : null,
               failureReason: reason,
             }),
           },
         });
         failed += 1;
+        if (shouldRetry) {
+          queuedForRetry += 1;
+        } else {
+          exhausted += 1;
+        }
       }
     }
 
     return {
       provider,
-      attempted: queuedDispatches.length,
+      attempted,
       sent,
       failed,
       skipped,
+      queuedForRetry,
+      exhausted,
     };
+  }
+
+  private async requeueFailedReminderEmails(input: {
+    accountId?: number;
+    initiatedBy?: string;
+    limit?: number;
+  } = {}): Promise<ReminderEmailRequeueSummary> {
+    const maxRetries = this.resolveReminderEmailMaxRetries();
+    const limit = this.normalizeReminderDispatchLimit(input.limit);
+
+    try {
+      const dispatches = await this.prisma.schoolFeeReminderDispatch.findMany({
+        where: {
+          ...(typeof input.accountId === 'number' ? { accountId: input.accountId } : {}),
+          channel: SchoolFeeReminderChannel.EMAIL,
+          status: SchoolFeeReminderDispatchStatus.FAILED,
+        },
+        select: {
+          id: true,
+          metadata: true,
+        },
+        orderBy: [{ updatedAt: 'desc' }],
+        take: limit,
+      });
+
+      for (const dispatch of dispatches) {
+        await this.prisma.schoolFeeReminderDispatch.update({
+          where: { id: dispatch.id },
+          data: {
+            status: SchoolFeeReminderDispatchStatus.QUEUED,
+            sentAt: null,
+            attemptCount: 0,
+            nextRetryAt: null,
+            failureReason: null,
+            lastError: null,
+            metadata: this.mergeReminderDispatchMetadata(dispatch.metadata, {
+              initiatedBy: input.initiatedBy || 'manual',
+              outcome: 'manual_requeue',
+              maxRetries,
+            }),
+          },
+        });
+      }
+
+      return {
+        generatedAt: new Date().toISOString(),
+        accountId: typeof input.accountId === 'number' ? input.accountId : null,
+        selected: dispatches.length,
+        requeued: dispatches.length,
+        maxRetries,
+      };
+    } catch (error) {
+      if (this.isFinanceWorkspaceUnavailableError(error)) {
+        this.logger.warn('School finance store is unavailable. Skipping failed reminder requeue.');
+        return {
+          generatedAt: new Date().toISOString(),
+          accountId: typeof input.accountId === 'number' ? input.accountId : null,
+          selected: 0,
+          requeued: 0,
+          maxRetries,
+        };
+      }
+
+      throw this.rethrowUnexpectedError(error);
+    }
   }
 
   private async sendReminderEmail(input: {
@@ -2827,6 +2994,41 @@ export class SchoolFinanceService {
       return 15000;
     }
     return Math.round(fromEnv);
+  }
+
+  private resolveReminderEmailMaxRetries() {
+    const fromEnv = Number(process.env.SCHOOL_FEE_REMINDER_EMAIL_MAX_RETRIES || '');
+    if (!Number.isFinite(fromEnv)) {
+      return 4;
+    }
+    return Math.min(10, Math.max(1, Math.round(fromEnv)));
+  }
+
+  private resolveReminderEmailRetryBaseMs() {
+    const fromEnv = Number(process.env.SCHOOL_FEE_REMINDER_EMAIL_RETRY_BASE_MS || '');
+    if (!Number.isFinite(fromEnv) || fromEnv < 1000) {
+      return 60_000;
+    }
+    return Math.min(24 * 60 * 60 * 1000, Math.round(fromEnv));
+  }
+
+  private resolveReminderEmailRetryMaxMs() {
+    const baseMs = this.resolveReminderEmailRetryBaseMs();
+    const fromEnv = Number(process.env.SCHOOL_FEE_REMINDER_EMAIL_RETRY_MAX_MS || '');
+    if (!Number.isFinite(fromEnv) || fromEnv < baseMs) {
+      return Math.max(baseMs, 30 * 60 * 1000);
+    }
+    return Math.min(24 * 60 * 60 * 1000, Math.round(fromEnv));
+  }
+
+  private computeReminderEmailRetryAt(attemptCount: number, now: Date) {
+    const safeAttemptCount =
+      Number.isFinite(attemptCount) && attemptCount > 0 ? Math.round(attemptCount) : 1;
+    const baseMs = this.resolveReminderEmailRetryBaseMs();
+    const maxMs = this.resolveReminderEmailRetryMaxMs();
+    const exponent = Math.min(10, Math.max(0, safeAttemptCount - 1));
+    const delayMs = Math.min(maxMs, baseMs * Math.pow(2, exponent));
+    return new Date(now.getTime() + delayMs);
   }
 
   private resolveReminderEmailFrom() {

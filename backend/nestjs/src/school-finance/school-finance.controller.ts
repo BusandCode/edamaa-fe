@@ -30,6 +30,10 @@ type SyncInvoiceCheckoutBody = {
   checkoutSessionId?: string;
 };
 
+type RequeueFailedReminderEmailsBody = {
+  limit?: number;
+};
+
 type UpdateWithdrawalStatusBody = {
   status?: string;
   failureReason?: string;
@@ -92,6 +96,17 @@ export class SchoolFinanceController {
   drainMyReminderEmails(@Req() request: Request) {
     return this.schoolFinanceService.processQueuedReminderEmailsForAuthUser(
       this.getAuthUser(request)
+    );
+  }
+
+  @Post('me/reminders/requeue-failed')
+  requeueFailedReminderEmails(
+    @Req() request: Request,
+    @Body() body: RequeueFailedReminderEmailsBody
+  ) {
+    return this.schoolFinanceService.requeueFailedReminderEmailsForAuthUser(
+      this.getAuthUser(request),
+      { limit: body.limit }
     );
   }
 

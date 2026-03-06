@@ -43,6 +43,9 @@ SCHOOL_FEE_REMINDER_EMAIL_FROM=Edamaa <reminders@edamaa.app>
 SCHOOL_FEE_REMINDER_EMAIL_REPLY_TO=support@edamaa.app
 SCHOOL_FEE_REMINDER_EMAIL_BATCH_SIZE=40
 SCHOOL_FEE_REMINDER_EMAIL_TIMEOUT_MS=15000
+SCHOOL_FEE_REMINDER_EMAIL_MAX_RETRIES=4
+SCHOOL_FEE_REMINDER_EMAIL_RETRY_BASE_MS=60000
+SCHOOL_FEE_REMINDER_EMAIL_RETRY_MAX_MS=1800000
 RESEND_API_KEY=re_...
 ```
 
@@ -76,6 +79,7 @@ If `prisma db push` cannot run in your environment, apply the SQL manually:
 psql "$DATABASE_URL" -f prisma/manual/20260224_add_call_signal_event.sql
 psql "$DATABASE_URL" -f prisma/manual/20260303_add_account_roles.sql
 psql "$DATABASE_URL" -f prisma/manual/20260306_add_school_fee_reminder_dispatches.sql
+psql "$DATABASE_URL" -f prisma/manual/20260306_add_school_fee_reminder_retry_backoff.sql
 ```
 
 Start API:
@@ -107,6 +111,7 @@ School finance reminder endpoints (school role):
 - `GET /school-finance/me/reminders/dispatches?type=due_soon|overdue&channel=in_app|email&status=queued|sent|failed|skipped&limit=80`
 - `POST /school-finance/me/reminders/run`
 - `POST /school-finance/me/reminders/email-drain`
+- `POST /school-finance/me/reminders/requeue-failed`
 
 Account roles endpoints (requires `Authorization: Bearer <supabase_access_token>`):
 
