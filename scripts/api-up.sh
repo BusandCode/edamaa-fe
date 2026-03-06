@@ -9,18 +9,59 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 API_HOST="${API_HOST:-127.0.0.1}"
 API_PORT="${API_PORT:-3001}"
 API_HEALTH_PATH="${API_HEALTH_PATH:-/auth/ready}"
+API_COMPAT_PATH="${API_COMPAT_PATH:-/school-finance/me/reminders/health?days=7}"
 LOG_DIR="${LOG_DIR:-/tmp}"
 API_UP_LOCK_DIR="${LOG_DIR}/edamaa-api-up.lock"
 API_UP_LOCK_OWNER_FILE="${API_UP_LOCK_DIR}/owner.pid"
 LOCK_ACQUIRED=0
+NEST_PID_FILE="${LOG_DIR}/edamaa-nestjs.pid"
 
 cd "$ROOT_DIR"
 
 api_health_url="http://${API_HOST}:${API_PORT}${API_HEALTH_PATH}"
 api_health_code="$(curl -s -o /dev/null -w '%{http_code}' "$api_health_url" || true)"
 if [ "$api_health_code" = "200" ]; then
-  echo "API already running: http://${API_HOST}:${API_PORT}"
-  exit 0
+  compat_url="http://${API_HOST}:${API_PORT}${API_COMPAT_PATH}"
+  compat_code="$(curl -s -o /dev/null -w '%{http_code}' "$compat_url" || true)"
+
+  # A 404 here usually means an old/stale NestJS build is still running.
+  # Non-404 responses (200/401/403/etc.) are considered route-compatible.
+  if [ "$compat_code" != "404" ]; then
+    echo "API already running: http://${API_HOST}:${API_PORT}"
+    exit 0
+  fi
+
+  echo "API is running but missing ${API_COMPAT_PATH} (status=404). Restarting stale process..."
+  stale_pid=""
+  if [ -f "$NEST_PID_FILE" ]; then
+    stale_pid="$(cat "$NEST_PID_FILE" 2>/dev/null || true)"
+  fi
+
+  if [ -n "$stale_pid" ] && kill -0 "$stale_pid" >/dev/null 2>&1; then
+    kill "$stale_pid" >/dev/null 2>&1 || true
+    for _ in $(seq 1 20); do
+      if ! kill -0 "$stale_pid" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+  else
+    stale_pids="$(lsof -tiTCP:${API_PORT} -sTCP:LISTEN 2>/dev/null || true)"
+    if [ -n "$stale_pids" ]; then
+      while IFS= read -r pid; do
+        if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+          kill "$pid" >/dev/null 2>&1 || true
+        fi
+      done <<<"$stale_pids"
+      sleep 1
+    fi
+  fi
+
+  if lsof -iTCP:"${API_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "Could not reclaim API port ${API_PORT}. Stop the running process and retry." >&2
+    lsof -iTCP:"${API_PORT}" -sTCP:LISTEN >&2 || true
+    exit 1
+  fi
 fi
 
 cleanup_lock() {
