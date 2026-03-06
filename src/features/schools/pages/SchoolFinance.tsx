@@ -12,6 +12,7 @@ import {
 import {
   createSchoolFeePlan,
   createSchoolInvoice,
+  drainQueuedSchoolReminderEmails,
   fetchSchoolReminderDispatches,
   createSchoolWithdrawal,
   fetchSchoolFinanceStudents,
@@ -23,6 +24,7 @@ import {
   runSchoolReminderSweep,
   syncSchoolInvoiceCheckout,
   type SchoolFinanceDashboard,
+  type SchoolFeeReminderEmailDrainResponse,
   type SchoolFeeReminderDispatch,
   type SchoolFeeReminderRequeueResponse,
   type SchoolFeeReminderSweepResponse,
@@ -86,7 +88,9 @@ const SchoolFinance = () => {
     | 'invoice'
     | 'withdraw'
     | 'reminders-run'
+    | 'reminders-drain'
     | 'reminders-requeue'
+    | 'reminders-refresh'
     | `pay-${string}`
     | `payout-${string}`
     | `ledger-${string}`
@@ -98,6 +102,12 @@ const SchoolFinance = () => {
   const [lastReminderSweep, setLastReminderSweep] = useState<SchoolFeeReminderSweepResponse | null>(null);
   const [lastReminderRequeue, setLastReminderRequeue] =
     useState<SchoolFeeReminderRequeueResponse | null>(null);
+  const [lastReminderEmailDrain, setLastReminderEmailDrain] =
+    useState<SchoolFeeReminderEmailDrainResponse | null>(null);
+  const [reminderStatusFilter, setReminderStatusFilter] = useState<
+    '' | 'queued' | 'sent' | 'failed' | 'skipped'
+  >('');
+  const [reminderChannelFilter, setReminderChannelFilter] = useState<'' | 'in_app' | 'email'>('');
 
   const [planTitle, setPlanTitle] = useState('');
   const [planDescription, setPlanDescription] = useState('');
@@ -123,10 +133,15 @@ const SchoolFinance = () => {
     setIsLoading(true);
     setError(null);
     try {
+      const reminderQuery = {
+        limit: 24,
+        status: reminderStatusFilter || undefined,
+        channel: reminderChannelFilter || undefined,
+      };
       const [dashboardPayload, studentsPayload, reminderPayload] = await Promise.all([
         fetchSchoolFinanceDashboard(),
         fetchSchoolFinanceStudents(),
-        fetchSchoolReminderDispatches({ limit: 8 }),
+        fetchSchoolReminderDispatches(reminderQuery),
       ]);
       setDashboard(dashboardPayload);
       setStudents(studentsPayload.students || []);
@@ -144,7 +159,7 @@ const SchoolFinance = () => {
 
   useEffect(() => {
     void refreshDashboard();
-  }, []);
+  }, [reminderStatusFilter, reminderChannelFilter]);
 
   useEffect(() => {
     const shouldSync = checkoutStatus === 'success' && checkoutSessionId;
@@ -257,6 +272,14 @@ const SchoolFinance = () => {
     () =>
       reminderDispatches.filter(
         (dispatch) => dispatch.channel === 'email' && dispatch.status === 'failed'
+      ).length,
+    [reminderDispatches]
+  );
+
+  const queuedEmailReminderCount = useMemo(
+    () =>
+      reminderDispatches.filter(
+        (dispatch) => dispatch.channel === 'email' && dispatch.status === 'queued'
       ).length,
     [reminderDispatches]
   );
@@ -456,6 +479,32 @@ const SchoolFinance = () => {
     }
   };
 
+  const handleDrainQueuedReminderEmails = async () => {
+    if (activeAction) {
+      return;
+    }
+
+    setActiveAction('reminders-drain');
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await drainQueuedSchoolReminderEmails();
+      setLastReminderEmailDrain(result);
+      setNotice(
+        `Email queue processed. Attempted ${result.attempted}, sent ${result.sent}, skipped ${result.skipped}, retry queued ${result.queuedForRetry}, exhausted ${result.exhausted}.`
+      );
+      await refreshDashboard();
+    } catch (requestError) {
+      const message =
+        requestError instanceof Error
+          ? requestError.message
+          : 'Could not process queued reminder emails right now.';
+      setError(message);
+    } finally {
+      setActiveAction(null);
+    }
+  };
+
   const handleRequeueFailedReminderEmails = async () => {
     if (activeAction) {
       return;
@@ -478,6 +527,29 @@ const SchoolFinance = () => {
         requestError instanceof Error
           ? requestError.message
           : 'Could not requeue failed reminder emails right now.';
+      setError(message);
+    } finally {
+      setActiveAction(null);
+    }
+  };
+
+  const handleRefreshReminderDispatches = async () => {
+    if (activeAction) {
+      return;
+    }
+
+    setActiveAction('reminders-refresh');
+    setError(null);
+    try {
+      const payload = await fetchSchoolReminderDispatches({
+        limit: 24,
+        status: reminderStatusFilter || undefined,
+        channel: reminderChannelFilter || undefined,
+      });
+      setReminderDispatches(Array.isArray(payload.dispatches) ? payload.dispatches : []);
+    } catch (requestError) {
+      const message =
+        requestError instanceof Error ? requestError.message : 'Could not refresh reminder dispatches.';
       setError(message);
     } finally {
       setActiveAction(null);
@@ -1048,15 +1120,62 @@ const SchoolFinance = () => {
               </button>
               <button
                 type="button"
+                onClick={() => void handleDrainQueuedReminderEmails()}
+                disabled={activeAction === 'reminders-drain' || queuedEmailReminderCount === 0}
+                className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {activeAction === 'reminders-drain'
+                  ? 'Processing...'
+                  : `Process Queued (shown ${queuedEmailReminderCount})`}
+              </button>
+              <button
+                type="button"
                 onClick={() => void handleRequeueFailedReminderEmails()}
                 disabled={activeAction === 'reminders-requeue' || failedEmailReminderCount === 0}
                 className="rounded-md border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {activeAction === 'reminders-requeue'
                   ? 'Requeueing...'
-                  : `Requeue Failed (${failedEmailReminderCount})`}
+                  : `Requeue Failed (shown ${failedEmailReminderCount})`}
               </button>
             </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <select
+              value={reminderChannelFilter}
+              onChange={(event) =>
+                setReminderChannelFilter(event.target.value as '' | 'in_app' | 'email')
+              }
+              className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-700 focus:border-[#3D08BA] focus:outline-none"
+            >
+              <option value="">All channels</option>
+              <option value="in_app">In-app</option>
+              <option value="email">Email</option>
+            </select>
+            <select
+              value={reminderStatusFilter}
+              onChange={(event) =>
+                setReminderStatusFilter(
+                  event.target.value as '' | 'queued' | 'sent' | 'failed' | 'skipped'
+                )
+              }
+              className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-700 focus:border-[#3D08BA] focus:outline-none"
+            >
+              <option value="">All statuses</option>
+              <option value="queued">Queued</option>
+              <option value="sent">Sent</option>
+              <option value="failed">Failed</option>
+              <option value="skipped">Skipped</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => void handleRefreshReminderDispatches()}
+              disabled={activeAction === 'reminders-refresh'}
+              className="rounded-md border border-gray-200 bg-gray-100 px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {activeAction === 'reminders-refresh' ? 'Refreshing...' : 'Refresh List'}
+            </button>
           </div>
 
           {lastReminderSweep && (
@@ -1072,6 +1191,13 @@ const SchoolFinance = () => {
             <p className="mt-1 text-[11px] text-gray-600">
               Last requeue: {new Date(lastReminderRequeue.generatedAt).toLocaleString()} • Requeued{' '}
               {lastReminderRequeue.requeued} dispatches.
+            </p>
+          )}
+          {lastReminderEmailDrain && (
+            <p className="mt-1 text-[11px] text-gray-600">
+              Last email processing: attempted {lastReminderEmailDrain.attempted} • sent{' '}
+              {lastReminderEmailDrain.sent} • skipped {lastReminderEmailDrain.skipped} • retry queued{' '}
+              {lastReminderEmailDrain.queuedForRetry} • exhausted {lastReminderEmailDrain.exhausted}.
             </p>
           )}
 

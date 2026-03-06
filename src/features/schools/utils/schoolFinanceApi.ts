@@ -155,6 +155,16 @@ export type SchoolFeeReminderRequeueResponse = {
   maxRetries: number;
 };
 
+export type SchoolFeeReminderEmailDrainResponse = {
+  provider: 'resend' | 'log' | 'disabled';
+  attempted: number;
+  sent: number;
+  failed: number;
+  skipped: number;
+  queuedForRetry: number;
+  exhausted: number;
+};
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
 
 const isLocalhostHost = (host: string) => host === '127.0.0.1' || host === 'localhost';
@@ -1163,6 +1173,41 @@ const localRequeueFailedSchoolReminderEmails = (input?: {
   };
 };
 
+const localDrainQueuedSchoolReminderEmails = (): SchoolFeeReminderEmailDrainResponse => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const queuedEmailDispatches = workspace.reminderDispatches
+    .filter((dispatch) => dispatch.channel === 'email' && dispatch.status === 'queued')
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    .slice(0, 40);
+
+  let skipped = 0;
+  let exhausted = 0;
+  const reason = 'Email reminder delivery is disabled in local mode.';
+
+  queuedEmailDispatches.forEach((dispatch) => {
+    dispatch.status = 'skipped';
+    dispatch.attemptCount = Math.max(0, Number(dispatch.attemptCount || 0)) + 1;
+    dispatch.nextRetryAt = null;
+    dispatch.sentAt = nowIso();
+    dispatch.failureReason = reason;
+    dispatch.lastError = reason;
+    skipped += 1;
+    exhausted += 1;
+  });
+
+  saveLocalFinanceWorkspace(schoolEmail, workspace);
+  return {
+    provider: 'disabled',
+    attempted: queuedEmailDispatches.length,
+    sent: 0,
+    failed: 0,
+    skipped,
+    queuedForRetry: 0,
+    exhausted,
+  };
+};
+
 export const fetchSchoolFinanceDashboard = async () => {
   return runWithLocalFinanceFallback(
     async () => {
@@ -1426,5 +1471,17 @@ export const requeueFailedSchoolReminderEmails = async (payload?: {
       return (await response.json()) as SchoolFeeReminderRequeueResponse;
     },
     () => localRequeueFailedSchoolReminderEmails(payload)
+  );
+};
+
+export const drainQueuedSchoolReminderEmails = async () => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth('/school-finance/me/reminders/email-drain', {
+        method: 'POST',
+      });
+      return (await response.json()) as SchoolFeeReminderEmailDrainResponse;
+    },
+    () => localDrainQueuedSchoolReminderEmails()
   );
 };
