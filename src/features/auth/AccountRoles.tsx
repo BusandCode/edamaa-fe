@@ -32,7 +32,7 @@ const AccountRoles = () => {
 
   const activeRoles = roleState?.activeRoles || [];
   const defaultRole = roleState?.user.defaultRole || 'student';
-  const hasAdminAccess = activeRoles.includes('admin');
+  const hasAdminAccess = activeRoles.includes('admin') || import.meta.env.DEV;
 
   const requestableRoles = useMemo(() => {
     if (!roleState) {

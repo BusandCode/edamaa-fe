@@ -26,7 +26,7 @@ import {
   type TeachingSubscriptionState,
 } from '../../subscriptions/utils/teachingSubscriptionApi';
 import { schoolManagementModules, type SchoolModule } from '../data/schoolManagementModules';
-import { loadPersistedLocalDevAuthSession } from '../../../utils/authSession';
+import { loadPersistedLocalDevAuthSession, loadPersistedAccountRoleState } from '../../../utils/authSession';
 import { signOutEverywhere } from '../../../utils/signOut';
 
 
@@ -162,6 +162,8 @@ const SchoolDashboard = () => {
   const [activeModuleId, setActiveModuleId] = useState(schoolManagementModules[0]?.id ?? '');
   const navigate = useNavigate();
   const isSubscriptionActive = Boolean(subscriptionState?.isActive);
+  const canOpenInternalAdmin =
+    import.meta.env.DEV || Boolean(loadPersistedAccountRoleState()?.activeRoles?.includes('admin'));
   const activeSchoolModule =
     schoolManagementModules.find((module) => module.id === activeModuleId) || schoolManagementModules[0];
 
@@ -385,6 +387,14 @@ const SchoolDashboard = () => {
                   >
                     Upload Resources
                   </button>
+                  {canOpenInternalAdmin && (
+                    <button
+                      onClick={() => navigate('/internal-admin/payouts')}
+                      className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
+                    >
+                      Internal Admin
+                    </button>
+                  )}
                   <button
                     onClick={() => navigate('/edamaa3d-verified?actor=school')}
                     className='rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100'
@@ -405,6 +415,14 @@ const SchoolDashboard = () => {
                   >
                     Upload Resources
                   </button>
+                  {canOpenInternalAdmin && (
+                    <button
+                      onClick={() => navigate('/internal-admin/payouts')}
+                      className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
+                    >
+                      Internal Admin
+                    </button>
+                  )}
                   <button
                     onClick={() => navigate('/subscription?actor=school')}
                     className='rounded-lg bg-[#3D08BA] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#2c0691]'
