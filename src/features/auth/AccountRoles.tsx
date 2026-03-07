@@ -32,6 +32,7 @@ const AccountRoles = () => {
 
   const activeRoles = roleState?.activeRoles || [];
   const defaultRole = roleState?.user.defaultRole || 'student';
+  const hasAdminAccess = activeRoles.includes('admin');
 
   const requestableRoles = useMemo(() => {
     if (!roleState) {
@@ -154,16 +155,27 @@ const AccountRoles = () => {
             <div>
               <h1 className="text-xl font-semibold text-gray-900">Account Roles</h1>
               <p className="mt-1 text-sm text-gray-600">
-                Manage how you enter Edamaa: student, tutor, or school dashboard.
+                Manage how you enter Edamaa: student, tutor, school, or internal admin dashboard.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => navigate(getDefaultHomeRouteForRole(defaultRole))}
-              className="rounded-xl border border-[#3D08BA] px-4 py-2 text-sm font-medium text-[#3D08BA] hover:bg-[#f7f2ff]"
-            >
-              Back to Dashboard
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {hasAdminAccess && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/internal-admin/payouts')}
+                  className="rounded-xl border border-[#3D08BA] bg-[#3D08BA]/5 px-4 py-2 text-sm font-medium text-[#3D08BA] hover:bg-[#f7f2ff]"
+                >
+                  Open Internal Admin
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => navigate(getDefaultHomeRouteForRole(defaultRole))}
+                className="rounded-xl border border-[#3D08BA] px-4 py-2 text-sm font-medium text-[#3D08BA] hover:bg-[#f7f2ff]"
+              >
+                Back to Dashboard
+              </button>
+            </div>
           </div>
 
           {errorMessage && (
