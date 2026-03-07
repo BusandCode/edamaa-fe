@@ -18,6 +18,7 @@ import StudentRegistration from './features/students/pages/StudentRegistration.t
 // Import Dashboard components
 import SchoolDashboard from './features/schools/pages/SchoolDashboard.tsx'
 import SchoolFinance from './features/schools/pages/SchoolFinance.tsx'
+import SchoolSchedule from './features/schools/pages/SchoolSchedule.tsx'
 import TutorDashboard from './features/tutors/pages/TutorDashboard.tsx'
 import StudentDashboard from './features/students/pages/StudentDashboard.tsx'
 import StudentHome from './features/students/pages/StudentHome.tsx'
@@ -77,6 +78,14 @@ createRoot(document.getElementById('root')!).render(
           element={
             <RoleProtectedRoute allowedRoles={['school', 'admin']}>
               <SchoolFinance />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="/school-schedule"
+          element={
+            <RoleProtectedRoute allowedRoles={['school', 'admin']}>
+              <SchoolSchedule />
             </RoleProtectedRoute>
           }
         />

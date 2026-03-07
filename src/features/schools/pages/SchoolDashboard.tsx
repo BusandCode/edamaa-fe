@@ -326,12 +326,7 @@ const SchoolDashboard = () => {
   };
 
   const handleScheduleClick = () => {
-    if (!isSubscriptionActive) {
-      goToSubscription('Scheduling unlimited offline classes requires an active school subscription.');
-      return;
-    }
-
-    setGateNotice('Schedule workspace is connected. Add your preferred scheduler flow next.');
+    navigate('/school-schedule');
   };
 
   const handleWaecPrepClick = () => {
