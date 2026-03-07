@@ -113,36 +113,141 @@ createRoot(document.getElementById('root')!).render(
         />
         <Route path="/account-roles" element={<ProtectedRoute><AccountRoles /></ProtectedRoute>} />
 
-        {/* Proile routes */}
-        <Route path='/my-profile' element={<StudentProfile />} />
+        {/* Profile routes */}
+        <Route
+          path='/my-profile'
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'admin']}>
+              <StudentProfile />
+            </RoleProtectedRoute>
+          }
+        />
 
         {/* Students Route */}
-        <Route path='/student-list-tutor' element={<StudentListTutor />} />
-        <Route path='/student-list-school' element={<StudentListSchool />} />
+        <Route
+          path='/student-list-tutor'
+          element={
+            <RoleProtectedRoute allowedRoles={['tutor', 'admin']}>
+              <StudentListTutor />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path='/student-list-school'
+          element={
+            <RoleProtectedRoute allowedRoles={['school', 'admin']}>
+              <StudentListSchool />
+            </RoleProtectedRoute>
+          }
+        />
 
         {/* Courses */}
-        <Route path='/courses' element={<CoursesList />} />
+        <Route
+          path='/courses'
+          element={
+            <RoleProtectedRoute allowedRoles={['tutor', 'admin']}>
+              <CoursesList />
+            </RoleProtectedRoute>
+          }
+        />
 
         {/* Subjects */}
-        <Route path='/mycourses' element={<StudentSubjects />} />
-        <Route path='/course/:courseId' element={<CourseLearning />} />
+        <Route
+          path='/mycourses'
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'admin']}>
+              <StudentSubjects />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path='/course/:courseId'
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'admin']}>
+              <CourseLearning />
+            </RoleProtectedRoute>
+          }
+        />
         {/* Assignments */}
-        <Route path='/assignments' element={<Assignments />} />
+        <Route
+          path='/assignments'
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'admin']}>
+              <Assignments />
+            </RoleProtectedRoute>
+          }
+        />
 
         {/* Notifications */}
-        <Route path="/notifications" element={<StudentNotifications />} />
+        <Route
+          path="/notifications"
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'tutor', 'school', 'admin']}>
+              <StudentNotifications />
+            </RoleProtectedRoute>
+          }
+        />
         {/* Join Class */}
-        <Route path="/join-class" element={<JoinClass />} />
-        <Route path="/live-class/:classId" element={<LiveClassroom />} />
+        <Route
+          path="/join-class"
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'admin']}>
+              <JoinClass />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="/live-class/:classId"
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'tutor', 'school', 'admin']}>
+              <LiveClassroom />
+            </RoleProtectedRoute>
+          }
+        />
         {/* Resource Library */}
-        <Route path="/resources" element={<ResourceLibrary />} />
+        <Route
+          path="/resources"
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'tutor', 'school', 'admin']}>
+              <ResourceLibrary />
+            </RoleProtectedRoute>
+          }
+        />
         {/* Payments */}
-        <Route path="/payments" element={<Payments />} />
+        <Route
+          path="/payments"
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'admin']}>
+              <Payments />
+            </RoleProtectedRoute>
+          }
+        />
         {/* Subscription */}
-        <Route path="/subscription" element={<SubscriptionPlans />} />
-        <Route path="/edamaa3d-verified" element={<Edamaa3DVerified />} />
-        {/* Payments */}
-        <Route path="/performance" element={<ProtectedRoute><Performancestats /></ProtectedRoute>} />
+        <Route
+          path="/subscription"
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'tutor', 'school', 'admin']}>
+              <SubscriptionPlans />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="/edamaa3d-verified"
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'tutor', 'school', 'admin']}>
+              <Edamaa3DVerified />
+            </RoleProtectedRoute>
+          }
+        />
+        {/* Performance */}
+        <Route
+          path="/performance"
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'admin']}>
+              <Performancestats />
+            </RoleProtectedRoute>
+          }
+        />
       </Routes>
     </Router>
   </StrictMode>
