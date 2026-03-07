@@ -27,8 +27,14 @@ import {
   fetchTeachingSubscriptionState,
   type TeachingSubscriptionState,
 } from '../../subscriptions/utils/teachingSubscriptionApi';
+import { fetchMyAccountRoles, switchDefaultAccountRole } from '../../auth/utils/accountRolesApi';
 import { schoolManagementModules, type SchoolModule } from '../data/schoolManagementModules';
-import { loadPersistedLocalDevAuthSession, loadPersistedAccountRoleState } from '../../../utils/authSession';
+import {
+  loadPersistedLocalDevAuthSession,
+  loadPersistedAccountRoleState,
+  persistAccountRoleState,
+  persistLocalDevAuthSession,
+} from '../../../utils/authSession';
 import { signOutEverywhere } from '../../../utils/signOut';
 
 
@@ -156,13 +162,15 @@ type IconActionButtonProps = {
   label: string;
   icon: IconType;
   onClick: () => void;
+  disabled?: boolean;
 };
 
-const IconActionButton = ({ label, icon: Icon, onClick }: IconActionButtonProps) => (
+const IconActionButton = ({ label, icon: Icon, onClick, disabled = false }: IconActionButtonProps) => (
   <button
     type='button'
     onClick={onClick}
-    className='group relative inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 text-[#3D08BA] transition-colors hover:bg-[#3D08BA]/10'
+    disabled={disabled}
+    className='group relative inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 text-[#3D08BA] transition-colors hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-60'
     aria-label={label}
     title={label}
   >
@@ -178,6 +186,7 @@ const SchoolDashboard = () => {
   const [schoolDisplayName, setSchoolDisplayName] = useState<string>('School');
   const [adminDisplayName, setAdminDisplayName] = useState<string>('School Admin');
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isOpeningInternalAdmin, setIsOpeningInternalAdmin] = useState(false);
   const [subscriptionState, setSubscriptionState] = useState<TeachingSubscriptionState | null>(null);
   const [isSubscriptionLoading, setIsSubscriptionLoading] = useState(false);
   const [gateNotice, setGateNotice] = useState('');
@@ -185,8 +194,9 @@ const SchoolDashboard = () => {
   const [activeModuleId, setActiveModuleId] = useState(schoolManagementModules[0]?.id ?? '');
   const navigate = useNavigate();
   const isSubscriptionActive = Boolean(subscriptionState?.isActive);
-  const canOpenInternalAdmin =
-    loadPersistedAccountRoleState()?.defaultRole === 'admin';
+  const canOpenInternalAdmin = Boolean(
+    loadPersistedAccountRoleState()?.activeRoles?.includes('admin')
+  );
   const activeSchoolModule =
     schoolManagementModules.find((module) => module.id === activeModuleId) || schoolManagementModules[0];
 
@@ -217,6 +227,41 @@ const SchoolDashboard = () => {
     const fallbackFromEmail = deriveNameFromEmail(localDevSession?.email || '');
     setSchoolDisplayName(localStorageSchoolName || fallbackFromEmail || 'School');
     setAdminDisplayName(localStorageAdminName || fallbackFromEmail || 'School Admin');
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const syncRoleState = async () => {
+      try {
+        const payload = await fetchMyAccountRoles();
+        if (!active) {
+          return;
+        }
+
+        persistAccountRoleState({
+          defaultRole: payload.user.defaultRole,
+          activeRoles: payload.activeRoles,
+          source: 'backend',
+        });
+
+        const localDevSession = loadPersistedLocalDevAuthSession();
+        if (localDevSession?.email) {
+          persistLocalDevAuthSession(localDevSession.email, payload.user.defaultRole, {
+            defaultRole: payload.user.defaultRole,
+            activeRoles: payload.activeRoles,
+          });
+        }
+      } catch {
+        // Keep existing role cache when backend sync is unavailable.
+      }
+    };
+
+    void syncRoleState();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const handleSignOut = async () => {
@@ -296,6 +341,42 @@ const SchoolDashboard = () => {
 
   const handleResourceUploadClick = () => {
     navigate('/resources?actor=school&mode=upload');
+  };
+
+  const handleOpenInternalAdmin = async () => {
+    if (isOpeningInternalAdmin) {
+      return;
+    }
+
+    setIsOpeningInternalAdmin(true);
+    setGateNotice('');
+    try {
+      const payload = await switchDefaultAccountRole('admin');
+      persistAccountRoleState({
+        defaultRole: payload.roleState.user.defaultRole,
+        activeRoles: payload.roleState.activeRoles,
+        source: 'backend',
+      });
+
+      const localDevSession = loadPersistedLocalDevAuthSession();
+      if (localDevSession?.email) {
+        persistLocalDevAuthSession(localDevSession.email, payload.roleState.user.defaultRole, {
+          defaultRole: payload.roleState.user.defaultRole,
+          activeRoles: payload.roleState.activeRoles,
+        });
+      }
+
+      navigate('/internal-admin/payouts');
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Could not open internal admin. Please switch role from Account Roles.';
+      setGateNotice(message);
+      navigate('/account-roles');
+    } finally {
+      setIsOpeningInternalAdmin(false);
+    }
   };
 
   const handleFinanceClick = () => {
@@ -411,9 +492,10 @@ const SchoolDashboard = () => {
                   />
                   {canOpenInternalAdmin && (
                     <IconActionButton
-                      label='Internal Admin'
+                      label={isOpeningInternalAdmin ? 'Opening Internal Admin...' : 'Internal Admin'}
                       icon={FaUserShield}
-                      onClick={() => navigate('/internal-admin/payouts')}
+                      onClick={() => void handleOpenInternalAdmin()}
+                      disabled={isOpeningInternalAdmin}
                     />
                   )}
                   <button
@@ -437,9 +519,10 @@ const SchoolDashboard = () => {
                   />
                   {canOpenInternalAdmin && (
                     <IconActionButton
-                      label='Internal Admin'
+                      label={isOpeningInternalAdmin ? 'Opening Internal Admin...' : 'Internal Admin'}
                       icon={FaUserShield}
-                      onClick={() => navigate('/internal-admin/payouts')}
+                      onClick={() => void handleOpenInternalAdmin()}
+                      disabled={isOpeningInternalAdmin}
                     />
                   )}
                   <button
