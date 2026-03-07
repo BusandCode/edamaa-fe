@@ -16,7 +16,7 @@ NEST_PORT="${NEST_PORT:-3001}"
 START_DJANGO="${START_DJANGO:-1}"
 REQUIRE_DJANGO="${REQUIRE_DJANGO:-0}"
 
-INTERNAL_API_TOKEN="${INTERNAL_API_TOKEN:-local-internal-token}"
+INTERNAL_API_TOKEN="${INTERNAL_API_TOKEN:-}"
 DATABASE_URL="${DATABASE_URL:-}"
 DIRECT_URL="${DIRECT_URL:-}"
 REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}"
@@ -88,12 +88,20 @@ if [ -z "$DIRECT_URL" ]; then
   DIRECT_URL="$(read_env_file_value "DIRECT_URL" "$NEST_ENV_FILE")"
 fi
 
+if [ -z "$INTERNAL_API_TOKEN" ]; then
+  INTERNAL_API_TOKEN="$(read_env_file_value "INTERNAL_API_TOKEN" "$NEST_ENV_FILE")"
+fi
+
 if [ -z "$DATABASE_URL" ]; then
   DATABASE_URL="postgresql://postgres:password@127.0.0.1:5432/edamaa"
 fi
 
 if [ -z "$DIRECT_URL" ]; then
   DIRECT_URL="$DATABASE_URL"
+fi
+
+if [ -z "$INTERNAL_API_TOKEN" ]; then
+  INTERNAL_API_TOKEN="local-internal-token"
 fi
 
 require_cmd() {

@@ -17,6 +17,8 @@ WEB_LOG="${LOG_DIR}/edamaa-web.log"
 WEB_PID_FILE="${LOG_DIR}/edamaa-web.pid"
 API_WATCHDOG_LOG="${LOG_DIR}/edamaa-api-watchdog.log"
 API_WATCHDOG_PID_FILE="${LOG_DIR}/edamaa-api-watchdog.pid"
+NEST_ENV_FILE="${ROOT_DIR}/backend/nestjs/.env"
+WEB_ENV_FILE="${ROOT_DIR}/.env.local"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -28,6 +30,65 @@ require_cmd() {
 require_cmd npm
 require_cmd curl
 require_cmd lsof
+
+read_env_file_value() {
+  local key="$1"
+  local file_path="$2"
+
+  if [ ! -f "$file_path" ]; then
+    return
+  fi
+
+  local raw
+  raw="$(awk -F= -v k="$key" '$1==k {print substr($0, index($0, "=") + 1)}' "$file_path" | tail -n 1)"
+  raw="$(printf '%s' "$raw" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+  if [ -z "$raw" ]; then
+    return
+  fi
+
+  if [ "${raw#\"}" != "$raw" ] && [ "${raw%\"}" != "$raw" ]; then
+    raw="${raw#\"}"
+    raw="${raw%\"}"
+  elif [ "${raw#\'}" != "$raw" ] && [ "${raw%\'}" != "$raw" ]; then
+    raw="${raw#\'}"
+    raw="${raw%\'}"
+  fi
+
+  printf '%s' "$raw"
+}
+
+sync_internal_admin_token() {
+  local backend_token
+  backend_token="$(read_env_file_value "INTERNAL_API_TOKEN" "$NEST_ENV_FILE")"
+
+  if [ -z "$backend_token" ]; then
+    return
+  fi
+
+  touch "$WEB_ENV_FILE"
+  local frontend_token
+  frontend_token="$(read_env_file_value "VITE_INTERNAL_API_TOKEN" "$WEB_ENV_FILE")"
+
+  if [ "$frontend_token" = "$backend_token" ]; then
+    return
+  fi
+
+  if grep -q '^VITE_INTERNAL_API_TOKEN=' "$WEB_ENV_FILE"; then
+    sed -i '' "s#^VITE_INTERNAL_API_TOKEN=.*#VITE_INTERNAL_API_TOKEN=${backend_token}#" "$WEB_ENV_FILE"
+  else
+    printf "\nVITE_INTERNAL_API_TOKEN=%s\n" "$backend_token" >> "$WEB_ENV_FILE"
+  fi
+
+  # Keep API base explicit when bootstrapping local frontend config for first-time setup.
+  if ! grep -q '^VITE_API_BASE_URL=' "$WEB_ENV_FILE"; then
+    printf "VITE_API_BASE_URL=http://127.0.0.1:3001\n" >> "$WEB_ENV_FILE"
+  fi
+
+  echo "Synced VITE_INTERNAL_API_TOKEN in .env.local from backend/nestjs/.env"
+}
+
+sync_internal_admin_token
 
 wait_for_http_200() {
   local name="$1"
