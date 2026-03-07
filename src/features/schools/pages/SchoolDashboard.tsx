@@ -14,6 +14,8 @@ import {
   FaMoneyBillWave,
   FaHome,
   FaSignOutAlt,
+  FaUpload,
+  FaUserShield,
 } from 'react-icons/fa';
 import type { IconType } from 'react-icons';
 import NewLogo from '../../../components/common/NewLogo';
@@ -149,6 +151,27 @@ const deriveInitials = (value: string) => {
   }
   return `${words[0][0] || ''}${words[1][0] || ''}`.toUpperCase();
 };
+
+type IconActionButtonProps = {
+  label: string;
+  icon: IconType;
+  onClick: () => void;
+};
+
+const IconActionButton = ({ label, icon: Icon, onClick }: IconActionButtonProps) => (
+  <button
+    type='button'
+    onClick={onClick}
+    className='group relative inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 text-[#3D08BA] transition-colors hover:bg-[#3D08BA]/10'
+    aria-label={label}
+    title={label}
+  >
+    <Icon size={14} />
+    <span className='pointer-events-none absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-[10px] font-semibold text-white opacity-0 shadow transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100'>
+      {label}
+    </span>
+  </button>
+);
 
 const SchoolDashboard = () => {
   const [profileImage, setProfileImage] = useState<string>('');
@@ -381,19 +404,17 @@ const SchoolDashboard = () => {
                   Edamaa Pro active: live teaching and unlimited offline classes are enabled.
                 </p>
                 <div className='flex flex-wrap items-center gap-2'>
-                  <button
+                  <IconActionButton
+                    label='Upload Resources'
+                    icon={FaUpload}
                     onClick={handleResourceUploadClick}
-                    className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
-                  >
-                    Upload Resources
-                  </button>
+                  />
                   {canOpenInternalAdmin && (
-                    <button
+                    <IconActionButton
+                      label='Internal Admin'
+                      icon={FaUserShield}
                       onClick={() => navigate('/internal-admin/payouts')}
-                      className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
-                    >
-                      Internal Admin
-                    </button>
+                    />
                   )}
                   <button
                     onClick={() => navigate('/edamaa3d-verified?actor=school')}
@@ -409,19 +430,17 @@ const SchoolDashboard = () => {
                   Free mode active: live classes are locked until subscription is active.
                 </p>
                 <div className='flex flex-wrap items-center gap-2'>
-                  <button
+                  <IconActionButton
+                    label='Upload Resources'
+                    icon={FaUpload}
                     onClick={handleResourceUploadClick}
-                    className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
-                  >
-                    Upload Resources
-                  </button>
+                  />
                   {canOpenInternalAdmin && (
-                    <button
+                    <IconActionButton
+                      label='Internal Admin'
+                      icon={FaUserShield}
                       onClick={() => navigate('/internal-admin/payouts')}
-                      className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
-                    >
-                      Internal Admin
-                    </button>
+                    />
                   )}
                   <button
                     onClick={() => navigate('/subscription?actor=school')}
