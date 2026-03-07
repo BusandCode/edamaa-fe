@@ -4,11 +4,15 @@ import {
   FaArrowLeft,
   FaCalendarAlt,
   FaCheckCircle,
+  FaChevronLeft,
+  FaChevronRight,
   FaClock,
   FaFilter,
+  FaListUl,
   FaPlay,
   FaPlus,
   FaSearch,
+  FaTable,
   FaTimes,
   FaTrash,
   FaUsers,
@@ -160,11 +164,70 @@ const formatDateTime = (isoDate: string) => {
   });
 };
 
+const addDays = (date: Date, amount: number) => {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + amount);
+  return copy;
+};
+
+const startOfWeek = (date: Date) => {
+  const copy = new Date(date);
+  const day = copy.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  copy.setHours(0, 0, 0, 0);
+  return addDays(copy, diff);
+};
+
+const getLocalDayKey = (value: string | Date) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const formatWeekRangeLabel = (weekStart: Date) => {
+  const weekEnd = addDays(weekStart, 6);
+  const sameMonth = weekStart.getMonth() === weekEnd.getMonth();
+  const sameYear = weekStart.getFullYear() === weekEnd.getFullYear();
+
+  if (sameMonth && sameYear) {
+    return `${weekStart.toLocaleDateString([], {
+      month: 'short',
+    })} ${weekStart.getDate()} - ${weekEnd.getDate()}, ${weekStart.getFullYear()}`;
+  }
+
+  return `${weekStart.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+  })} - ${weekEnd.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })}`;
+};
+
+const formatSessionTime = (isoDate: string) => {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) {
+    return '--:--';
+  }
+  return date.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+};
+
 const SchoolSchedule = () => {
   const navigate = useNavigate();
   const [sessions, setSessions] = useState<SchoolScheduleSession[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<'all' | ScheduleStatus>('all');
+  const [viewMode, setViewMode] = useState<'list' | 'week'>('list');
+  const [weekStartDate, setWeekStartDate] = useState<Date>(() => startOfWeek(new Date()));
   const [notice, setNotice] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [formState, setFormState] = useState<SessionFormState>({
@@ -246,6 +309,41 @@ const SchoolSchedule = () => {
       .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
   }, [filter, searchQuery, sessions]);
 
+  const weekDays = useMemo(() => {
+    return Array.from({ length: 7 }).map((_, index) => {
+      const date = addDays(weekStartDate, index);
+      return {
+        date,
+        key: getLocalDayKey(date),
+        dayLabel: date.toLocaleDateString([], { weekday: 'short' }),
+        dayNumber: date.getDate(),
+        monthLabel: date.toLocaleDateString([], { month: 'short' }),
+      };
+    });
+  }, [weekStartDate]);
+
+  const weekSessionsByDay = useMemo(() => {
+    const weekDaySet = new Set(weekDays.map((day) => day.key));
+    const grouped: Record<string, SchoolScheduleSession[]> = {};
+    weekDays.forEach((day) => {
+      grouped[day.key] = [];
+    });
+
+    filteredSessions.forEach((session) => {
+      const dayKey = getLocalDayKey(session.startAt);
+      if (!dayKey || !weekDaySet.has(dayKey)) {
+        return;
+      }
+      grouped[dayKey].push(session);
+    });
+
+    Object.keys(grouped).forEach((key) => {
+      grouped[key].sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+    });
+
+    return grouped;
+  }, [filteredSessions, weekDays]);
+
   const resetForm = () => {
     setFormState({
       title: '',
@@ -326,6 +424,10 @@ const SchoolSchedule = () => {
     navigate(`/live-class/${encodeURIComponent(session.id)}?role=teacher&actor=school`, {
       state: { classItem },
     });
+  };
+
+  const shiftWeek = (direction: -1 | 1) => {
+    setWeekStartDate((current) => addDays(current, direction * 7));
   };
 
   return (
@@ -420,75 +522,231 @@ const SchoolSchedule = () => {
               ))}
             </div>
           </div>
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-3">
+            <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1">
+              <button
+                onClick={() => setViewMode('list')}
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-semibold ${
+                  viewMode === 'list'
+                    ? 'bg-[#3D08BA] text-white'
+                    : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <FaListUl size={11} />
+                List
+              </button>
+              <button
+                onClick={() => setViewMode('week')}
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-semibold ${
+                  viewMode === 'week'
+                    ? 'bg-[#3D08BA] text-white'
+                    : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <FaTable size={11} />
+                Week Grid
+              </button>
+            </div>
+
+            {viewMode === 'week' && (
+              <div className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-1 py-1">
+                <button
+                  onClick={() => shiftWeek(-1)}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-600 hover:bg-white"
+                  aria-label="Previous week"
+                >
+                  <FaChevronLeft size={11} />
+                </button>
+                <p className="px-2 text-xs font-semibold text-gray-700">
+                  {formatWeekRangeLabel(weekStartDate)}
+                </p>
+                <button
+                  onClick={() => shiftWeek(1)}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-600 hover:bg-white"
+                  aria-label="Next week"
+                >
+                  <FaChevronRight size={11} />
+                </button>
+              </div>
+            )}
+          </div>
         </section>
 
-        <section className="mt-5 space-y-3">
-          {filteredSessions.length === 0 && (
-            <div className="rounded-xl border border-gray-200 bg-white p-10 text-center shadow-sm">
-              <FaCalendarAlt className="mx-auto mb-3 text-4xl text-gray-300" />
-              <h3 className="text-base font-semibold text-gray-900">No classes match your filters</h3>
-              <p className="mt-1 text-sm text-gray-600">Try another search or add a new class to this schedule.</p>
+        <section className="mt-5">
+          {viewMode === 'list' ? (
+            <div className="space-y-3">
+              {filteredSessions.length === 0 && (
+                <div className="rounded-xl border border-gray-200 bg-white p-10 text-center shadow-sm">
+                  <FaCalendarAlt className="mx-auto mb-3 text-4xl text-gray-300" />
+                  <h3 className="text-base font-semibold text-gray-900">No classes match your filters</h3>
+                  <p className="mt-1 text-sm text-gray-600">Try another search or add a new class to this schedule.</p>
+                </div>
+              )}
+
+              {filteredSessions.map((session) => {
+                const status = getSessionStatus(session, Date.now());
+                return (
+                  <article key={session.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-[220px]">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-semibold text-gray-900">{session.title}</h3>
+                          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusPillClass(status)}`}>
+                            {statusLabel(status)}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-gray-600">
+                          {session.subject} • {session.instructor}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-500">Room: {session.roomCode}</p>
+                        {session.notes && <p className="mt-2 text-xs text-gray-600">{session.notes}</p>}
+                      </div>
+
+                      <div className="grid min-w-[220px] grid-cols-2 gap-2 text-xs text-gray-600">
+                        <p className="inline-flex items-center gap-1 rounded-lg bg-gray-50 px-2 py-1.5">
+                          <FaClock size={11} />
+                          {formatDateTime(session.startAt)}
+                        </p>
+                        <p className="inline-flex items-center gap-1 rounded-lg bg-gray-50 px-2 py-1.5">
+                          <FaCheckCircle size={11} />
+                          {session.durationMinutes} mins
+                        </p>
+                        <p className="inline-flex items-center gap-1 rounded-lg bg-gray-50 px-2 py-1.5">
+                          <FaUsers size={11} />
+                          {session.expectedStudents} students
+                        </p>
+                        <p className="inline-flex items-center gap-1 rounded-lg bg-gray-50 px-2 py-1.5">
+                          <FaCalendarAlt size={11} />
+                          {new Date(session.startAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+                      <button
+                        onClick={() => handleDeleteSession(session.id)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
+                      >
+                        <FaTrash size={10} />
+                        Remove
+                      </button>
+                      <button
+                        onClick={() => handleStartLiveClass(session)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-[#3D08BA] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#2D0690]"
+                      >
+                        {status === 'live' ? <FaVideo size={11} /> : <FaPlay size={11} />}
+                        {status === 'live' ? 'Rejoin live room' : 'Go live'}
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
+              <p className="mb-3 text-xs text-gray-600">
+                Weekly timetable view for {formatWeekRangeLabel(weekStartDate)}.
+              </p>
+
+              <div className="hidden grid-cols-7 gap-2 lg:grid">
+                {weekDays.map((day) => {
+                  const daySessions = weekSessionsByDay[day.key] || [];
+                  const isToday = getLocalDayKey(new Date()) === day.key;
+                  return (
+                    <div
+                      key={day.key}
+                      className={`min-h-[300px] rounded-xl border p-2 ${
+                        isToday ? 'border-[#3D08BA]/40 bg-[#3D08BA]/5' : 'border-gray-200 bg-gray-50'
+                      }`}
+                    >
+                      <div className="mb-2 border-b border-gray-200 pb-2">
+                        <p className="text-xs font-semibold text-gray-700">{day.dayLabel}</p>
+                        <p className="text-xs text-gray-500">
+                          {day.monthLabel} {day.dayNumber}
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        {daySessions.length === 0 && (
+                          <p className="rounded-lg border border-dashed border-gray-200 bg-white px-2 py-3 text-center text-[11px] text-gray-400">
+                            No classes
+                          </p>
+                        )}
+
+                        {daySessions.map((session) => {
+                          const status = getSessionStatus(session, Date.now());
+                          return (
+                            <button
+                              key={session.id}
+                              onClick={() => handleStartLiveClass(session)}
+                              className="w-full rounded-lg border border-gray-200 bg-white p-2 text-left hover:border-[#3D08BA]/30"
+                            >
+                              <div className="flex items-start justify-between gap-1">
+                                <p className="line-clamp-2 text-[11px] font-semibold text-gray-900">{session.title}</p>
+                                <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${statusPillClass(status)}`}>
+                                  {status === 'live' ? 'Live' : status === 'completed' ? 'Done' : 'Soon'}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-[10px] text-gray-600">{session.subject}</p>
+                              <p className="mt-1 text-[10px] text-gray-500">
+                                {formatSessionTime(session.startAt)} • {session.durationMinutes}m
+                              </p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="space-y-3 lg:hidden">
+                {weekDays.map((day) => {
+                  const daySessions = weekSessionsByDay[day.key] || [];
+                  const isToday = getLocalDayKey(new Date()) === day.key;
+                  return (
+                    <div key={day.key} className="rounded-xl border border-gray-200 p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <p className={`text-sm font-semibold ${isToday ? 'text-[#3D08BA]' : 'text-gray-800'}`}>
+                          {day.dayLabel}, {day.monthLabel} {day.dayNumber}
+                        </p>
+                        <span className="text-xs text-gray-500">{daySessions.length} classes</span>
+                      </div>
+                      <div className="space-y-2">
+                        {daySessions.length === 0 && (
+                          <p className="rounded-lg bg-gray-50 px-2 py-2 text-xs text-gray-500">No classes scheduled.</p>
+                        )}
+                        {daySessions.map((session) => {
+                          const status = getSessionStatus(session, Date.now());
+                          return (
+                            <div key={session.id} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-xs font-semibold text-gray-900">{session.title}</p>
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusPillClass(status)}`}>
+                                  {statusLabel(status)}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-[11px] text-gray-600">
+                                {formatSessionTime(session.startAt)} • {session.subject} • {session.instructor}
+                              </p>
+                              <button
+                                onClick={() => handleStartLiveClass(session)}
+                                className="mt-2 inline-flex items-center gap-1 rounded-md bg-[#3D08BA] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#2D0690]"
+                              >
+                                <FaPlay size={9} />
+                                Open class
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
-
-          {filteredSessions.map((session) => {
-            const status = getSessionStatus(session, Date.now());
-            return (
-              <article key={session.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-[220px]">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-semibold text-gray-900">{session.title}</h3>
-                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusPillClass(status)}`}>
-                        {statusLabel(status)}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-xs text-gray-600">
-                      {session.subject} • {session.instructor}
-                    </p>
-                    <p className="mt-1 text-xs text-gray-500">Room: {session.roomCode}</p>
-                    {session.notes && <p className="mt-2 text-xs text-gray-600">{session.notes}</p>}
-                  </div>
-
-                  <div className="grid min-w-[220px] grid-cols-2 gap-2 text-xs text-gray-600">
-                    <p className="inline-flex items-center gap-1 rounded-lg bg-gray-50 px-2 py-1.5">
-                      <FaClock size={11} />
-                      {formatDateTime(session.startAt)}
-                    </p>
-                    <p className="inline-flex items-center gap-1 rounded-lg bg-gray-50 px-2 py-1.5">
-                      <FaCheckCircle size={11} />
-                      {session.durationMinutes} mins
-                    </p>
-                    <p className="inline-flex items-center gap-1 rounded-lg bg-gray-50 px-2 py-1.5">
-                      <FaUsers size={11} />
-                      {session.expectedStudents} students
-                    </p>
-                    <p className="inline-flex items-center gap-1 rounded-lg bg-gray-50 px-2 py-1.5">
-                      <FaCalendarAlt size={11} />
-                      {new Date(session.startAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-                  <button
-                    onClick={() => handleDeleteSession(session.id)}
-                    className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
-                  >
-                    <FaTrash size={10} />
-                    Remove
-                  </button>
-                  <button
-                    onClick={() => handleStartLiveClass(session)}
-                    className="inline-flex items-center gap-1 rounded-lg bg-[#3D08BA] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#2D0690]"
-                  >
-                    {status === 'live' ? <FaVideo size={11} /> : <FaPlay size={11} />}
-                    {status === 'live' ? 'Rejoin live room' : 'Go live'}
-                  </button>
-                </div>
-              </article>
-            );
-          })}
         </section>
       </main>
 
