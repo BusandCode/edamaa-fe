@@ -125,6 +125,12 @@ School finance payout endpoints (school role):
 - `POST /school-finance/me/withdrawals/:payoutId/status`
 - `GET /school-finance/me/withdrawals/:payoutId/ledger`
 
+Authenticated admin payout endpoints (admin role via Supabase auth):
+
+- `GET /admin/school-finance/payouts?status=requested|processing|paid|failed|canceled&search=&page=1&limit=50`
+- `POST /admin/school-finance/payouts/:payoutId/status`
+- `GET /admin/school-finance/payouts/:payoutId/ledger`
+
 Account roles endpoints (requires `Authorization: Bearer <supabase_access_token>`):
 
 - `GET /account/roles/me`
@@ -149,6 +155,8 @@ Internal Django admin bridge (`X-Internal-Token` required):
 - `GET /internal/admin/school-finance/payouts?status=requested|processing|paid|failed|canceled&search=&page=1&limit=50`
 - `POST /internal/admin/school-finance/payouts/:payoutId/status`
 - `GET /internal/admin/school-finance/payouts/:payoutId/ledger`
+
+The `/internal/admin/*` routes are service-to-service only and should not be called from browser clients.
 
 Quick check:
 

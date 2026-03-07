@@ -9,6 +9,8 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import {
+  AccountRole,
+  AccountRoleStatus,
   Prisma,
   PaymentProvider,
   SchoolFeeInvoiceStatus,
@@ -1947,6 +1949,14 @@ export class SchoolFinanceService {
     }
   }
 
+  async listPayoutQueueForAdminAuthUser(
+    authUser: AuthUser,
+    input: ListInternalPayoutQueueInput = {}
+  ): Promise<InternalPayoutQueueResponse> {
+    await this.assertAdminRole(authUser);
+    return this.listPayoutQueueForInternalAdmin(input);
+  }
+
   async advancePayoutStatusForInternalAdmin(input: AdvanceInternalPayoutStatusInput) {
     const payoutPublicId = String(input.payoutId || '').trim();
     if (!payoutPublicId) {
@@ -1994,6 +2004,20 @@ export class SchoolFinanceService {
       this.throwIfFinanceWorkspaceUnavailable(error, 'update payout status from internal admin');
       throw this.rethrowUnexpectedError(error);
     }
+  }
+
+  async advancePayoutStatusForAdminAuthUser(
+    authUser: AuthUser,
+    input: AdvanceInternalPayoutStatusInput
+  ) {
+    await this.assertAdminRole(authUser);
+    return this.advancePayoutStatusForInternalAdmin({
+      ...input,
+      processedBy:
+        this.normalizeOptionalText(input.processedBy) ||
+        this.normalizeOptionalText(authUser.email) ||
+        undefined,
+    });
   }
 
   async getWithdrawalLedgerForInternalAdmin(payoutPublicIdInput: string) {
@@ -2046,6 +2070,11 @@ export class SchoolFinanceService {
       this.throwIfFinanceWorkspaceUnavailable(error, 'load internal payout ledger');
       throw this.rethrowUnexpectedError(error);
     }
+  }
+
+  async getWithdrawalLedgerForAdminAuthUser(authUser: AuthUser, payoutPublicIdInput: string) {
+    await this.assertAdminRole(authUser);
+    return this.getWithdrawalLedgerForInternalAdmin(payoutPublicIdInput);
   }
 
   async handleStripeWebhookEvent(event: unknown) {
@@ -4026,6 +4055,53 @@ export class SchoolFinanceService {
       throw new UnauthorizedException('Authenticated user email is required.');
     }
     return email;
+  }
+
+  private async assertAdminRole(authUser: AuthUser) {
+    const normalizedRole = this.normalizeRole(authUser.role || '');
+    if (normalizedRole === 'admin') {
+      return;
+    }
+
+    const email = this.requireEmail(authUser);
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: {
+          equals: email,
+          mode: 'insensitive',
+        },
+      },
+      select: {
+        id: true,
+        role: true,
+      },
+    });
+
+    if (!user) {
+      throw new ForbiddenException('Admin role is required for this endpoint.');
+    }
+
+    if (this.normalizeRole(user.role || '') === 'admin') {
+      return;
+    }
+
+    const adminRole = await this.prisma.userRole.findUnique({
+      where: {
+        userId_role: {
+          userId: user.id,
+          role: AccountRole.ADMIN,
+        },
+      },
+      select: {
+        status: true,
+      },
+    });
+
+    if (adminRole?.status === AccountRoleStatus.ACTIVE) {
+      return;
+    }
+
+    throw new ForbiddenException('Admin role is required for this endpoint.');
   }
 
   private assertSchoolRole(role: string) {

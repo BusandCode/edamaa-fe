@@ -13,7 +13,6 @@ import { signOutEverywhere } from '../../../utils/signOut';
 import {
   fetchInternalAdminPayoutLedger,
   fetchInternalAdminPayoutQueue,
-  isInternalAdminTokenConfigured,
   updateInternalAdminPayoutStatus,
   type InternalAdminPayoutLedgerResponse,
   type InternalAdminPayoutQueueResponse,
@@ -250,13 +249,6 @@ const InternalAdminPayouts = () => {
               <p className="text-xs font-semibold text-gray-700">{formatDateTime(queue?.generatedAt || null)}</p>
             </div>
           </div>
-
-          {!isInternalAdminTokenConfigured() && (
-            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              Add <code className="rounded bg-amber-100 px-1 py-0.5">VITE_INTERNAL_API_TOKEN</code> to your frontend
-              env, then restart the web app to use this page.
-            </div>
-          )}
 
           {notice && (
             <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">

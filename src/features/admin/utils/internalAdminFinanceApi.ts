@@ -1,3 +1,8 @@
+import {
+  loadPersistedLocalDevAuthSession,
+  loadPersistedSupabaseAccessToken,
+} from '../../../utils/authSession';
+
 export type InternalAdminPayoutStatus =
   | 'requested'
   | 'processing'
@@ -89,7 +94,6 @@ type UpdateInternalAdminPayoutStatusPayload = {
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
-const INTERNAL_ADMIN_TOKEN = String(import.meta.env.VITE_INTERNAL_API_TOKEN || '').trim();
 
 const isLocalhostHost = (host: string) => host === '127.0.0.1' || host === 'localhost';
 
@@ -151,11 +155,11 @@ const shouldTryNextBase = (response: Response, base: string) => {
   return false;
 };
 
-const requestWithInternalAdminToken = async (endpoint: string, init?: RequestInit) => {
-  if (!INTERNAL_ADMIN_TOKEN) {
-    throw new Error(
-      'Internal admin token is not configured. Add VITE_INTERNAL_API_TOKEN in your frontend .env and restart the web server.'
-    );
+const requestWithAdminAuth = async (endpoint: string, init?: RequestInit) => {
+  const token = loadPersistedSupabaseAccessToken();
+  const localDevSession = loadPersistedLocalDevAuthSession();
+  if (!token && !localDevSession?.email) {
+    throw new Error('Sign in with an admin account to use internal admin tools.');
   }
 
   const bases = resolveApiBaseCandidates();
@@ -170,7 +174,11 @@ const requestWithInternalAdminToken = async (endpoint: string, init?: RequestIni
         headers: {
           'Content-Type': 'application/json',
           ...(init?.headers || {}),
-          'X-Internal-Token': INTERNAL_ADMIN_TOKEN,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(localDevSession?.email ? { 'X-Dev-User-Email': localDevSession.email } : {}),
+          ...(localDevSession?.defaultRole
+            ? { 'X-Dev-User-Role': localDevSession.defaultRole }
+            : {}),
         },
       });
     } catch (error) {
@@ -194,8 +202,6 @@ const requestWithInternalAdminToken = async (endpoint: string, init?: RequestIni
     `${fallbackMessage}. Could not reach backend API on ${bases.join(', ')}. Start the API with "bash scripts/api-up.sh", then retry.`
   );
 };
-
-export const isInternalAdminTokenConfigured = () => Boolean(INTERNAL_ADMIN_TOKEN);
 
 export const fetchInternalAdminPayoutQueue = async (query?: {
   status?: InternalAdminPayoutStatusFilter;
@@ -223,8 +229,8 @@ export const fetchInternalAdminPayoutQueue = async (query?: {
   }
 
   const queryString = params.toString();
-  const response = await requestWithInternalAdminToken(
-    `/internal/admin/school-finance/payouts${queryString ? `?${queryString}` : ''}`
+  const response = await requestWithAdminAuth(
+    `/admin/school-finance/payouts${queryString ? `?${queryString}` : ''}`
   );
   return (await response.json()) as InternalAdminPayoutQueueResponse;
 };
@@ -233,8 +239,8 @@ export const updateInternalAdminPayoutStatus = async (
   payoutId: string,
   payload: UpdateInternalAdminPayoutStatusPayload
 ) => {
-  const response = await requestWithInternalAdminToken(
-    `/internal/admin/school-finance/payouts/${encodeURIComponent(payoutId)}/status`,
+  const response = await requestWithAdminAuth(
+    `/admin/school-finance/payouts/${encodeURIComponent(payoutId)}/status`,
     {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -248,8 +254,8 @@ export const updateInternalAdminPayoutStatus = async (
 };
 
 export const fetchInternalAdminPayoutLedger = async (payoutId: string) => {
-  const response = await requestWithInternalAdminToken(
-    `/internal/admin/school-finance/payouts/${encodeURIComponent(payoutId)}/ledger`
+  const response = await requestWithAdminAuth(
+    `/admin/school-finance/payouts/${encodeURIComponent(payoutId)}/ledger`
   );
   return (await response.json()) as InternalAdminPayoutLedgerResponse;
 };
