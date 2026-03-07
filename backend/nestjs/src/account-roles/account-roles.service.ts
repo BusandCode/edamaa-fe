@@ -49,7 +49,13 @@ const REQUESTABLE_ROLES: AccountRole[] = [AccountRole.TUTOR, AccountRole.SCHOOL]
 
 @Injectable()
 export class AccountRolesService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly adminEmailAllowlist: Set<string>;
+
+  constructor(private readonly prisma: PrismaService) {
+    this.adminEmailAllowlist = this.parseAdminEmailAllowlist(
+      process.env.ADMIN_EMAIL_ALLOWLIST || ''
+    );
+  }
 
   async getMyRoles(authUser: AuthUser) {
     const user = await this.resolveOrCreateUser(authUser);
@@ -568,6 +574,81 @@ export class AccountRolesService {
       orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
     });
 
+    if (fallbackRole === AccountRole.ADMIN) {
+      const now = new Date();
+      const adminRole = roles.find((role) => role.role === AccountRole.ADMIN) || null;
+
+      if (!adminRole) {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.userRole.updateMany({
+            where: { userId },
+            data: { isDefault: false },
+          });
+
+          await tx.userRole.create({
+            data: {
+              publicId: this.createPublicId('ROL', userId),
+              userId,
+              role: AccountRole.ADMIN,
+              status: AccountRoleStatus.ACTIVE,
+              isDefault: true,
+              activatedAt: now,
+              deactivatedAt: null,
+            },
+          });
+
+          await tx.user.update({
+            where: { id: userId },
+            data: { role: this.toApiRole(AccountRole.ADMIN) },
+          });
+        });
+        return;
+      }
+
+      const needsActivation = adminRole.status !== AccountRoleStatus.ACTIVE;
+      const needsDefault = !adminRole.isDefault;
+
+      if (needsActivation || needsDefault) {
+        await this.prisma.$transaction(async (tx) => {
+          if (needsDefault) {
+            await tx.userRole.updateMany({
+              where: { userId },
+              data: { isDefault: false },
+            });
+          }
+
+          await tx.userRole.update({
+            where: { id: adminRole.id },
+            data: {
+              status: AccountRoleStatus.ACTIVE,
+              isDefault: true,
+              activatedAt: adminRole.activatedAt || now,
+              deactivatedAt: null,
+            },
+          });
+
+          await tx.user.update({
+            where: { id: userId },
+            data: { role: this.toApiRole(AccountRole.ADMIN) },
+          });
+        });
+      }
+
+      await this.prisma.user.updateMany({
+        where: {
+          id: userId,
+          NOT: {
+            role: this.toApiRole(AccountRole.ADMIN),
+          },
+        },
+        data: {
+          role: this.toApiRole(AccountRole.ADMIN),
+        },
+      });
+
+      return;
+    }
+
     if (roles.length === 0) {
       const bootstrapRole = fallbackRole || AccountRole.STUDENT;
       await this.prisma.userRole.create({
@@ -630,8 +711,11 @@ export class AccountRolesService {
     }
 
     const fullName = this.resolveFullName(authUser);
-    const authRole = this.resolveAuthRoleCandidate(authUser);
-    const authRoleApi = authRole ? this.toApiRole(authRole) : null;
+    const authRoleCandidate = this.resolveAuthRoleCandidate(authUser);
+    const authRole = this.isAdminEmailAllowlisted(email)
+      ? AccountRole.ADMIN
+      : authRoleCandidate;
+    const roleToApply = this.toApiRole(authRole || AccountRole.STUDENT);
 
     const existing = await this.prisma.user.findFirst({
       where: {
@@ -643,15 +727,17 @@ export class AccountRolesService {
     });
 
     if (existing) {
+      const existingApiRole = this.toApiRole(this.toAccountRole(existing.role));
       const shouldPromoteLegacyRole =
-        authRoleApi &&
-        authRoleApi !== 'student' &&
-        this.toApiRole(this.toAccountRole(existing.role)) === 'student';
+        roleToApply !== 'student' &&
+        existingApiRole === 'student';
+      const shouldElevateAllowlistedAdmin =
+        authRole === AccountRole.ADMIN && existingApiRole !== 'admin';
 
-      if (!existing.name && fullName && shouldPromoteLegacyRole) {
+      if (!existing.name && fullName && (shouldPromoteLegacyRole || shouldElevateAllowlistedAdmin)) {
         return this.prisma.user.update({
           where: { id: existing.id },
-          data: { name: fullName, role: authRoleApi },
+          data: { name: fullName, role: roleToApply },
         });
       }
 
@@ -662,10 +748,10 @@ export class AccountRolesService {
         });
       }
 
-      if (shouldPromoteLegacyRole) {
+      if (shouldPromoteLegacyRole || shouldElevateAllowlistedAdmin) {
         return this.prisma.user.update({
           where: { id: existing.id },
-          data: { role: authRoleApi },
+          data: { role: roleToApply },
         });
       }
       return existing;
@@ -675,7 +761,7 @@ export class AccountRolesService {
       data: {
         email,
         name: fullName,
-        role: this.toApiRole(authRole || AccountRole.STUDENT),
+        role: roleToApply,
       },
     });
   }
@@ -812,5 +898,22 @@ export class AccountRolesService {
     const stamp = Date.now().toString(36).toUpperCase();
     const random = Math.floor(Math.random() * 900 + 100).toString();
     return `${prefix}-${String(userId).padStart(4, '0')}-${stamp}${random}`;
+  }
+
+  private parseAdminEmailAllowlist(rawValue: string) {
+    return new Set(
+      String(rawValue || '')
+        .split(',')
+        .map((email) => this.normalizeEmail(email))
+        .filter(Boolean)
+    );
+  }
+
+  private isAdminEmailAllowlisted(email: string) {
+    const normalized = this.normalizeEmail(email);
+    if (!normalized) {
+      return false;
+    }
+    return this.adminEmailAllowlist.has(normalized);
   }
 }

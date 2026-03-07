@@ -186,7 +186,7 @@ const SchoolDashboard = () => {
   const navigate = useNavigate();
   const isSubscriptionActive = Boolean(subscriptionState?.isActive);
   const canOpenInternalAdmin =
-    import.meta.env.DEV || Boolean(loadPersistedAccountRoleState()?.activeRoles?.includes('admin'));
+    loadPersistedAccountRoleState()?.defaultRole === 'admin';
   const activeSchoolModule =
     schoolManagementModules.find((module) => module.id === activeModuleId) || schoolManagementModules[0];
 

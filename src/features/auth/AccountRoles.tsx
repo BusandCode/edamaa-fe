@@ -32,7 +32,7 @@ const AccountRoles = () => {
 
   const activeRoles = roleState?.activeRoles || [];
   const defaultRole = roleState?.user.defaultRole || 'student';
-  const hasAdminAccess = activeRoles.includes('admin') || import.meta.env.DEV;
+  const hasAdminAccess = activeRoles.includes('admin');
 
   const requestableRoles = useMemo(() => {
     if (!roleState) {
@@ -162,7 +162,8 @@ const AccountRoles = () => {
               {hasAdminAccess && (
                 <button
                   type="button"
-                  onClick={() => navigate('/internal-admin/payouts')}
+                  onClick={() => void handleSwitchRole('admin')}
+                  disabled={isSubmitting}
                   className="rounded-xl border border-[#3D08BA] bg-[#3D08BA]/5 px-4 py-2 text-sm font-medium text-[#3D08BA] hover:bg-[#f7f2ff]"
                 >
                   Open Internal Admin

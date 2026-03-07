@@ -44,11 +44,6 @@ import  Performancestats  from './features/students/pages/Performancestats.tsx'
 import SubscriptionPlans from './features/subscriptions/pages/SubscriptionPlans.tsx'
 import Edamaa3DVerified from './features/subscriptions/pages/Edamaa3DVerified.tsx'
 import InternalAdminPayouts from './features/admin/pages/InternalAdminPayouts.tsx'
-import type { AppAccountRole } from './utils/authSession'
-
-const INTERNAL_ADMIN_ALLOWED_ROLES: AppAccountRole[] = import.meta.env.DEV
-  ? ['admin', 'school']
-  : ['admin']
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -87,7 +82,7 @@ createRoot(document.getElementById('root')!).render(
         <Route
           path="/internal-admin/payouts"
           element={
-            <RoleProtectedRoute allowedRoles={INTERNAL_ADMIN_ALLOWED_ROLES}>
+            <RoleProtectedRoute allowedRoles={['admin']}>
               <InternalAdminPayouts />
             </RoleProtectedRoute>
           }
