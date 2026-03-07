@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowRightOnRectangleIcon,
+  BanknotesIcon,
   BuildingOffice2Icon,
   ChatBubbleLeftRightIcon,
   ClockIcon,
@@ -382,6 +383,13 @@ const StudentHome = () => {
       setIsSigningOut(false);
     }
   }, [isSigningOut, navigate]);
+
+  const openSchoolFeesView = useCallback(() => {
+    const invoiceQuery = urgentSchoolInvoice
+      ? `&invoice=${encodeURIComponent(urgentSchoolInvoice.id)}`
+      : '';
+    navigate(`/payments?view=school-fees${invoiceQuery}`);
+  }, [navigate, urgentSchoolInvoice]);
 
   const requestWithStudentAuth = useCallback(async (endpoint: string, init?: RequestInit) => {
     const token = loadPersistedSupabaseAccessToken();
@@ -981,6 +989,27 @@ const StudentHome = () => {
                 </span>
               </button>
               <button
+                onClick={openSchoolFeesView}
+                className="relative rounded-full border border-gray-200 bg-white p-2 hover:bg-gray-50 transition-colors"
+                aria-label="Open school fee alerts"
+                title="School fee alerts"
+              >
+                <BanknotesIcon className="h-5 w-5 text-[#3D08BA]" />
+                {outstandingSchoolInvoices.length > 0 && (
+                  <span
+                    className={`absolute -top-1 -right-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white ${
+                      urgentSchoolInvoice?.status === 'overdue'
+                        ? 'bg-red-500'
+                        : 'bg-[#F68C29]'
+                    }`}
+                  >
+                    {outstandingSchoolInvoices.length > 9
+                      ? '9+'
+                      : outstandingSchoolInvoices.length}
+                  </span>
+                )}
+              </button>
+              <button
                 onClick={() => navigate('/my-profile')}
                 className="rounded-full border border-gray-200 bg-white p-2 hover:bg-gray-50 transition-colors"
                 aria-label="Open my profile"
@@ -1078,6 +1107,12 @@ const StudentHome = () => {
                   className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
                 >
                   Open payments
+                </button>
+                <button
+                  onClick={openSchoolFeesView}
+                  className="rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10"
+                >
+                  Open exact invoice
                 </button>
               </div>
             </div>

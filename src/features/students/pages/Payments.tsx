@@ -547,10 +547,12 @@ const Payments = () => {
   const [activePaymentId, setActivePaymentId] = useState<string | null>(null);
   const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState('');
   const schoolFeesSectionRef = useRef<HTMLDivElement | null>(null);
+  const schoolInvoiceCardRefs = useRef<Record<string, HTMLElement | null>>({});
   const checkoutStatus = searchParams.get('checkout');
   const checkoutSessionId = searchParams.get('session_id');
   const isSchoolFeeCheckout = searchParams.get('school_fee') === '1';
   const focusedView = searchParams.get('view');
+  const focusedInvoiceId = (searchParams.get('invoice') || '').trim();
   const focusSchoolFeesView = focusedView === 'school-fees';
 
   const stripePromise = useMemo(() => {
@@ -1101,6 +1103,24 @@ const Payments = () => {
   }, [focusSchoolFeesView]);
 
   useEffect(() => {
+    if (!focusSchoolFeesView || !focusedInvoiceId) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      const target = schoolInvoiceCardRefs.current[focusedInvoiceId];
+      target?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    }, 180);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [focusSchoolFeesView, focusedInvoiceId, schoolInvoices]);
+
+  useEffect(() => {
     if (!isPaymentMethodModalOpen) {
       return;
     }
@@ -1160,6 +1180,21 @@ const Payments = () => {
   const unreadSchoolInvoiceNotifications = schoolInvoiceNotifications.filter(
     (notification) => !notification.isRead
   );
+  const visibleSchoolInvoices = useMemo(() => {
+    if (!focusedInvoiceId) {
+      return schoolInvoices.slice(0, 8);
+    }
+
+    const focusedInvoice = schoolInvoices.find((invoice) => invoice.id === focusedInvoiceId);
+    if (!focusedInvoice) {
+      return schoolInvoices.slice(0, 8);
+    }
+
+    const otherInvoices = schoolInvoices
+      .filter((invoice) => invoice.id !== focusedInvoiceId)
+      .slice(0, 7);
+    return [focusedInvoice, ...otherInvoices];
+  }, [focusedInvoiceId, schoolInvoices]);
 
   const filters: { id: FilterId; label: string }[] = [
     { id: 'all',     label: 'All' },
@@ -1338,10 +1373,17 @@ const Payments = () => {
             <p className="mt-3 text-xs text-gray-500">No school invoices yet.</p>
           ) : (
             <div className="mt-3 space-y-2">
-              {schoolInvoices.slice(0, 8).map((invoice) => (
+              {visibleSchoolInvoices.map((invoice) => (
                 <article
                   key={invoice.id}
-                  className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5"
+                  ref={(node) => {
+                    schoolInvoiceCardRefs.current[invoice.id] = node;
+                  }}
+                  className={`rounded-lg border px-3 py-2.5 ${
+                    focusedInvoiceId === invoice.id
+                      ? 'border-[#3D08BA]/45 bg-[#3D08BA]/5 ring-1 ring-[#3D08BA]/25'
+                      : 'border-gray-200 bg-gray-50'
+                  }`}
                 >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
