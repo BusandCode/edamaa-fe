@@ -43,6 +43,7 @@ import CourseLearning from './features/students/pages/CourseLearning.tsx'
 import  Performancestats  from './features/students/pages/Performancestats.tsx'
 import SubscriptionPlans from './features/subscriptions/pages/SubscriptionPlans.tsx'
 import Edamaa3DVerified from './features/subscriptions/pages/Edamaa3DVerified.tsx'
+import InternalAdminPayouts from './features/admin/pages/InternalAdminPayouts.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -75,6 +76,14 @@ createRoot(document.getElementById('root')!).render(
           element={
             <RoleProtectedRoute allowedRoles={['school', 'admin']}>
               <SchoolFinance />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="/internal-admin/payouts"
+          element={
+            <RoleProtectedRoute allowedRoles={['admin']}>
+              <InternalAdminPayouts />
             </RoleProtectedRoute>
           }
         />

@@ -392,6 +392,9 @@ export const getDefaultHomeRouteForRole = (role: string | null | undefined) => {
   if (normalized === 'tutor') {
     return '/tutor-dashboard';
   }
+  if (normalized === 'admin') {
+    return '/internal-admin/payouts';
+  }
   return '/student-home';
 };
 
