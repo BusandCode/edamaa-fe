@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FaArrowLeft,
@@ -19,20 +19,14 @@ import {
   FaVideo,
 } from 'react-icons/fa';
 import NavBar from '../../../components/layout/school-layout/NavBar';
+import {
+  createSchoolScheduleSession,
+  deleteSchoolScheduleSession,
+  fetchSchoolScheduleSessions,
+  type SchoolScheduleSession,
+} from '../utils/schoolScheduleApi';
 
 type ScheduleStatus = 'upcoming' | 'live' | 'completed';
-
-type SchoolScheduleSession = {
-  id: string;
-  title: string;
-  subject: string;
-  instructor: string;
-  startAt: string;
-  durationMinutes: number;
-  expectedStudents: number;
-  roomCode: string;
-  notes: string | null;
-};
 
 type SessionFormState = {
   title: string;
@@ -44,8 +38,6 @@ type SessionFormState = {
   notes: string;
 };
 
-const SCHEDULE_STORAGE_KEY = 'edamaa_school_schedule_v1';
-
 const buildSeedSchedule = () => {
   const now = Date.now();
   return [
@@ -55,10 +47,14 @@ const buildSeedSchedule = () => {
       subject: 'Mathematics',
       instructor: 'Mr. Joseph',
       startAt: new Date(now + 1000 * 60 * 35).toISOString(),
+      endAt: new Date(now + 1000 * 60 * 110).toISOString(),
       durationMinutes: 75,
       expectedStudents: 48,
       roomCode: 'MATH-SS3-INT',
       notes: 'Focus on WAEC past questions and timed drills.',
+      status: 'upcoming' as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     },
     {
       id: 'SCH-SCHED-002',
@@ -66,10 +62,14 @@ const buildSeedSchedule = () => {
       subject: 'Physics',
       instructor: 'Dr. Adebayo',
       startAt: new Date(now + 1000 * 60 * 120).toISOString(),
+      endAt: new Date(now + 1000 * 60 * 180).toISOString(),
       durationMinutes: 60,
       expectedStudents: 35,
       roomCode: 'PHY-CLINIC',
       notes: 'Open Q&A and quick classwork checkpoint.',
+      status: 'upcoming' as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     },
     {
       id: 'SCH-SCHED-003',
@@ -77,41 +77,16 @@ const buildSeedSchedule = () => {
       subject: 'English',
       instructor: 'Mrs. Chinedu',
       startAt: new Date(now - 1000 * 60 * 20).toISOString(),
+      endAt: new Date(now + 1000 * 60 * 70).toISOString(),
       durationMinutes: 90,
       expectedStudents: 42,
       roomCode: 'ENG-REV-01',
       notes: 'Essay outline walkthrough and assignment briefing.',
+      status: 'live' as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     },
   ] as SchoolScheduleSession[];
-};
-
-const normalizeSessions = (value: unknown): SchoolScheduleSession[] => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((raw) => (raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null))
-    .filter((item): item is Record<string, unknown> => Boolean(item))
-    .map((item) => {
-      const duration = Number(item.durationMinutes);
-      const expectedStudents = Number(item.expectedStudents);
-      return {
-        id: String(item.id || `SCH-SCHED-${Date.now().toString(36)}`),
-        title: String(item.title || 'Class session').trim(),
-        subject: String(item.subject || 'General').trim(),
-        instructor: String(item.instructor || 'School Tutor').trim(),
-        startAt: String(item.startAt || new Date().toISOString()),
-        durationMinutes: Number.isFinite(duration) && duration > 0 ? Math.round(duration) : 60,
-        expectedStudents:
-          Number.isFinite(expectedStudents) && expectedStudents >= 0
-            ? Math.round(expectedStudents)
-            : 0,
-        roomCode: String(item.roomCode || 'EDAMAA-LIVE').trim(),
-        notes: typeof item.notes === 'string' && item.notes.trim() ? item.notes.trim() : null,
-      };
-    })
-    .filter((item) => item.title && item.startAt);
 };
 
 const getSessionStatus = (session: SchoolScheduleSession, nowMs: number): ScheduleStatus => {
@@ -224,11 +199,13 @@ const formatSessionTime = (isoDate: string) => {
 const SchoolSchedule = () => {
   const navigate = useNavigate();
   const [sessions, setSessions] = useState<SchoolScheduleSession[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<'all' | ScheduleStatus>('all');
   const [viewMode, setViewMode] = useState<'list' | 'week'>('list');
   const [weekStartDate, setWeekStartDate] = useState<Date>(() => startOfWeek(new Date()));
   const [notice, setNotice] = useState<string | null>(null);
+  const [activeActionId, setActiveActionId] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [formState, setFormState] = useState<SessionFormState>({
     title: '',
@@ -240,26 +217,25 @@ const SchoolSchedule = () => {
     notes: '',
   });
 
-  useEffect(() => {
+  const refreshSessions = useCallback(async () => {
+    setIsLoading(true);
     try {
-      const rawValue = window.localStorage.getItem(SCHEDULE_STORAGE_KEY);
-      if (!rawValue) {
-        setSessions(buildSeedSchedule());
-        return;
-      }
-
-      const parsed = JSON.parse(rawValue) as unknown;
-      const normalized = normalizeSessions(parsed);
-      setSessions(normalized.length > 0 ? normalized : buildSeedSchedule());
-    } catch {
-      setSessions(buildSeedSchedule());
+      const payload = await fetchSchoolScheduleSessions();
+      setSessions(Array.isArray(payload.sessions) ? payload.sessions : []);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not load school schedule workspace.';
+      setNotice(message);
+      // Keep local seed data as a safe fallback in local-dev when API is temporarily down.
+      setSessions((current) => (current.length > 0 ? current : buildSeedSchedule()));
+    } finally {
+      setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    // Persisting schedule locally keeps schools productive even if API is restarting.
-    window.localStorage.setItem(SCHEDULE_STORAGE_KEY, JSON.stringify(sessions));
-  }, [sessions]);
+    void refreshSessions();
+  }, [refreshSessions]);
 
   useEffect(() => {
     if (!notice) {
@@ -356,7 +332,11 @@ const SchoolSchedule = () => {
     });
   };
 
-  const handleCreateSession = () => {
+  const handleCreateSession = async () => {
+    if (activeActionId) {
+      return;
+    }
+
     const title = formState.title.trim();
     const subject = formState.subject.trim();
     const instructor = formState.instructor.trim();
@@ -380,31 +360,60 @@ const SchoolSchedule = () => {
       return;
     }
 
-    const sessionId = `SCH-SCHED-${Date.now().toString(36).toUpperCase()}`;
-    const roomCodeSeed = `${subject.slice(0, 3)}-${Date.now().toString().slice(-4)}`.toUpperCase();
+    setActiveActionId('create-session');
+    try {
+      const payload = await createSchoolScheduleSession({
+        title,
+        subject,
+        instructor,
+        startAt: startDate.toISOString(),
+        durationMinutes: Math.round(durationMinutes),
+        expectedStudents:
+          Number.isFinite(expectedStudents) && expectedStudents >= 0
+            ? Math.round(expectedStudents)
+            : 0,
+        notes: formState.notes.trim() || undefined,
+      });
 
-    const nextSession: SchoolScheduleSession = {
-      id: sessionId,
-      title,
-      subject,
-      instructor,
-      startAt: startDate.toISOString(),
-      durationMinutes: Math.round(durationMinutes),
-      expectedStudents:
-        Number.isFinite(expectedStudents) && expectedStudents >= 0 ? Math.round(expectedStudents) : 0,
-      roomCode: `ROOM-${roomCodeSeed}`,
-      notes: formState.notes.trim() || null,
-    };
+      if (payload?.session) {
+        setSessions((current) =>
+          [payload.session, ...current].sort(
+            (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime()
+          )
+        );
+      } else {
+        await refreshSessions();
+      }
 
-    setSessions((current) => [nextSession, ...current]);
-    resetForm();
-    setIsCreateOpen(false);
-    setNotice('Class added to your schedule successfully.');
+      resetForm();
+      setIsCreateOpen(false);
+      setNotice(payload?.message || 'Class added to your schedule successfully.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not create this class schedule right now.';
+      setNotice(message);
+    } finally {
+      setActiveActionId(null);
+    }
   };
 
-  const handleDeleteSession = (sessionId: string) => {
-    setSessions((current) => current.filter((session) => session.id !== sessionId));
-    setNotice('Class removed from schedule.');
+  const handleDeleteSession = async (sessionId: string) => {
+    if (activeActionId) {
+      return;
+    }
+
+    setActiveActionId(`delete-${sessionId}`);
+    try {
+      await deleteSchoolScheduleSession(sessionId);
+      setSessions((current) => current.filter((session) => session.id !== sessionId));
+      setNotice('Class removed from schedule.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not remove this class schedule right now.';
+      setNotice(message);
+    } finally {
+      setActiveActionId(null);
+    }
   };
 
   const handleStartLiveClass = (session: SchoolScheduleSession) => {
@@ -576,7 +585,13 @@ const SchoolSchedule = () => {
         <section className="mt-5">
           {viewMode === 'list' ? (
             <div className="space-y-3">
-              {filteredSessions.length === 0 && (
+              {isLoading && (
+                <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-600 shadow-sm">
+                  Loading school schedule sessions...
+                </div>
+              )}
+
+              {!isLoading && filteredSessions.length === 0 && (
                 <div className="rounded-xl border border-gray-200 bg-white p-10 text-center shadow-sm">
                   <FaCalendarAlt className="mx-auto mb-3 text-4xl text-gray-300" />
                   <h3 className="text-base font-semibold text-gray-900">No classes match your filters</h3>
@@ -626,10 +641,11 @@ const SchoolSchedule = () => {
                     <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
                       <button
                         onClick={() => handleDeleteSession(session.id)}
+                        disabled={Boolean(activeActionId)}
                         className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
                       >
                         <FaTrash size={10} />
-                        Remove
+                        {activeActionId === `delete-${session.id}` ? 'Removing...' : 'Remove'}
                       </button>
                       <button
                         onClick={() => handleStartLiveClass(session)}
@@ -757,10 +773,14 @@ const SchoolSchedule = () => {
               <h2 className="text-base font-semibold text-gray-900">Add New Class to Schedule</h2>
               <button
                 onClick={() => {
+                  if (activeActionId === 'create-session') {
+                    return;
+                  }
                   setIsCreateOpen(false);
                   resetForm();
                 }}
-                className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50"
+                disabled={activeActionId === 'create-session'}
+                className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label="Close modal"
               >
                 <FaTimes size={12} />
@@ -847,18 +867,23 @@ const SchoolSchedule = () => {
             <div className="flex items-center justify-end gap-2 border-t border-gray-200 px-5 py-4">
               <button
                 onClick={() => {
+                  if (activeActionId === 'create-session') {
+                    return;
+                  }
                   setIsCreateOpen(false);
                   resetForm();
                 }}
-                className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                disabled={activeActionId === 'create-session'}
+                className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreateSession}
-                className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2D0690]"
+                disabled={activeActionId === 'create-session'}
+                className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2D0690] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Save class
+                {activeActionId === 'create-session' ? 'Saving...' : 'Save class'}
               </button>
             </div>
           </div>
