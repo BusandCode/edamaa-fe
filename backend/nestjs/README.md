@@ -117,6 +117,13 @@ School finance reminder endpoints (school role):
 - `POST /school-finance/me/reminders/requeue-failed`
 - `POST /school-finance/me/reminders/requeue-exhausted` (requires `confirm` phrase)
 
+School finance payout endpoints (school role):
+
+- `GET /school-finance/me/withdrawals?status=requested|processing|paid|failed|canceled&limit=60`
+- `POST /school-finance/me/withdrawals`
+- `POST /school-finance/me/withdrawals/:payoutId/status`
+- `GET /school-finance/me/withdrawals/:payoutId/ledger`
+
 Account roles endpoints (requires `Authorization: Bearer <supabase_access_token>`):
 
 - `GET /account/roles/me`
@@ -138,6 +145,9 @@ Internal Django admin bridge (`X-Internal-Token` required):
 - `GET /internal/admin/health`
 - `GET /internal/admin/analytics/webhooks`
 - `GET /internal/admin/analytics/user-roles`
+- `GET /internal/admin/school-finance/payouts?status=requested|processing|paid|failed|canceled&search=&page=1&limit=50`
+- `POST /internal/admin/school-finance/payouts/:payoutId/status`
+- `GET /internal/admin/school-finance/payouts/:payoutId/ledger`
 
 Quick check:
 

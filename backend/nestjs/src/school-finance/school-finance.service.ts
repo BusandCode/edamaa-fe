@@ -267,6 +267,60 @@ type AdvanceWithdrawalStatusInput = {
   note?: string;
 };
 
+type ListWithdrawalsInput = {
+  status?: string;
+  limit?: number;
+};
+
+type InternalPayoutQueueItem = {
+  payout: SchoolPayoutItem & {
+    ledgerCount: number;
+  };
+  school: {
+    financeAccountId: string;
+    schoolUserId: string;
+    name: string;
+    email: string;
+  };
+  wallet: SchoolFinanceDashboardResponse['wallet'];
+};
+
+type InternalPayoutQueueSummary = {
+  requested: number;
+  processing: number;
+  paid: number;
+  failed: number;
+  canceled: number;
+};
+
+type InternalPayoutQueueResponse = {
+  generatedAt: string;
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasMore: boolean;
+  statusFilter: SchoolPayoutItem['status'] | 'all';
+  search: string | null;
+  summary: InternalPayoutQueueSummary;
+  payouts: InternalPayoutQueueItem[];
+};
+
+type ListInternalPayoutQueueInput = {
+  status?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+};
+
+type AdvanceInternalPayoutStatusInput = {
+  payoutId?: string;
+  status?: string;
+  failureReason?: string;
+  note?: string;
+  processedBy?: string;
+};
+
 type InvoicePaymentResponse = {
   mode: 'checkout' | 'settled';
   checkoutUrl: string | null;
@@ -1653,99 +1707,14 @@ export class SchoolFinanceService {
       const schoolUser = await this.resolveOrCreateUser(email, displayName, 'school');
       const account = await this.getOrCreateSchoolFinanceAccount(schoolUser.id);
 
-      const outcome = await this.prisma.$transaction(async (tx) => {
-        const payout = await tx.schoolPayout.findFirst({
-          where: {
-            publicId: payoutPublicId,
-            accountId: account.id,
-          },
-        });
-
-        if (!payout) {
-          throw new NotFoundException('Payout request could not be found.');
-        }
-
-        if (payout.status === targetStatus) {
-          const currentAccount = await tx.schoolFinanceAccount.findUnique({
-            where: { id: account.id },
-          });
-          if (!currentAccount) {
-            throw new NotFoundException('School finance account was not found.');
-          }
-
-          return {
-            payout,
-            account: currentAccount,
-            changed: false,
-          };
-        }
-
-        this.assertValidPayoutStatusTransition(payout.status, targetStatus);
-
-        const accountDelta = this.buildAccountDeltaForPayoutTransition(
-          payout.status,
-          targetStatus,
-          payout.amountMinor
-        );
-
-        const mergedMetadata = {
-          ...(payout.metadata && typeof payout.metadata === 'object'
-            ? (payout.metadata as Record<string, unknown>)
-            : {}),
-          manualTransition: true,
-          note: normalizedNote || undefined,
-        };
-
-        const updatedPayout = await tx.schoolPayout.update({
-          where: { id: payout.id },
-          data: {
-            status: targetStatus,
-            processedAt: this.shouldSetPayoutProcessedAt(targetStatus) ? new Date() : null,
-            failureReason:
-              targetStatus === SchoolPayoutStatus.FAILED
-                ? normalizedFailureReason
-                : targetStatus === SchoolPayoutStatus.CANCELED
-                ? normalizedFailureReason || null
-                : null,
-            metadata:
-              Object.keys(mergedMetadata).length > 0
-                ? (mergedMetadata as Prisma.InputJsonValue)
-                : undefined,
-          },
-        });
-
-        const updatedAccount = accountDelta
-          ? await tx.schoolFinanceAccount.update({
-              where: { id: account.id },
-              data: accountDelta,
-            })
-          : await tx.schoolFinanceAccount.findUnique({
-              where: { id: account.id },
-            });
-
-        if (!updatedAccount) {
-          throw new NotFoundException('School finance account was not found.');
-        }
-
-        await this.createPayoutLedgerEntryTx(tx, {
-          accountId: account.id,
-          payoutId: payout.id,
-          amountMinor: payout.amountMinor,
-          currency: payout.currency,
-          previousStatus: payout.status,
-          nextStatus: targetStatus,
-          note: this.buildPayoutLedgerNote(targetStatus, normalizedNote),
-          metadata: {
-            source: 'manual-status-update',
-            failureReason: normalizedFailureReason || undefined,
-          },
-        });
-
-        return {
-          payout: updatedPayout,
-          account: updatedAccount,
-          changed: true,
-        };
+      const outcome = await this.advanceWithdrawalStatusCore({
+        payoutPublicId,
+        targetStatus,
+        failureReason: normalizedFailureReason,
+        note: normalizedNote,
+        accountId: account.id,
+        metadataSource: 'manual-status-update',
+        actorEmail: email,
       });
 
       const ledgerCount = await this.prisma.schoolPayoutLedgerEntry.count({
@@ -1820,7 +1789,7 @@ export class SchoolFinanceService {
     }
   }
 
-  async listWithdrawalsForAuthUser(authUser: AuthUser) {
+  async listWithdrawalsForAuthUser(authUser: AuthUser, input: ListWithdrawalsInput = {}) {
     const email = this.requireEmail(authUser);
     const normalizedRole = this.normalizeRole(authUser.role);
     this.assertSchoolRole(normalizedRole);
@@ -1828,11 +1797,16 @@ export class SchoolFinanceService {
     try {
       const schoolUser = await this.resolveOrCreateUser(email, displayName, 'school');
       const account = await this.getOrCreateSchoolFinanceAccount(schoolUser.id);
+      const statusFilter = this.normalizeOptionalPayoutStatusFilter(input.status);
+      const limit = this.normalizeWithdrawalListLimit(input.limit);
 
       const payouts = await this.prisma.schoolPayout.findMany({
-        where: { accountId: account.id },
+        where: {
+          accountId: account.id,
+          ...(statusFilter ? { status: statusFilter } : {}),
+        },
         orderBy: [{ createdAt: 'desc' }],
-        take: 60,
+        take: limit,
         include: {
           _count: {
             select: {
@@ -1858,6 +1832,218 @@ export class SchoolFinanceService {
         };
       }
 
+      throw this.rethrowUnexpectedError(error);
+    }
+  }
+
+  async listPayoutQueueForInternalAdmin(
+    input: ListInternalPayoutQueueInput = {}
+  ): Promise<InternalPayoutQueueResponse> {
+    const statusFilter = this.normalizeOptionalPayoutStatusFilter(input.status);
+    const search = this.normalizeOptionalText(input.search);
+    const page = this.normalizePayoutQueuePage(input.page);
+    const limit = this.normalizePayoutQueueLimit(input.limit);
+    const skip = (page - 1) * limit;
+
+    const where = this.buildInternalPayoutQueueWhere(statusFilter, search);
+    const summaryWhere = this.buildInternalPayoutQueueWhere(null, search);
+
+    try {
+      const [
+        payouts,
+        total,
+        requestedCount,
+        processingCount,
+        paidCount,
+        failedCount,
+        canceledCount,
+      ] = await Promise.all([
+        this.prisma.schoolPayout.findMany({
+          where,
+          include: {
+            account: {
+              include: {
+                schoolUser: true,
+              },
+            },
+            _count: {
+              select: {
+                ledgerEntries: true,
+              },
+            },
+          },
+          orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }],
+          skip,
+          take: limit,
+        }),
+        this.prisma.schoolPayout.count({ where }),
+        this.prisma.schoolPayout.count({
+          where: {
+            ...summaryWhere,
+            status: SchoolPayoutStatus.REQUESTED,
+          },
+        }),
+        this.prisma.schoolPayout.count({
+          where: {
+            ...summaryWhere,
+            status: SchoolPayoutStatus.PROCESSING,
+          },
+        }),
+        this.prisma.schoolPayout.count({
+          where: {
+            ...summaryWhere,
+            status: SchoolPayoutStatus.PAID,
+          },
+        }),
+        this.prisma.schoolPayout.count({
+          where: {
+            ...summaryWhere,
+            status: SchoolPayoutStatus.FAILED,
+          },
+        }),
+        this.prisma.schoolPayout.count({
+          where: {
+            ...summaryWhere,
+            status: SchoolPayoutStatus.CANCELED,
+          },
+        }),
+      ]);
+
+      const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
+
+      return {
+        generatedAt: new Date().toISOString(),
+        page,
+        limit,
+        total,
+        totalPages,
+        hasMore: page * limit < total,
+        statusFilter: statusFilter ? PAYOUT_STATUS_FROM_PRISMA[statusFilter] : 'all',
+        search: search || null,
+        summary: {
+          requested: requestedCount,
+          processing: processingCount,
+          paid: paidCount,
+          failed: failedCount,
+          canceled: canceledCount,
+        },
+        payouts: payouts.map((payout) => ({
+          payout: {
+            ...this.mapPayout(payout),
+            ledgerCount: payout._count.ledgerEntries,
+          },
+          school: {
+            financeAccountId: payout.account.publicId,
+            schoolUserId: String(payout.account.schoolUserId),
+            name: payout.account.schoolUser.name || payout.account.schoolUser.email,
+            email: payout.account.schoolUser.email,
+          },
+          wallet: this.mapWallet(payout.account),
+        })),
+      };
+    } catch (error) {
+      this.throwIfFinanceWorkspaceUnavailable(error, 'load internal payout queue');
+      throw this.rethrowUnexpectedError(error);
+    }
+  }
+
+  async advancePayoutStatusForInternalAdmin(input: AdvanceInternalPayoutStatusInput) {
+    const payoutPublicId = String(input.payoutId || '').trim();
+    if (!payoutPublicId) {
+      throw new BadRequestException('Payout id is required.');
+    }
+
+    const targetStatus = this.normalizePayoutStatusInput(input.status);
+    const normalizedFailureReason = this.normalizeOptionalText(input.failureReason);
+    const normalizedNote = this.normalizeOptionalText(input.note);
+    const processedBy = this.normalizeOptionalText(input.processedBy);
+
+    if (targetStatus === SchoolPayoutStatus.FAILED && !normalizedFailureReason) {
+      throw new BadRequestException('Please add a reason when marking a payout as failed.');
+    }
+
+    try {
+      const outcome = await this.advanceWithdrawalStatusCore({
+        payoutPublicId,
+        targetStatus,
+        failureReason: normalizedFailureReason,
+        note: normalizedNote,
+        metadataSource: 'internal-admin-status-update',
+        actorEmail: processedBy,
+      });
+
+      const ledgerCount = await this.prisma.schoolPayoutLedgerEntry.count({
+        where: {
+          payout: {
+            publicId: payoutPublicId,
+          },
+        },
+      });
+
+      return {
+        payout: {
+          ...this.mapPayout(outcome.payout),
+          ledgerCount,
+        },
+        wallet: this.mapWallet(outcome.account),
+        message: outcome.changed
+          ? 'Payout status updated successfully by internal admin.'
+          : 'Payout is already in the selected status.',
+      };
+    } catch (error) {
+      this.throwIfFinanceWorkspaceUnavailable(error, 'update payout status from internal admin');
+      throw this.rethrowUnexpectedError(error);
+    }
+  }
+
+  async getWithdrawalLedgerForInternalAdmin(payoutPublicIdInput: string) {
+    const payoutPublicId = String(payoutPublicIdInput || '').trim();
+    if (!payoutPublicId) {
+      throw new BadRequestException('Payout id is required.');
+    }
+
+    try {
+      const payout = await this.prisma.schoolPayout.findFirst({
+        where: {
+          publicId: payoutPublicId,
+        },
+        include: {
+          account: {
+            include: {
+              schoolUser: true,
+            },
+          },
+        },
+      });
+
+      if (!payout) {
+        throw new NotFoundException('Payout request could not be found.');
+      }
+
+      const ledgerEntries = await this.prisma.schoolPayoutLedgerEntry.findMany({
+        where: {
+          payoutId: payout.id,
+          accountId: payout.accountId,
+        },
+        orderBy: [{ createdAt: 'asc' }],
+      });
+
+      return {
+        payout: {
+          ...this.mapPayout(payout),
+          ledgerCount: ledgerEntries.length,
+        },
+        school: {
+          financeAccountId: payout.account.publicId,
+          schoolUserId: String(payout.account.schoolUserId),
+          name: payout.account.schoolUser.name || payout.account.schoolUser.email,
+          email: payout.account.schoolUser.email,
+        },
+        wallet: this.mapWallet(payout.account),
+        ledger: ledgerEntries.map((entry) => this.mapPayoutLedgerEntry(entry, payout.publicId)),
+      };
+    } catch (error) {
+      this.throwIfFinanceWorkspaceUnavailable(error, 'load internal payout ledger');
       throw this.rethrowUnexpectedError(error);
     }
   }
@@ -2443,6 +2629,215 @@ export class SchoolFinanceService {
     throw new BadRequestException(
       'Payout status must be one of: requested, processing, paid, failed, canceled.'
     );
+  }
+
+  private normalizeOptionalPayoutStatusFilter(value: string | undefined): SchoolPayoutStatus | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized || normalized === 'all') {
+      return null;
+    }
+    return this.normalizePayoutStatusInput(normalized);
+  }
+
+  private normalizeWithdrawalListLimit(value: number | string | undefined) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return 60;
+    }
+
+    return Math.min(200, Math.max(1, Math.round(parsed)));
+  }
+
+  private normalizePayoutQueuePage(value: number | string | undefined) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return 1;
+    }
+
+    return Math.max(1, Math.round(parsed));
+  }
+
+  private normalizePayoutQueueLimit(value: number | string | undefined) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return 50;
+    }
+
+    return Math.min(200, Math.max(1, Math.round(parsed)));
+  }
+
+  private buildInternalPayoutQueueWhere(
+    statusFilter: SchoolPayoutStatus | null,
+    search: string | null
+  ): Prisma.SchoolPayoutWhereInput {
+    const normalizedSearch = this.normalizeOptionalText(search);
+    const baseWhere: Prisma.SchoolPayoutWhereInput = {
+      ...(statusFilter ? { status: statusFilter } : {}),
+    };
+
+    if (!normalizedSearch) {
+      return baseWhere;
+    }
+
+    return {
+      ...baseWhere,
+      OR: [
+        {
+          publicId: {
+            contains: normalizedSearch,
+            mode: 'insensitive',
+          },
+        },
+        {
+          providerReference: {
+            contains: normalizedSearch,
+            mode: 'insensitive',
+          },
+        },
+        {
+          account: {
+            publicId: {
+              contains: normalizedSearch,
+              mode: 'insensitive',
+            },
+          },
+        },
+        {
+          account: {
+            schoolUser: {
+              email: {
+                contains: normalizedSearch,
+                mode: 'insensitive',
+              },
+            },
+          },
+        },
+        {
+          account: {
+            schoolUser: {
+              name: {
+                contains: normalizedSearch,
+                mode: 'insensitive',
+              },
+            },
+          },
+        },
+      ],
+    };
+  }
+
+  private async advanceWithdrawalStatusCore(input: {
+    payoutPublicId: string;
+    targetStatus: SchoolPayoutStatus;
+    failureReason: string | null;
+    note: string | null;
+    metadataSource: string;
+    actorEmail?: string | null;
+    accountId?: number;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      const payout = await tx.schoolPayout.findFirst({
+        where: {
+          publicId: input.payoutPublicId,
+          ...(typeof input.accountId === 'number' ? { accountId: input.accountId } : {}),
+        },
+      });
+
+      if (!payout) {
+        throw new NotFoundException('Payout request could not be found.');
+      }
+
+      const account = await tx.schoolFinanceAccount.findUnique({
+        where: { id: payout.accountId },
+      });
+      if (!account) {
+        throw new NotFoundException('School finance account was not found.');
+      }
+
+      if (payout.status === input.targetStatus) {
+        return {
+          payout,
+          account,
+          changed: false,
+        };
+      }
+
+      this.assertValidPayoutStatusTransition(payout.status, input.targetStatus);
+
+      const accountDelta = this.buildAccountDeltaForPayoutTransition(
+        payout.status,
+        input.targetStatus,
+        payout.amountMinor
+      );
+
+      if (accountDelta && account.onHoldMinor < payout.amountMinor) {
+        throw new BadRequestException(
+          'Payout hold balance is lower than requested amount. Reconcile wallet entries before updating status.'
+        );
+      }
+
+      const mergedMetadata = {
+        ...(payout.metadata && typeof payout.metadata === 'object'
+          ? (payout.metadata as Record<string, unknown>)
+          : {}),
+        manualTransition: true,
+        transitionSource: input.metadataSource,
+        processedBy: input.actorEmail || undefined,
+        note: input.note || undefined,
+      };
+
+      const updatedPayout = await tx.schoolPayout.update({
+        where: { id: payout.id },
+        data: {
+          status: input.targetStatus,
+          processedAt: this.shouldSetPayoutProcessedAt(input.targetStatus) ? new Date() : null,
+          failureReason:
+            input.targetStatus === SchoolPayoutStatus.FAILED
+              ? input.failureReason
+              : input.targetStatus === SchoolPayoutStatus.CANCELED
+              ? input.failureReason || null
+              : null,
+          metadata:
+            Object.keys(mergedMetadata).length > 0
+              ? (mergedMetadata as Prisma.InputJsonValue)
+              : undefined,
+        },
+      });
+
+      const updatedAccount = accountDelta
+        ? await tx.schoolFinanceAccount.update({
+            where: { id: payout.accountId },
+            data: accountDelta,
+          })
+        : await tx.schoolFinanceAccount.findUnique({
+            where: { id: payout.accountId },
+          });
+
+      if (!updatedAccount) {
+        throw new NotFoundException('School finance account was not found.');
+      }
+
+      await this.createPayoutLedgerEntryTx(tx, {
+        accountId: payout.accountId,
+        payoutId: payout.id,
+        amountMinor: payout.amountMinor,
+        currency: payout.currency,
+        previousStatus: payout.status,
+        nextStatus: input.targetStatus,
+        note: this.buildPayoutLedgerNote(input.targetStatus, input.note),
+        metadata: {
+          source: input.metadataSource,
+          failureReason: input.failureReason || undefined,
+          processedBy: input.actorEmail || undefined,
+        },
+      });
+
+      return {
+        payout: updatedPayout,
+        account: updatedAccount,
+        changed: true,
+      };
+    });
   }
 
   private assertValidPayoutStatusTransition(

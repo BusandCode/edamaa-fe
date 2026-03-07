@@ -235,8 +235,15 @@ export class SchoolFinanceController {
   }
 
   @Get('me/withdrawals')
-  listWithdrawals(@Req() request: Request) {
-    return this.schoolFinanceService.listWithdrawalsForAuthUser(this.getAuthUser(request));
+  listWithdrawals(
+    @Req() request: Request,
+    @Query('status') status?: string,
+    @Query('limit') limit?: string
+  ) {
+    return this.schoolFinanceService.listWithdrawalsForAuthUser(this.getAuthUser(request), {
+      status,
+      limit: typeof limit === 'string' && limit.trim() ? Number(limit) : undefined,
+    });
   }
 
   @Post('me/withdrawals')

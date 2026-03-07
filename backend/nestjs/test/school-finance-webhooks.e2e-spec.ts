@@ -445,6 +445,65 @@ describe('SchoolFinance + Webhooks (route contract)', () => {
     expect(dashboard.recentPayments[0].invoiceId).toBe(invoice.id);
   });
 
+  it('paid invoice balance can be withdrawn and reflected in wallet totals', async () => {
+    const nowIso = new Date().toISOString();
+    const requestedPayout = {
+      id: 'WDR-0007-TST300',
+      amount: 9350,
+      currency: 'NGN',
+      status: 'requested',
+      requestedAt: nowIso,
+      processedAt: null as string | null,
+      failureReason: null as string | null,
+      createdAt: nowIso,
+      ledgerCount: 1,
+    };
+
+    schoolFinanceServiceMock.createWithdrawalForAuthUser.mockResolvedValue({
+      payout: requestedPayout,
+      wallet: {
+        available: 0,
+        pending: 0,
+        onHold: 9350,
+        lifetimeGross: 10000,
+        lifetimeNet: 9350,
+        totalWithdrawn: 0,
+      },
+      message: 'Withdrawal request received. Funds are on hold while payout moves through processing.',
+    });
+
+    schoolFinanceServiceMock.advanceWithdrawalStatusForAuthUser.mockResolvedValue({
+      payout: {
+        ...requestedPayout,
+        status: 'paid',
+        processedAt: nowIso,
+        ledgerCount: 2,
+      },
+      wallet: {
+        available: 0,
+        pending: 0,
+        onHold: 0,
+        lifetimeGross: 10000,
+        lifetimeNet: 9350,
+        totalWithdrawn: 9350,
+      },
+      message: 'Payout status updated successfully.',
+    });
+
+    const requested = await schoolFinanceController.createWithdrawal(authRequest, {
+      amount: 9350,
+    });
+    expect(requested.payout.status).toBe('requested');
+    expect(requested.wallet.onHold).toBe(9350);
+
+    const settled = await schoolFinanceController.updateWithdrawalStatus(authRequest, requestedPayout.id, {
+      status: 'paid',
+      note: 'Settled by finance ops',
+    });
+    expect(settled.payout.status).toBe('paid');
+    expect(settled.wallet.totalWithdrawn).toBe(9350);
+  });
+
   it('accepts Stripe webhooks and forwards payload to service', async () => {
     const payload = {
       received: true,

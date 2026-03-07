@@ -18,6 +18,7 @@ import {
   createSchoolWithdrawal,
   fetchSchoolFinanceStudents,
   fetchSchoolInvoiceCheckoutStatus,
+  fetchSchoolWithdrawals,
   fetchSchoolFinanceDashboard,
   fetchSchoolWithdrawalLedger,
   paySchoolInvoice,
@@ -168,6 +169,7 @@ const SchoolFinance = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [dashboard, setDashboard] = useState<SchoolFinanceDashboard | null>(null);
   const [students, setStudents] = useState<SchoolFinanceStudent[]>([]);
+  const [withdrawals, setWithdrawals] = useState<SchoolFinanceDashboard['recentPayouts']>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -176,6 +178,8 @@ const SchoolFinance = () => {
     | 'plan'
     | 'invoice'
     | 'withdraw'
+    | 'withdrawals-export-csv'
+    | 'withdrawals-export-pdf'
     | 'reminders-run'
     | 'reminders-drain'
     | 'reminders-requeue'
@@ -222,6 +226,9 @@ const SchoolFinance = () => {
   const [invoiceDueDate, setInvoiceDueDate] = useState('');
 
   const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawalStatusFilter, setWithdrawalStatusFilter] = useState<
+    '' | 'requested' | 'processing' | 'paid' | 'failed' | 'canceled'
+  >('');
 
   const checkoutStatus = searchParams.get('checkout');
   const checkoutSessionId = searchParams.get('session_id');
@@ -236,14 +243,16 @@ const SchoolFinance = () => {
         channel: reminderChannelFilter || undefined,
         page: reminderPage,
       };
-      const [dashboardPayload, studentsPayload, reminderPayload, reminderHealthPayload] = await Promise.all([
+      const [dashboardPayload, studentsPayload, withdrawalsPayload, reminderPayload, reminderHealthPayload] = await Promise.all([
         fetchSchoolFinanceDashboard(),
         fetchSchoolFinanceStudents(),
+        fetchSchoolWithdrawals({ limit: 120 }),
         fetchSchoolReminderDispatches(reminderQuery),
         fetchSchoolReminderDeliveryHealth({ days: 7 }),
       ]);
       setDashboard(dashboardPayload);
       setStudents(studentsPayload.students || []);
+      setWithdrawals(Array.isArray(withdrawalsPayload.payouts) ? withdrawalsPayload.payouts : []);
       setReminderDispatches(Array.isArray(reminderPayload.dispatches) ? reminderPayload.dispatches : []);
       setReminderTotal(Number(reminderPayload.total || 0));
       setReminderTotalPages(Number(reminderPayload.totalPages || 0));
@@ -395,6 +404,14 @@ const SchoolFinance = () => {
           Number(dispatch.attemptCount || 0) >= 4
       ).length,
     [reminderDispatches]
+  );
+
+  const visibleWithdrawals = useMemo(
+    () =>
+      (withdrawals || []).filter((payout) =>
+        withdrawalStatusFilter ? payout.status === withdrawalStatusFilter : true
+      ),
+    [withdrawals, withdrawalStatusFilter]
   );
 
   useEffect(() => {
@@ -1008,6 +1025,113 @@ const SchoolFinance = () => {
     setReminderPage((current) => current + 1);
   };
 
+  const handleExportWithdrawalsCsv = async () => {
+    if (activeAction) {
+      return;
+    }
+
+    setActiveAction('withdrawals-export-csv');
+    setError(null);
+    setNotice(null);
+    try {
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const lines: string[] = [
+        joinCsvRow(['Section', 'Metric', 'Value']),
+        joinCsvRow(['Payout Export', 'Generated At', new Date().toLocaleString()]),
+        joinCsvRow(['Payout Export', 'Status filter', withdrawalStatusFilter || 'all']),
+        joinCsvRow(['Payout Export', 'Rows exported', visibleWithdrawals.length]),
+      ];
+
+      lines.push('');
+      lines.push(joinCsvRow(['Payout ID', 'Amount', 'Currency', 'Status', 'Requested At', 'Processed At', 'Failure Reason']));
+      visibleWithdrawals.forEach((payout) => {
+        lines.push(
+          joinCsvRow([
+            payout.id,
+            payout.amount,
+            payout.currency,
+            payout.status,
+            new Date(payout.requestedAt).toLocaleString(),
+            payout.processedAt ? new Date(payout.processedAt).toLocaleString() : '',
+            payout.failureReason || '',
+          ])
+        );
+      });
+
+      downloadFile(
+        new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }),
+        `edamaa-withdrawals-${dateStamp}.csv`
+      );
+      setNotice('Withdrawal CSV export started.');
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : 'Withdrawal CSV export failed.';
+      setError(message);
+    } finally {
+      setActiveAction(null);
+    }
+  };
+
+  const handleExportWithdrawalsPdf = async () => {
+    if (activeAction) {
+      return;
+    }
+
+    setActiveAction('withdrawals-export-pdf');
+    setError(null);
+    setNotice(null);
+    try {
+      const [pdfMakeModule, pdfFontsModule] = await Promise.all([
+        import('pdfmake/build/pdfmake'),
+        import('pdfmake/build/vfs_fonts'),
+      ]);
+      const pdfMake = resolvePdfMake(pdfMakeModule, pdfFontsModule);
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const bodyRows = [
+        ['Payout ID', 'Amount', 'Status', 'Requested', 'Processed'],
+        ...visibleWithdrawals.map((payout) => [
+          payout.id,
+          `${payout.currency} ${payout.amount.toLocaleString()}`,
+          payout.status.replace('_', ' '),
+          new Date(payout.requestedAt).toLocaleString(),
+          payout.processedAt ? new Date(payout.processedAt).toLocaleString() : '-',
+        ]),
+      ];
+
+      const docDefinition = {
+        pageSize: 'A4',
+        pageMargins: [28, 28, 28, 32],
+        content: [
+          { text: 'Edamaa Withdrawal Report', style: 'header' },
+          { text: `Generated: ${new Date().toLocaleString()}`, style: 'muted' },
+          { text: `Status filter: ${withdrawalStatusFilter || 'all'}`, style: 'muted' },
+          { text: `Rows exported: ${visibleWithdrawals.length}`, style: 'muted', margin: [0, 0, 0, 10] },
+          {
+            table: {
+              headerRows: 1,
+              widths: ['auto', 'auto', 'auto', '*', '*'],
+              body: bodyRows,
+            },
+            layout: 'lightHorizontalLines',
+          },
+        ],
+        styles: {
+          header: { fontSize: 16, bold: true, margin: [0, 0, 0, 6] },
+          muted: { fontSize: 10, color: '#4b5563', margin: [0, 0, 0, 2] },
+        },
+      } as Record<string, unknown>;
+
+      const pdfDocument = pdfMake.createPdf(docDefinition);
+      const pdfBlob = await pdfDocument.getBlob();
+      downloadFile(pdfBlob, `edamaa-withdrawals-${dateStamp}.pdf`);
+      setNotice('Withdrawal PDF export started.');
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : 'Withdrawal PDF export failed.';
+      setError(message);
+    } finally {
+      setActiveAction(null);
+    }
+  };
+
   const handleUpdateWithdrawalStatus = async (
     payoutId: string,
     status: 'requested' | 'processing' | 'paid' | 'failed' | 'canceled'
@@ -1472,12 +1596,57 @@ const SchoolFinance = () => {
           </section>
 
           <section className="rounded-2xl bg-white p-4 shadow-sm">
-            <h2 className="text-sm font-semibold text-gray-900">Recent Withdrawals</h2>
-            {(dashboard?.recentPayouts || []).length === 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-gray-900">Recent Withdrawals</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-600">
+                  <span>Status</span>
+                  <select
+                    value={withdrawalStatusFilter}
+                    onChange={(event) =>
+                      setWithdrawalStatusFilter(
+                        event.target.value as
+                          | ''
+                          | 'requested'
+                          | 'processing'
+                          | 'paid'
+                          | 'failed'
+                          | 'canceled'
+                      )
+                    }
+                    className="rounded border border-gray-200 bg-white px-1 py-0.5 text-[11px] text-gray-700 focus:border-[#3D08BA] focus:outline-none"
+                  >
+                    <option value="">All</option>
+                    <option value="requested">Requested</option>
+                    <option value="processing">Processing</option>
+                    <option value="paid">Paid</option>
+                    <option value="failed">Failed</option>
+                    <option value="canceled">Canceled</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void handleExportWithdrawalsCsv()}
+                  disabled={activeAction === 'withdrawals-export-csv' || visibleWithdrawals.length === 0}
+                  className="rounded-md border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {activeAction === 'withdrawals-export-csv' ? 'Exporting...' : 'Export CSV'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleExportWithdrawalsPdf()}
+                  disabled={activeAction === 'withdrawals-export-pdf' || visibleWithdrawals.length === 0}
+                  className="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {activeAction === 'withdrawals-export-pdf' ? 'Exporting...' : 'Export PDF'}
+                </button>
+              </div>
+            </div>
+            {visibleWithdrawals.length === 0 ? (
               <p className="mt-3 text-xs text-gray-500">No withdrawal history yet.</p>
             ) : (
               <div className="mt-3 space-y-2">
-                {dashboard?.recentPayouts.map((payout) => (
+                {visibleWithdrawals.map((payout) => (
                   <article
                     key={payout.id}
                     className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2"

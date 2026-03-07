@@ -105,6 +105,11 @@ export type SchoolPayoutLedgerEntry = {
   createdAt: string;
 };
 
+export type SchoolWithdrawalsResponse = {
+  payouts: SchoolFinanceDashboard['recentPayouts'];
+  wallet: SchoolFinanceDashboard['wallet'];
+};
+
 export type SchoolFeeReminderDispatch = {
   id: string;
   invoiceId: string;
@@ -957,6 +962,27 @@ const localFetchSchoolWithdrawalLedger = (payoutId: string) => {
   };
 };
 
+const localFetchSchoolWithdrawals = (input?: {
+  status?: 'requested' | 'processing' | 'paid' | 'failed' | 'canceled';
+  limit?: number;
+}): SchoolWithdrawalsResponse => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const limit =
+    typeof input?.limit === 'number' && Number.isFinite(input.limit)
+      ? Math.min(200, Math.max(1, Math.round(input.limit)))
+      : 120;
+  const statusFilter = input?.status || null;
+  const payouts = workspace.dashboard.recentPayouts
+    .filter((payout) => (statusFilter ? payout.status === statusFilter : true))
+    .slice(0, limit);
+
+  return {
+    payouts,
+    wallet: workspace.dashboard.wallet,
+  };
+};
+
 const toUtcDateBucketIso = (value: Date) =>
   new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate(), 0, 0, 0, 0)).toISOString();
 
@@ -1490,6 +1516,29 @@ export const createSchoolWithdrawal = async (payload: { amount: number }) => {
       return response.json();
     },
     () => localCreateSchoolWithdrawal(payload)
+  );
+};
+
+export const fetchSchoolWithdrawals = async (input?: {
+  status?: 'requested' | 'processing' | 'paid' | 'failed' | 'canceled';
+  limit?: number;
+}) => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      const params = new URLSearchParams();
+      if (input?.status) {
+        params.set('status', input.status);
+      }
+      if (typeof input?.limit === 'number' && Number.isFinite(input.limit)) {
+        params.set('limit', String(Math.max(1, Math.round(input.limit))));
+      }
+      const query = params.toString();
+      const response = await requestWithSchoolAuth(
+        `/school-finance/me/withdrawals${query ? `?${query}` : ''}`
+      );
+      return (await response.json()) as SchoolWithdrawalsResponse;
+    },
+    () => localFetchSchoolWithdrawals(input)
   );
 };
 
