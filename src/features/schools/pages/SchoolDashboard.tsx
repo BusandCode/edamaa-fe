@@ -297,6 +297,10 @@ const SchoolDashboard = () => {
     navigate('/student-list-school');
   };
 
+  const handleTutorListClick = () => {
+    navigate('/tutor-list-school');
+  };
+
   const handleLiveClassesClick = () => {
     if (!isSubscriptionActive) {
       goToSubscription('Live classes are unlocked when your school activates Edamaa Pro.');
@@ -614,7 +618,7 @@ const SchoolDashboard = () => {
           <h3 className='text-base font-bold text-gray-900 mb-4'>Quick Actions</h3>
           <div className='grid grid-cols-3 gap-3'>
             <QuickActionButton icon={FaIdCard} label="Student Lists" onClick={handleStudentListClick}/>
-            <QuickActionButton icon={FaUsers} label="Tutors Lists" onClick={() => setGateNotice('Tutor directory workflow can be wired next.')} />
+            <QuickActionButton icon={FaUsers} label="Tutor Directory" onClick={handleTutorListClick} />
             <QuickActionButton icon={FaCertificate} label="WAEC Prep" badge="NEW" onClick={handleWaecPrepClick} />
             <QuickActionButton icon={FaChartLine} label="Revenue" onClick={handleFinanceClick} />
             <QuickActionButton icon={FaCalendarAlt} label="Schedule" onClick={handleScheduleClick} />

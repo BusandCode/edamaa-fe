@@ -26,6 +26,7 @@ import StudentProfile from './features/students/pages/StudentProfile.tsx'
 // For Students
 import StudentListTutor from './features/tutors/pages/lists/StudentList.tsx'
 import StudentListSchool from './features/schools/pages/lists/StudentListSchool.tsx'
+import TutorListSchool from './features/schools/pages/lists/TutorListSchool.tsx'
 import Assignments from './features/students/pages/Assignments.tsx'
 import Payments from './features/students/pages/Payments.tsx'
 import JoinClass from './features/students/pages/JoinClass.tsx'
@@ -137,6 +138,14 @@ createRoot(document.getElementById('root')!).render(
           element={
             <RoleProtectedRoute allowedRoles={['school', 'admin']}>
               <StudentListSchool />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path='/tutor-list-school'
+          element={
+            <RoleProtectedRoute allowedRoles={['school', 'admin']}>
+              <TutorListSchool />
             </RoleProtectedRoute>
           }
         />
