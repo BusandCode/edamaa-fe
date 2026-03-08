@@ -66,6 +66,9 @@ const StudentDashboard = () => {
   const handlePaymentsClick = () => {
     navigate('/payments');
   };
+  const handleSchoolFeesClick = () => {
+    navigate('/payments?view=school-fees');
+  };
 
   const handleNotificationClick = () => {
     navigate('/notifications');
@@ -293,6 +296,7 @@ const StudentDashboard = () => {
             <QuickAccessGrid
               onCoursesClick={OnCoursesClick}
               onPaymentsClick= {handlePaymentsClick}
+              onSchoolFeesClick={handleSchoolFeesClick}
               onAssignmentsClick={handleAssignmentsClick}
               onPerformanceClick={handlePerformanceClick}
               onJoinClass={handleJoinClassClick}

@@ -648,7 +648,30 @@ const Performancestats = () => {
             ...init,
           });
           if (!response.ok) {
-            throw new Error(`Request failed with status ${response.status}`);
+            let message = '';
+            try {
+              const payload = (await response.json()) as { message?: string | string[] };
+              if (Array.isArray(payload.message)) {
+                message = payload.message.join(', ');
+              } else if (typeof payload.message === 'string') {
+                message = payload.message.trim();
+              }
+            } catch {
+              // Try plain text fallback below.
+            }
+
+            if (!message) {
+              try {
+                const textPayload = (await response.text()).replace(/\s+/g, ' ').trim();
+                if (textPayload && !/^</.test(textPayload)) {
+                  message = textPayload;
+                }
+              } catch {
+                // Fallback below.
+              }
+            }
+
+            throw new Error(message || `Request failed with status ${response.status}`);
           }
           return (await response.json()) as PerformanceApiResponse;
         };

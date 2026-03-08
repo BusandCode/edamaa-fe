@@ -48,6 +48,7 @@ type ResourceItem = {
   sizeLabel: string;
   isNew: boolean;
   isLocked: boolean;
+  isPurchased: boolean;
 };
 
 type ResourceNotification = {
@@ -82,6 +83,14 @@ type UploadResourceResponse = {
   resource: ResourceItem;
   notification: ResourceNotification;
   message?: string;
+};
+
+type PurchaseResourceResponse = {
+  purchased: boolean;
+  message?: string;
+  purchasedAt?: string;
+  amountPaid?: number;
+  resource?: ResourceItem;
 };
 
 type LocalNotification = {
@@ -287,6 +296,7 @@ const Resources = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [activeResourceActionId, setActiveResourceActionId] = useState<string | null>(null);
+  const [activePurchaseResourceId, setActivePurchaseResourceId] = useState<string | null>(null);
   const [activeNotificationActionId, setActiveNotificationActionId] = useState<string | null>(null);
   const [isMarkingAllRead, setIsMarkingAllRead] = useState(false);
 
@@ -302,6 +312,7 @@ const Resources = () => {
     type: 'document' as ResourceType,
     category: 'note' as ResourceCategory,
     pricingType: 'free' as ResourcePricingType,
+    price: '',
     uploaderRole: 'tutor' as 'tutor' | 'school',
     instructorName: '',
   });
@@ -359,6 +370,9 @@ const Resources = () => {
     let networkError: Error | null = null;
 
     const shouldTryNextBase = (response: Response, base: string) => {
+      if (base.startsWith('/') && response.status === 500) {
+        return true;
+      }
       if ([502, 503, 504].includes(response.status)) {
         return true;
       }
@@ -591,7 +605,7 @@ const Resources = () => {
 
   const handleResourceAccess = async (resource: ResourceItem, mode: 'view' | 'download') => {
     if (resource.isLocked) {
-      window.alert('Paid e-library unlock is coming next. This resource is not available yet.');
+      window.alert('This resource is locked. Buy it first to preview or download.');
       return;
     }
 
@@ -648,6 +662,42 @@ const Resources = () => {
     }
   };
 
+  const handlePurchaseResource = async (resource: ResourceItem) => {
+    if (activePurchaseResourceId || !resource.isLocked) {
+      return;
+    }
+
+    setActivePurchaseResourceId(resource.id);
+    try {
+      const response = await requestWithAuth(
+        `/resources/me/items/${encodeURIComponent(resource.id)}/purchase`,
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        }
+      );
+      const payload = (await response.json()) as PurchaseResourceResponse;
+      if (payload.resource) {
+        setResources((previous) =>
+          previous.map((item) => (item.id === resource.id ? payload.resource! : item))
+        );
+      } else {
+        await refreshFeed(true);
+      }
+
+      window.alert(
+        payload.message ||
+          `Purchase successful. You can now open ${resource.title}.`
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not complete purchase right now.';
+      window.alert(message);
+    } finally {
+      setActivePurchaseResourceId(null);
+    }
+  };
+
   const resetUploadForm = () => {
     setUploadForm({
       title: '',
@@ -656,6 +706,7 @@ const Resources = () => {
       type: 'document',
       category: 'note',
       pricingType: 'free',
+      price: '',
       uploaderRole: 'tutor',
       instructorName: '',
     });
@@ -675,10 +726,11 @@ const Resources = () => {
     }
 
     if (uploadForm.pricingType === 'paid') {
-      setUploadError(
-        'Paid e-library unlock is coming next. Publish this resource as Free for now.'
-      );
-      return;
+      const numericPrice = Number(uploadForm.price);
+      if (!Number.isFinite(numericPrice) || numericPrice <= 0) {
+        setUploadError('Please set a valid price for this paid resource.');
+        return;
+      }
     }
 
     setIsUploading(true);
@@ -693,6 +745,9 @@ const Resources = () => {
       formData.append('type', uploadForm.type);
       formData.append('category', uploadForm.category);
       formData.append('pricingType', uploadForm.pricingType);
+      if (uploadForm.pricingType === 'paid') {
+        formData.append('price', uploadForm.price);
+      }
       formData.append('uploaderRole', uploadForm.uploaderRole);
       formData.append('instructorName', uploadForm.instructorName);
       formData.append('file', uploadFile);
@@ -1004,6 +1059,7 @@ const Resources = () => {
               const colorClass = getResourceColor(resource.type);
               const isViewing = activeResourceActionId === `view-${resource.id}`;
               const isDownloading = activeResourceActionId === `download-${resource.id}`;
+              const isPurchasing = activePurchaseResourceId === resource.id;
 
               return (
                 <article
@@ -1024,15 +1080,22 @@ const Resources = () => {
                       )}
                     </div>
                     <div className="absolute top-3 right-3">
-                      <span
-                        className={`px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase ${
-                          resource.pricingType === 'free'
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : 'bg-amber-100 text-amber-700'
-                        }`}
-                      >
-                        {resource.pricingType === 'free' ? 'Free' : 'Paid'}
-                      </span>
+                      <div className="flex flex-col items-end gap-1">
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase ${
+                            resource.pricingType === 'free'
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-amber-100 text-amber-700'
+                          }`}
+                        >
+                          {resource.pricingType === 'free' ? 'Free' : 'Paid'}
+                        </span>
+                        {resource.isPurchased && (
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase bg-blue-100 text-blue-700">
+                            Unlocked
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -1077,24 +1140,30 @@ const Resources = () => {
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         onClick={() => void handleResourceAccess(resource, 'view')}
-                        disabled={isViewing || isDownloading || resource.isLocked}
+                        disabled={isViewing || isDownloading || isPurchasing || resource.isLocked}
                         className="flex items-center justify-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         <EyeIcon className="w-4 h-4" />
                         {isViewing ? 'Opening...' : 'Preview'}
                       </button>
                       <button
-                        onClick={() => void handleResourceAccess(resource, 'download')}
-                        disabled={isViewing || isDownloading || resource.isLocked}
+                        onClick={() =>
+                          resource.isLocked
+                            ? void handlePurchaseResource(resource)
+                            : void handleResourceAccess(resource, 'download')
+                        }
+                        disabled={isViewing || isDownloading || isPurchasing}
                         className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
                           resource.isLocked
-                            ? 'bg-gray-200 text-gray-600'
+                            ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
                             : 'bg-[#3D08BA] text-white hover:bg-[#2D0690]'
                         }`}
                       >
                         <ArrowDownTrayIcon className="w-4 h-4" />
                         {resource.isLocked
-                          ? 'Locked'
+                          ? isPurchasing
+                            ? 'Buying...'
+                            : `Buy${resource.priceLabel ? ` • ${resource.priceLabel}` : ''}`
                           : isDownloading
                           ? 'Downloading...'
                           : 'Download'}
@@ -1248,9 +1317,32 @@ const Resources = () => {
                     className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#3D08BA] focus:border-transparent"
                   >
                     <option value="free">Free</option>
-                    <option value="paid">Paid (coming soon)</option>
+                    <option value="paid">Paid</option>
                   </select>
                 </div>
+
+                {uploadForm.pricingType === 'paid' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                      Price (NGN)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      step="0.01"
+                      required
+                      value={uploadForm.price}
+                      onChange={(event) =>
+                        setUploadForm((previous) => ({
+                          ...previous,
+                          price: event.target.value,
+                        }))
+                      }
+                      placeholder="1500"
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#3D08BA] focus:border-transparent"
+                    />
+                  </div>
+                )}
 
                 <div className="sm:col-span-2">
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
@@ -1305,7 +1397,7 @@ const Resources = () => {
 
               {uploadForm.pricingType === 'paid' && (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                  Paid unlock for e-library resources is in the next phase. Choose Free for this release.
+                  Paid resources are only unlocked for students after purchase.
                 </p>
               )}
             </div>

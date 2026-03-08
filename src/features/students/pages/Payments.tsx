@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeftIcon,
   CreditCardIcon,
@@ -98,6 +98,34 @@ interface ReceiptResponse {
   content: string;
 }
 
+interface SchoolFeeInvoice {
+  id: string;
+  title: string;
+  description: string | null;
+  studentEmail: string;
+  studentName: string | null;
+  amount: number;
+  currency: string;
+  status: 'draft' | 'pending' | 'partially_paid' | 'paid' | 'overdue' | 'canceled';
+  dueDate: string | null;
+  paidAt: string | null;
+  createdAt: string;
+  paymentLink: string;
+  schoolName?: string;
+  schoolFinanceAccountId?: string;
+}
+
+interface StudentSchoolInvoicesResponse {
+  invoices: SchoolFeeInvoice[];
+}
+
+interface PaySchoolInvoiceResponse {
+  mode: 'checkout' | 'settled';
+  checkoutUrl?: string | null;
+  checkoutSessionId?: string | null;
+  message?: string;
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const statusStyle = (s: Payment['status']) => {
@@ -119,6 +147,23 @@ const categoryColor = (c: Payment['category']) => {
 };
 
 const fmt = (n: number) => `₦${n.toLocaleString()}`;
+
+const schoolInvoiceStatusStyle = (status: SchoolFeeInvoice['status']) => {
+  switch (status) {
+    case 'paid':
+      return 'bg-emerald-100 text-emerald-700';
+    case 'pending':
+      return 'bg-[#3D08BA]/10 text-[#3D08BA]';
+    case 'overdue':
+      return 'bg-red-100 text-red-700';
+    case 'partially_paid':
+      return 'bg-amber-100 text-amber-700';
+    case 'draft':
+      return 'bg-gray-100 text-gray-700';
+    case 'canceled':
+      return 'bg-slate-100 text-slate-700';
+  }
+};
 
 const CARD_BRAND_LABEL: Record<CardBrand, string> = {
   visa: 'Visa',
@@ -432,10 +477,12 @@ const StripeCardSetupForm = ({
 
 const Payments = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [filter, setFilter] = useState<FilterId>('all');
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [payments, setPayments] = useState<Payment[]>(FALLBACK_PAYMENTS);
+  const [schoolInvoices, setSchoolInvoices] = useState<SchoolFeeInvoice[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>(FALLBACK_METHODS);
   const [isLoading, setIsLoading] = useState(false);
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
@@ -451,6 +498,12 @@ const Payments = () => {
   const [isPaymentMethodModalOpen, setIsPaymentMethodModalOpen] = useState(false);
   const [activePaymentId, setActivePaymentId] = useState<string | null>(null);
   const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState('');
+  const schoolFeesSectionRef = useRef<HTMLDivElement | null>(null);
+  const checkoutStatus = searchParams.get('checkout');
+  const checkoutSessionId = searchParams.get('session_id');
+  const isSchoolFeeCheckout = searchParams.get('school_fee') === '1';
+  const focusedView = searchParams.get('view');
+  const focusSchoolFeesView = focusedView === 'school-fees';
 
   const stripePromise = useMemo(() => {
     if (!stripePublishableKey) {
@@ -470,7 +523,16 @@ const Payments = () => {
         return payload.message;
       }
     } catch {
-      // Ignore JSON parsing failures and use status fallback below.
+      // Fall through to plain-text fallback.
+    }
+
+    try {
+      const textPayload = (await response.text()).replace(/\s+/g, ' ').trim();
+      if (textPayload && !/^</.test(textPayload)) {
+        return textPayload;
+      }
+    } catch {
+      // Ignore text parsing failures and use status fallback below.
     }
     return `Request failed with status ${response.status}`;
   };
@@ -486,6 +548,11 @@ const Payments = () => {
     const bases = resolveApiBaseCandidates();
     let networkError: Error | null = null;
     const shouldTryNextBase = (response: Response, base: string) => {
+      // Vite proxy may emit 500 when upstream is down; try direct hosts next.
+      if (base.startsWith('/') && response.status === 500) {
+        return true;
+      }
+
       // If proxy route is missing or upstream is down, move to the next base.
       if ([502, 503, 504].includes(response.status)) {
         return true;
@@ -548,18 +615,35 @@ const Payments = () => {
 
     setIsLoading(true);
     try {
-      const response = await requestWithAuth('/payments/me/dashboard');
-      const payload = (await response.json()) as PaymentDashboardResponse;
-      if (Array.isArray(payload.payments) && payload.payments.length > 0) {
-        setPayments(payload.payments);
+      const paymentsResponse = await requestWithAuth('/payments/me/dashboard');
+      const paymentsPayload = (await paymentsResponse.json()) as PaymentDashboardResponse;
+      if (Array.isArray(paymentsPayload.payments) && paymentsPayload.payments.length > 0) {
+        setPayments(paymentsPayload.payments);
       } else {
         setPayments([]);
       }
 
-      if (Array.isArray(payload.methods) && payload.methods.length > 0) {
-        setMethods(payload.methods);
+      if (Array.isArray(paymentsPayload.methods) && paymentsPayload.methods.length > 0) {
+        setMethods(paymentsPayload.methods);
       } else {
         setMethods([]);
+      }
+
+      try {
+        const schoolInvoicesResponse = await requestWithAuth('/school-finance/invoices/me');
+        const schoolInvoicesPayload = (await schoolInvoicesResponse.json()) as StudentSchoolInvoicesResponse;
+        if (Array.isArray(schoolInvoicesPayload.invoices)) {
+          setSchoolInvoices(schoolInvoicesPayload.invoices);
+        } else {
+          setSchoolInvoices([]);
+        }
+      } catch (schoolInvoiceError) {
+        console.warn(
+          schoolInvoiceError instanceof Error
+            ? schoolInvoiceError.message
+            : 'Unable to load school fee invoices right now.'
+        );
+        setSchoolInvoices([]);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load payments right now.';
@@ -616,6 +700,43 @@ const Payments = () => {
       await refreshDashboard();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Payment could not be completed right now.';
+      window.alert(message);
+    } finally {
+      setActiveActionId(null);
+    }
+  };
+
+  const handlePaySchoolInvoice = async (invoiceId: string) => {
+    if (activeActionId) {
+      return;
+    }
+
+    setActiveActionId(`school-pay-${invoiceId}`);
+    try {
+      const response = await requestWithAuth(
+        `/school-finance/invoices/${encodeURIComponent(invoiceId)}/pay`,
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        }
+      );
+      const payload = (await response.json()) as PaySchoolInvoiceResponse;
+
+      if (payload.mode === 'checkout' && payload.checkoutUrl) {
+        window.location.assign(payload.checkoutUrl);
+        return;
+      }
+
+      if (payload.message) {
+        window.alert(payload.message);
+      }
+
+      await refreshDashboard();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Could not process school fee invoice payment right now.';
       window.alert(message);
     } finally {
       setActiveActionId(null);
@@ -775,6 +896,101 @@ const Payments = () => {
   }, []);
 
   useEffect(() => {
+    if (!isSchoolFeeCheckout) {
+      return;
+    }
+
+    if (checkoutStatus === 'cancel') {
+      window.alert('School fee checkout was canceled. You can try again anytime.');
+      setSearchParams({});
+      return;
+    }
+
+    if (checkoutStatus !== 'success' || !checkoutSessionId) {
+      return;
+    }
+
+    let isCancelled = false;
+    const syncCheckout = async () => {
+      try {
+        let reconciledByWebhook = false;
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          const statusResponse = await requestWithAuth(
+            `/school-finance/invoices/payments/${encodeURIComponent(checkoutSessionId)}/status`
+          );
+          const statusPayload = (await statusResponse.json()) as {
+            isSettled?: boolean;
+            needsManualSync?: boolean;
+          };
+
+          if (statusPayload.isSettled) {
+            reconciledByWebhook = true;
+            break;
+          }
+
+          if (!statusPayload.needsManualSync) {
+            break;
+          }
+
+          await new Promise<void>((resolve) => {
+            window.setTimeout(() => resolve(), 1200);
+          });
+        }
+
+        if (!reconciledByWebhook) {
+          await requestWithAuth('/school-finance/invoices/payments/sync', {
+            method: 'POST',
+            body: JSON.stringify({
+              checkoutSessionId,
+            }),
+          });
+        }
+
+        if (isCancelled) {
+          return;
+        }
+        window.alert(
+          reconciledByWebhook
+            ? 'School fee payment confirmed successfully.'
+            : 'School fee payment confirmed. We used manual sync because webhook confirmation was delayed.'
+        );
+        setSearchParams({});
+        await refreshDashboard();
+      } catch (error) {
+        if (isCancelled) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : 'School fee payment sync failed.';
+        window.alert(message);
+        setSearchParams({});
+      }
+    };
+
+    void syncCheckout();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [checkoutSessionId, checkoutStatus, isSchoolFeeCheckout, setSearchParams]);
+
+  useEffect(() => {
+    if (!focusSchoolFeesView) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      schoolFeesSectionRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }, 120);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [focusSchoolFeesView]);
+
+  useEffect(() => {
     if (!isPaymentMethodModalOpen) {
       return;
     }
@@ -825,6 +1041,12 @@ const Payments = () => {
   const activePayment = activePaymentId
     ? payments.find((payment) => payment.id === activePaymentId) || null
     : null;
+  const outstandingSchoolInvoices = schoolInvoices.filter(
+    (invoice) =>
+      invoice.status === 'pending' ||
+      invoice.status === 'overdue' ||
+      invoice.status === 'partially_paid'
+  );
 
   const filters: { id: FilterId; label: string }[] = [
     { id: 'all',     label: 'All' },
@@ -906,10 +1128,82 @@ const Payments = () => {
           </div>
         )}
 
-        <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-100 shadow-sm p-3 sm:p-4">
+        <div
+          ref={schoolFeesSectionRef}
+          className={`bg-white rounded-xl sm:rounded-2xl border shadow-sm p-3 sm:p-4 ${
+            focusSchoolFeesView ? 'border-[#3D08BA]/35 ring-1 ring-[#3D08BA]/20' : 'border-gray-100'
+          }`}
+        >
           <p className="text-xs sm:text-sm text-gray-600">
             Payment methods will appear when you click <span className="font-semibold text-gray-800">Pay Now</span>.
           </p>
+        </div>
+
+        <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-100 shadow-sm p-3 sm:p-4">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">School Fee Invoices</h2>
+              <p className="text-[11px] text-gray-500 mt-0.5">
+                Invoices assigned by your school appear here with direct pay actions.
+              </p>
+            </div>
+            {outstandingSchoolInvoices.length > 0 && (
+              <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">
+                {outstandingSchoolInvoices.length} outstanding
+              </span>
+            )}
+          </div>
+
+          {schoolInvoices.length === 0 ? (
+            <p className="mt-3 text-xs text-gray-500">No school invoices yet.</p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {schoolInvoices.slice(0, 8).map((invoice) => (
+                <article
+                  key={invoice.id}
+                  className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{invoice.title}</p>
+                      <p className="text-[11px] text-gray-600 mt-0.5">
+                        {(invoice.schoolName || 'School')} • {fmt(invoice.amount)}
+                      </p>
+                      <p className="text-[10px] text-gray-500 mt-0.5">
+                        Due:{' '}
+                        {invoice.dueDate
+                          ? new Date(invoice.dueDate).toLocaleDateString()
+                          : 'No due date'}
+                      </p>
+                    </div>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${schoolInvoiceStatusStyle(
+                        invoice.status
+                      )}`}
+                    >
+                      {invoice.status.replace('_', ' ')}
+                    </span>
+                  </div>
+
+                  {(invoice.status === 'pending' ||
+                    invoice.status === 'overdue' ||
+                    invoice.status === 'partially_paid') && (
+                    <div className="mt-2 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => void handlePaySchoolInvoice(invoice.id)}
+                        disabled={Boolean(activeActionId)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-[#3D08BA] px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-[#2c0691] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <PlusCircleIcon className="h-3.5 w-3.5" />
+                        {activeActionId === `school-pay-${invoice.id}` ? 'Processing...' : 'Pay Invoice'}
+                      </button>
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ── Search + Filters ── */}

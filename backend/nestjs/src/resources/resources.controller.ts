@@ -23,6 +23,7 @@ type UploadResourceBody = {
   type?: string;
   category?: string;
   pricingType?: string;
+  price?: string | number;
   uploaderRole?: string;
   instructorName?: string;
 };
@@ -85,11 +86,17 @@ export class ResourcesController {
         type: body.type,
         category: body.category,
         pricingType: body.pricingType,
+        price: body.price,
         uploaderRole: body.uploaderRole,
         instructorName: body.instructorName,
       },
       uploadedFile
     );
+  }
+
+  @Post('me/items/:resourceId/purchase')
+  purchaseResource(@Req() request: Request, @Param('resourceId') resourceId: string) {
+    return this.resourcesService.purchaseResourceForAuthUser(this.getAuthUser(request), resourceId);
   }
 
   @Get('me/items/:resourceId/download')
