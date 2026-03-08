@@ -41,6 +41,9 @@ import  Performancestats  from './features/students/pages/Performancestats.tsx'
 import SubscriptionPlans from './features/subscriptions/pages/SubscriptionPlans.tsx'
 import Edamaa3DVerified from './features/subscriptions/pages/Edamaa3DVerified.tsx'
 
+//Reports
+import Reports from './features/schools/pages/Reports.tsx';
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Router>
@@ -94,6 +97,8 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/edamaa3d-verified" element={<Edamaa3DVerified />} />
         {/* Payments */}
         <Route path="/performance" element={<ProtectedRoute><Performancestats /></ProtectedRoute>} />
+        {/* Reports */}
+        <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
       </Routes>
     </Router>
   </StrictMode>
