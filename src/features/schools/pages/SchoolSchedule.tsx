@@ -370,6 +370,10 @@ const SchoolSchedule = () => {
   const [editingTeacherId, setEditingTeacherId] = useState<string | null>(null);
   const [isTeacherSubmitting, setIsTeacherSubmitting] = useState(false);
   const [activeTeacherActionId, setActiveTeacherActionId] = useState<string | null>(null);
+  const [timetableTeacher, setTimetableTeacher] = useState<SchoolTeacherRosterItem | null>(null);
+  const [teacherTimetableWeekStart, setTeacherTimetableWeekStart] = useState<Date>(() =>
+    startOfWeek(new Date())
+  );
   const [inviteActivity, setInviteActivity] = useState<SchoolScheduleNotification[]>([]);
   const [isInviteActivityLoading, setIsInviteActivityLoading] = useState(false);
   const [inviteActivityFilter, setInviteActivityFilter] = useState<'all' | 'accepted' | 'pending'>(
@@ -745,6 +749,63 @@ const SchoolSchedule = () => {
     }
     return teacherInsights.get(selectedAssignedTeacher.email) || null;
   }, [selectedAssignedTeacher, teacherInsights]);
+
+  const timetableTeacherInsight = useMemo(() => {
+    if (!timetableTeacher) {
+      return null;
+    }
+    return teacherInsights.get(timetableTeacher.email) || null;
+  }, [teacherInsights, timetableTeacher]);
+
+  const timetableTeacherSessions = useMemo(() => {
+    if (!timetableTeacher) {
+      return [];
+    }
+
+    const normalizedTeacherEmail = normalizeScheduleCompareLabel(timetableTeacher.email);
+    return sessions
+      .filter(
+        (session) =>
+          normalizeScheduleCompareLabel(session.assignedTutorEmail) === normalizedTeacherEmail
+      )
+      .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+  }, [sessions, timetableTeacher]);
+
+  const teacherTimetableWeekDays = useMemo(() => {
+    return Array.from({ length: 7 }).map((_, index) => {
+      const date = addDays(teacherTimetableWeekStart, index);
+      return {
+        date,
+        key: getLocalDayKey(date),
+        dayLabel: date.toLocaleDateString([], { weekday: 'short' }),
+        dayNumber: date.getDate(),
+        monthLabel: date.toLocaleDateString([], { month: 'short' }),
+      };
+    });
+  }, [teacherTimetableWeekStart]);
+
+  const teacherTimetableWeekSessionsByDay = useMemo(() => {
+    const dayKeys = new Set(teacherTimetableWeekDays.map((day) => day.key));
+    const grouped: Record<string, SchoolScheduleSession[]> = {};
+
+    teacherTimetableWeekDays.forEach((day) => {
+      grouped[day.key] = [];
+    });
+
+    timetableTeacherSessions.forEach((session) => {
+      const dayKey = getLocalDayKey(session.startAt);
+      if (!dayKey || !dayKeys.has(dayKey)) {
+        return;
+      }
+      grouped[dayKey].push(session);
+    });
+
+    Object.keys(grouped).forEach((dayKey) => {
+      grouped[dayKey].sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+    });
+
+    return grouped;
+  }, [teacherTimetableWeekDays, timetableTeacherSessions]);
 
   const scheduleConflictPreview = useMemo(() => {
     const startAt = formState.startAt.trim();
@@ -1348,6 +1409,19 @@ const SchoolSchedule = () => {
     setIsCreateOpen(true);
   };
 
+  const openTeacherTimetable = (teacher: SchoolTeacherRosterItem) => {
+    setTimetableTeacher(teacher);
+    setTeacherTimetableWeekStart(startOfWeek(new Date()));
+  };
+
+  const closeTeacherTimetable = () => {
+    setTimetableTeacher(null);
+  };
+
+  const shiftTeacherTimetableWeek = (direction: -1 | 1) => {
+    setTeacherTimetableWeekStart((current) => addDays(current, direction * 7));
+  };
+
   const handleEditSession = (session: SchoolScheduleSession) => {
     setEditingSessionId(session.id);
     setFormState({
@@ -1364,6 +1438,7 @@ const SchoolSchedule = () => {
       expectedStudents: String(session.expectedStudents ?? ''),
       notes: session.notes || '',
     });
+    closeTeacherTimetable();
     setIsCreateOpen(true);
   };
 
@@ -2079,6 +2154,12 @@ const SchoolSchedule = () => {
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <button
+                        onClick={() => openTeacherTimetable(teacher)}
+                        className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700 hover:bg-sky-100"
+                      >
+                        Timetable
+                      </button>
+                      <button
                         onClick={() => handleEditTeacher(teacher)}
                         disabled={Boolean(activeTeacherActionId)}
                         className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
@@ -2425,6 +2506,253 @@ const SchoolSchedule = () => {
           )}
         </section>
       </main>
+
+      {timetableTeacher && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/55 px-4 py-6">
+          <div className="mx-auto flex min-h-full w-full max-w-6xl items-start justify-center">
+            <div className="my-auto flex w-full max-h-[92vh] flex-col overflow-hidden rounded-[28px] border border-white/60 bg-white shadow-2xl">
+              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-sky-100 bg-linear-to-r from-sky-50 via-white to-white px-6 py-5">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                    <FaCalendarAlt size={10} />
+                    Teacher timetable
+                  </div>
+                  <h2 className="mt-3 text-xl font-semibold text-slate-900">{timetableTeacher.name}</h2>
+                  <p className="mt-1 text-sm text-slate-600">{timetableTeacher.email}</p>
+                  <p className="mt-2 text-xs text-slate-500">
+                    {[timetableTeacher.department, timetableTeacher.classGroup, timetableTeacher.subjectFocus]
+                      .filter(Boolean)
+                      .join(' • ') || 'No profile tags yet'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => {
+                      handleAssignTeacherToClass(timetableTeacher);
+                      closeTeacherTimetable();
+                    }}
+                    className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2D0690]"
+                  >
+                    Schedule class
+                  </button>
+                  <button
+                    onClick={closeTeacherTimetable}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                    aria-label="Close teacher timetable"
+                    title="Close teacher timetable"
+                  >
+                    <FaTimes size={12} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto bg-slate-50/70 px-6 py-5">
+                <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                      Assigned classes
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold text-slate-900">
+                      {timetableTeacherSessions.length}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-red-200 bg-white p-4 shadow-sm">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-red-700">
+                      Live now
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold text-red-700">
+                      {timetableTeacherInsight?.liveCount || 0}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[#3D08BA]/15 bg-white p-4 shadow-sm">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]">
+                      Upcoming
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold text-[#3D08BA]">
+                      {timetableTeacherInsight?.upcomingCount || 0}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+                      This week
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold text-amber-700">
+                      {Object.values(teacherTimetableWeekSessionsByDay).reduce(
+                        (count, daySessions) => count + daySessions.length,
+                        0
+                      )}
+                    </p>
+                  </div>
+                </section>
+
+                <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-900">Weekly teaching load</h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Review this teacher&apos;s assigned classes week by week before scheduling more.
+                      </p>
+                    </div>
+                    <div className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-1 py-1">
+                      <button
+                        onClick={() => shiftTeacherTimetableWeek(-1)}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-600 hover:bg-white"
+                        aria-label="Previous teacher timetable week"
+                      >
+                        <FaChevronLeft size={11} />
+                      </button>
+                      <p className="px-2 text-xs font-semibold text-gray-700">
+                        {formatWeekRangeLabel(teacherTimetableWeekStart)}
+                      </p>
+                      <button
+                        onClick={() => shiftTeacherTimetableWeek(1)}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-600 hover:bg-white"
+                        aria-label="Next teacher timetable week"
+                      >
+                        <FaChevronRight size={11} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 hidden gap-3 lg:grid lg:grid-cols-7">
+                    {teacherTimetableWeekDays.map((day) => {
+                      const daySessions = teacherTimetableWeekSessionsByDay[day.key] || [];
+                      const isToday = getLocalDayKey(new Date()) === day.key;
+                      return (
+                        <div
+                          key={day.key}
+                          className={`min-h-[280px] rounded-xl border p-2 ${
+                            isToday ? 'border-sky-300 bg-sky-50/80' : 'border-slate-200 bg-slate-50'
+                          }`}
+                        >
+                          <div className="mb-2 border-b border-slate-200 pb-2">
+                            <p className="text-xs font-semibold text-slate-700">{day.dayLabel}</p>
+                            <p className="text-xs text-slate-500">
+                              {day.monthLabel} {day.dayNumber}
+                            </p>
+                          </div>
+                          <div className="space-y-2">
+                            {daySessions.length === 0 && (
+                              <p className="rounded-lg border border-dashed border-slate-200 bg-white px-2 py-3 text-center text-[11px] text-slate-400">
+                                Free
+                              </p>
+                            )}
+                            {daySessions.map((session) => {
+                              const status = getSessionStatus(session, Date.now());
+                              return (
+                                <div
+                                  key={session.id}
+                                  className="rounded-lg border border-slate-200 bg-white p-2 shadow-sm"
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <p className="line-clamp-2 text-[11px] font-semibold text-slate-900">
+                                      {session.title}
+                                    </p>
+                                    <span
+                                      className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${statusPillClass(status)}`}
+                                    >
+                                      {status === 'live'
+                                        ? 'Live'
+                                        : status === 'completed'
+                                          ? 'Done'
+                                          : 'Soon'}
+                                    </span>
+                                  </div>
+                                  <p className="mt-1 text-[10px] text-slate-600">
+                                    {formatSessionTime(session.startAt)} • {session.durationMinutes}m
+                                  </p>
+                                  <p className="mt-1 text-[10px] text-slate-500">
+                                    {session.subject} • {getSessionAudienceLabel(session)}
+                                  </p>
+                                  <div className="mt-2 flex flex-wrap gap-1">
+                                    <button
+                                      onClick={() => handleEditSession(session)}
+                                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-700 hover:bg-slate-50"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      onClick={() => handleStartLiveClass(session)}
+                                      className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-700 hover:bg-red-100"
+                                    >
+                                      {status === 'live' ? 'Rejoin' : 'Open'}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-4 space-y-3 lg:hidden">
+                    {teacherTimetableWeekDays.map((day) => {
+                      const daySessions = teacherTimetableWeekSessionsByDay[day.key] || [];
+                      return (
+                        <div key={day.key} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-semibold text-slate-800">
+                              {day.dayLabel}, {day.monthLabel} {day.dayNumber}
+                            </p>
+                            <span className="text-xs text-slate-500">{daySessions.length} classes</span>
+                          </div>
+                          <div className="mt-2 space-y-2">
+                            {daySessions.length === 0 && (
+                              <p className="rounded-lg bg-white px-3 py-2 text-xs text-slate-500">
+                                No classes assigned.
+                              </p>
+                            )}
+                            {daySessions.map((session) => {
+                              const status = getSessionStatus(session, Date.now());
+                              return (
+                                <div
+                                  key={session.id}
+                                  className="rounded-lg border border-slate-200 bg-white px-3 py-2"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="text-xs font-semibold text-slate-900">{session.title}</p>
+                                    <span
+                                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusPillClass(status)}`}
+                                    >
+                                      {statusLabel(status)}
+                                    </span>
+                                  </div>
+                                  <p className="mt-1 text-[11px] text-slate-600">
+                                    {formatSessionTime(session.startAt)} • {session.subject}
+                                  </p>
+                                  <p className="mt-1 text-[11px] text-slate-500">
+                                    {getSessionAudienceLabel(session)}
+                                  </p>
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    <button
+                                      onClick={() => handleEditSession(session)}
+                                      className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-700 hover:bg-slate-50"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      onClick={() => handleStartLiveClass(session)}
+                                      className="rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-semibold text-red-700 hover:bg-red-100"
+                                    >
+                                      {status === 'live' ? 'Rejoin live' : 'Open class'}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 px-4 py-6">
