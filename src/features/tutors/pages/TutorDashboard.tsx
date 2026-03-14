@@ -26,7 +26,6 @@ import ScheduleTab        from "./ScheduleTab"
 
 // ── Styles ─────────────────────────────────────────────────────────────────
 import { S } from "./Styles";
-
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export default function TutorDashboard() {
@@ -58,13 +57,11 @@ export default function TutorDashboard() {
 
       <DashboardHeader
         tutorData={tutorData}
-        tabs={TABS}
-        activeTab={activeTab}
         copied={copied}
         profileImg={profileImg}
-        onTabChange={setActiveTab}
-        onCopyId={copyId}
-      />
+        onCopyId={copyId} tabs={[]} activeTab={"overview"} onTabChange={function (tab: TabId): void {
+          throw new Error("Function not implemented.");
+        } }      />
 
       <div style={S.main}>
         {activeTab === "overview" && (
