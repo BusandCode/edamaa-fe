@@ -20,6 +20,7 @@ import { ResourcesModule } from './resources/resources.module';
 import { SchoolFinanceModule } from './school-finance/school-finance.module';
 import { SchoolScheduleModule } from './school-schedule/school-schedule.module';
 import { AccountRolesModule } from './account-roles/account-roles.module';
+import { ExamsModule } from './exams/exams.module';
 
 @Module({
   // Feature modules are registered here so Nest can compose the app.
@@ -38,6 +39,7 @@ import { AccountRolesModule } from './account-roles/account-roles.module';
     SchoolFinanceModule,
     SchoolScheduleModule,
     AccountRolesModule,
+    ExamsModule,
   ],
   controllers: [],
   providers: [PrismaService],

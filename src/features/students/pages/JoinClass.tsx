@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeftIcon,
@@ -9,6 +9,10 @@ import {
   XCircleIcon,
   MagnifyingGlassIcon,
 } from '@heroicons/react/24/outline';
+import {
+  fetchSchoolScheduleFeed,
+  type SchoolScheduleFeedSession,
+} from '../../schools/utils/schoolScheduleApi';
 interface ClassDetails {
   id: string;
   code: string;
@@ -23,6 +27,71 @@ interface ClassDetails {
   duration: string;
 }
 
+const resolveClassLevel = (durationMinutes: number): ClassDetails['level'] => {
+  if (!Number.isFinite(durationMinutes) || durationMinutes <= 45) {
+    return 'Beginner';
+  }
+  if (durationMinutes <= 90) {
+    return 'Intermediate';
+  }
+  return 'Advanced';
+};
+
+const formatDurationLabel = (durationMinutes: number) => {
+  if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+    return '60 mins';
+  }
+  if (durationMinutes < 60) {
+    return `${Math.round(durationMinutes)} mins`;
+  }
+
+  const hours = Math.floor(durationMinutes / 60);
+  const minutes = durationMinutes % 60;
+  if (minutes === 0) {
+    return `${hours} hr${hours > 1 ? 's' : ''}`;
+  }
+  return `${hours} hr ${minutes} mins`;
+};
+
+const formatScheduleLabel = (startAt: string, endAt: string) => {
+  const startDate = new Date(startAt);
+  const endDate = new Date(endAt);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return 'Schedule will be announced';
+  }
+
+  const dayLabel = startDate.toLocaleDateString([], {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+  const startTime = startDate.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  const endTime = endDate.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  return `${dayLabel}, ${startTime} - ${endTime}`;
+};
+
+const mapFeedSessionToClass = (session: SchoolScheduleFeedSession): ClassDetails => ({
+  id: session.id,
+  code: session.roomCode,
+  name: session.title,
+  subject: session.subject,
+  instructor: session.instructor,
+  instructorImage: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(session.instructor)}`,
+  schedule: formatScheduleLabel(session.startAt, session.endAt),
+  students: session.expectedStudents,
+  description:
+    session.notes ||
+    `${session.school.name} scheduled this class for ${session.subject}. Join with your class code and participate live.`,
+  level: resolveClassLevel(session.durationMinutes),
+  duration: formatDurationLabel(session.durationMinutes),
+});
+
 const JoinClass = () => {
   const navigate = useNavigate();
   const [joinCode, setJoinCode] = useState('');
@@ -32,9 +101,12 @@ const JoinClass = () => {
   const [selectedClass, setSelectedClass] = useState<ClassDetails | null>(null);
   const [joinSuccess, setJoinSuccess] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState<'all' | 'beginner' | 'intermediate' | 'advanced'>('all');
+  const [availableClasses, setAvailableClasses] = useState<ClassDetails[]>([]);
+  const [isFeedLoading, setIsFeedLoading] = useState(true);
+  const [feedNotice, setFeedNotice] = useState('');
 
-  // Available classes
-  const availableClasses: ClassDetails[] = [
+  // Local fallback while feed is empty or temporarily unavailable.
+  const fallbackClasses: ClassDetails[] = [
     {
       id: '1',
       code: 'ACC101',
@@ -193,6 +265,51 @@ const JoinClass = () => {
     },
   ];
 
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadClasses = async () => {
+      setIsFeedLoading(true);
+      setFeedNotice('');
+
+      try {
+        const payload = await fetchSchoolScheduleFeed({
+          status: 'upcoming',
+          limit: 120,
+        });
+        const mappedClasses = payload.sessions.map(mapFeedSessionToClass);
+
+        if (isCancelled) {
+          return;
+        }
+
+        if (mappedClasses.length > 0) {
+          setAvailableClasses(mappedClasses);
+          return;
+        }
+
+        setAvailableClasses(fallbackClasses);
+        setFeedNotice('No live class schedule has been published yet. Showing sample classes for now.');
+      } catch {
+        if (isCancelled) {
+          return;
+        }
+        setAvailableClasses(fallbackClasses);
+        setFeedNotice('We could not load the latest class schedule. Showing sample classes while we reconnect.');
+      } finally {
+        if (!isCancelled) {
+          setIsFeedLoading(false);
+        }
+      }
+    };
+
+    void loadClasses();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
   const filteredClasses = availableClasses.filter(classItem => {
     const matchesSearch = classItem.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          classItem.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -344,6 +461,18 @@ const JoinClass = () => {
             </div>
           </div>
         </div>
+
+        {isFeedLoading && (
+          <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-600">
+            Loading the latest class schedule...
+          </div>
+        )}
+
+        {!isFeedLoading && feedNotice && (
+          <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            {feedNotice}
+          </div>
+        )}
 
         {/* Available Classes Grid */}
         <div className="mb-6">

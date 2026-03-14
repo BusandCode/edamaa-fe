@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
+  FaBell,
   FaSearch,
   FaCheckCircle,
   FaChartLine,
@@ -17,6 +18,7 @@ import {
   FaUpload,
   FaUserShield,
 } from 'react-icons/fa';
+import { CheckBadgeIcon } from '@heroicons/react/24/solid';
 import type { IconType } from 'react-icons';
 import NewLogo from '../../../components/common/NewLogo';
 import QuickActionButton from '../components/QuickActionButton';
@@ -27,14 +29,23 @@ import {
   fetchTeachingSubscriptionState,
   type TeachingSubscriptionState,
 } from '../../subscriptions/utils/teachingSubscriptionApi';
+import {
+  archiveSchoolExamNotification,
+  fetchSchoolExamNotifications,
+  markAllSchoolExamNotificationsAsRead,
+  markSchoolExamNotificationAsRead,
+  type SchoolExamNotification,
+} from '../utils/examsApi';
 import { fetchMyAccountRoles, switchDefaultAccountRole } from '../../auth/utils/accountRolesApi';
 import { schoolManagementModules, type SchoolModule } from '../data/schoolManagementModules';
+import { fetchSchoolScheduleSessions, type SchoolScheduleSession } from '../utils/schoolScheduleApi';
 import {
   loadPersistedLocalDevAuthSession,
   loadPersistedAccountRoleState,
   persistAccountRoleState,
   persistLocalDevAuthSession,
 } from '../../../utils/authSession';
+import { loadSchoolProfileImage, persistSchoolProfileImage } from '../../../utils/schoolBranding';
 import { signOutEverywhere } from '../../../utils/signOut';
 
 
@@ -86,30 +97,407 @@ const PerformanceOverview = () => {
 
 // Upcoming Events Component
 const UpcomingEvents = () => {
-  const events = [
-    { id: 1, title: 'Parent-Teacher Meeting', date: 'Jan 15, 2026', type: 'meeting' },
-    { id: 2, title: 'Mid-Term Examination', date: 'Jan 20, 2026', type: 'exam' },
-    { id: 3, title: 'Science Fair', date: 'Jan 25, 2026', type: 'event' },
-  ];
+  const navigate = useNavigate();
+  const [events, setEvents] = useState<SchoolScheduleSession[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    const loadEvents = async () => {
+      setIsLoading(true);
+      try {
+        const payload = await fetchSchoolScheduleSessions();
+        if (!active) {
+          return;
+        }
+        setEvents(Array.isArray(payload.sessions) ? payload.sessions : []);
+        setNotice('');
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        const message =
+          error instanceof Error ? error.message : 'Could not load upcoming schedule events.';
+        setNotice(message);
+        setEvents([]);
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void loadEvents();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const upcomingEvents = useMemo(() => {
+    const now = Date.now();
+    const withStatus = events
+      .map((session) => {
+        const startMs = new Date(session.startAt).getTime();
+        const endMs = startMs + session.durationMinutes * 60 * 1000;
+        let status: 'upcoming' | 'live' | 'completed' = 'upcoming';
+        if (Number.isFinite(startMs)) {
+          if (now >= startMs && now < endMs) {
+            status = 'live';
+          } else if (now >= endMs) {
+            status = 'completed';
+          }
+        }
+        return { session, status, startMs };
+      })
+      .filter((entry) => entry.status !== 'completed')
+      .sort((a, b) => a.startMs - b.startMs);
+
+    return withStatus.slice(0, 3);
+  }, [events]);
+
+  const formatEventDate = (isoDate: string) => {
+    const date = new Date(isoDate);
+    if (Number.isNaN(date.getTime())) {
+      return 'Invalid date';
+    }
+    return date.toLocaleDateString([], {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+  };
+
+  const formatEventTime = (isoDate: string) => {
+    const date = new Date(isoDate);
+    if (Number.isNaN(date.getTime())) {
+      return '--:--';
+    }
+    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  };
 
   return (
     <div className='bg-white rounded-2xl p-5 shadow-sm'>
       <div className='flex items-center justify-between mb-4'>
-        <h3 className='text-base font-bold text-gray-900'>Upcoming Events</h3>
-        <button className='text-xs text-[#3D08BA] font-medium hover:underline'>Add Event</button>
-      </div>
-      <div className='space-y-3'>
-        {events.map((event) => (
-          <div key={event.id} className='flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors'>
-            <div className='w-12 h-12 bg-linear-to-br from-[#3D08BA] to-[#5010E0] rounded-lg flex items-center justify-center shrink-0'>
-              <FaCalendarAlt className='text-white text-sm' />
-            </div>
-            <div className='flex-1 min-w-0'>
-              <p className='text-sm font-semibold text-gray-900'>{event.title}</p>
-              <p className='text-xs text-gray-600'>{event.date}</p>
-            </div>
+        <div>
+          <h3 className='text-base font-bold text-gray-900'>Upcoming classes</h3>
+          <p className='text-[11px] text-gray-500'>Quick add creates a class; full schedule is for edits and management.</p>
+        </div>
+          <div className='flex items-center gap-3'>
+            <button
+              onClick={() => navigate('/school-schedule')}
+              className='text-xs text-gray-500 font-semibold hover:text-gray-700'
+            >
+              Full schedule
+            </button>
+            <button
+              onClick={() => navigate('/school-schedule', { state: { openCreate: true } })}
+              className='text-xs text-[#3D08BA] font-medium hover:underline'
+            >
+              Quick add class
+            </button>
           </div>
+      </div>
+      {notice && (
+        <p className='mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700'>
+          {notice}
+        </p>
+      )}
+      <div className='space-y-3'>
+        {isLoading && (
+          <div className='rounded-lg border border-gray-100 bg-gray-50 px-3 py-4 text-xs text-gray-500'>
+            Fetching your next classes...
+          </div>
+        )}
+        {!isLoading && upcomingEvents.length === 0 && (
+          <div className='rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-xs text-gray-600'>
+            No classes scheduled yet. Use Quick add to create your first class.
+          </div>
+        )}
+        {!isLoading &&
+          upcomingEvents.map(({ session, status }) => (
+            <div
+              key={session.id}
+              className='flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors'
+            >
+              <div className='w-12 h-12 bg-linear-to-br from-[#3D08BA] to-[#5010E0] rounded-lg flex items-center justify-center shrink-0'>
+                <FaCalendarAlt className='text-white text-sm' />
+              </div>
+              <div className='flex-1 min-w-0'>
+                <div className='flex items-center gap-2'>
+                  <p className='text-sm font-semibold text-gray-900'>{session.title}</p>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      status === 'live' ? 'bg-red-100 text-red-700' : 'bg-[#3D08BA]/10 text-[#3D08BA]'
+                    }`}
+                  >
+                    {status === 'live' ? 'Live now' : 'Upcoming'}
+                  </span>
+                </div>
+                <p className='text-xs text-gray-600'>
+                  {formatEventDate(session.startAt)} • {formatEventTime(session.startAt)} •{' '}
+                  {session.subject}
+                </p>
+                <p className='text-[11px] text-gray-500'>Instructor: {session.instructor}</p>
+              </div>
+              <button
+                onClick={() =>
+                  navigate('/school-schedule', { state: { highlightSessionId: session.id } })
+                }
+                className='text-[11px] font-semibold text-[#3D08BA] hover:underline'
+              >
+                Open
+              </button>
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+};
+
+const ReleaseInbox = () => {
+  const navigate = useNavigate();
+  const [notifications, setNotifications] = useState<SchoolExamNotification[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [filter, setFilter] = useState<'all' | 'unread'>('all');
+  const [busyId, setBusyId] = useState<string | 'all' | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadNotifications = async () => {
+      setIsLoading(true);
+      try {
+        const payload = await fetchSchoolExamNotifications();
+        if (!active) {
+          return;
+        }
+        setNotifications(Array.isArray(payload.notifications) ? payload.notifications : []);
+        setNotice('');
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        const message =
+          error instanceof Error ? error.message : 'Could not load release updates right now.';
+        setNotice(message);
+        setNotifications([]);
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void loadNotifications();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const unreadCount = useMemo(
+    () => notifications.filter((notification) => !notification.isRead).length,
+    [notifications]
+  );
+
+  const visibleNotifications = useMemo(() => {
+    const scoped =
+      filter === 'unread'
+        ? notifications.filter((notification) => !notification.isRead)
+        : notifications;
+    return scoped.slice(0, 4);
+  }, [filter, notifications]);
+
+  const formatRelativeTime = (isoDate: string) => {
+    const timestamp = new Date(isoDate).getTime();
+    if (!Number.isFinite(timestamp)) {
+      return 'Recently';
+    }
+    const diffMinutes = Math.max(0, Math.round((Date.now() - timestamp) / 60000));
+    if (diffMinutes < 1) {
+      return 'Just now';
+    }
+    if (diffMinutes < 60) {
+      return `${diffMinutes} min ago`;
+    }
+    const diffHours = Math.round(diffMinutes / 60);
+    if (diffHours < 24) {
+      return `${diffHours} hr ago`;
+    }
+    const diffDays = Math.round(diffHours / 24);
+    return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+  };
+
+  const handleMarkAsRead = async (notificationId: string) => {
+    setNotice('');
+    setBusyId(notificationId);
+    try {
+      await markSchoolExamNotificationAsRead(notificationId);
+      setNotifications((prev) =>
+        prev.map((notification) =>
+          notification.id === notificationId ? { ...notification, isRead: true } : notification
+        )
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not mark this update as read.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleArchive = async (notificationId: string) => {
+    setNotice('');
+    setBusyId(notificationId);
+    try {
+      await archiveSchoolExamNotification(notificationId);
+      setNotifications((prev) => prev.filter((notification) => notification.id !== notificationId));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not remove this update.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleMarkAllAsRead = async () => {
+    if (unreadCount === 0) {
+      return;
+    }
+
+    setNotice('');
+    setBusyId('all');
+    try {
+      await markAllSchoolExamNotificationsAsRead();
+      setNotifications((prev) => prev.map((notification) => ({ ...notification, isRead: true })));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not mark all updates as read.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className='bg-white rounded-2xl p-5 shadow-sm'>
+      <div className='flex items-start justify-between gap-3 mb-4'>
+        <div>
+          <div className='flex items-center gap-2'>
+            <FaBell className='text-[#3D08BA]' size={13} />
+            <h3 className='text-base font-bold text-gray-900'>Release inbox</h3>
+          </div>
+          <p className='mt-1 text-[11px] text-gray-500'>
+            Published exam result updates stay here until you clear them.
+          </p>
+        </div>
+        <div className='flex items-center gap-2'>
+          <span className='rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-semibold text-amber-700'>
+            {unreadCount} unread
+          </span>
+          <button
+            type='button'
+            onClick={handleMarkAllAsRead}
+            disabled={unreadCount === 0 || busyId === 'all'}
+            className='rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
+          >
+            Mark all read
+          </button>
+        </div>
+      </div>
+
+      <div className='mb-3 flex flex-wrap gap-2'>
+        {([
+          { value: 'all', label: 'All updates' },
+          { value: 'unread', label: 'Unread only' },
+        ] as const).map((option) => (
+          <button
+            key={option.value}
+            type='button'
+            onClick={() => setFilter(option.value)}
+            className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors ${
+              filter === option.value
+                ? 'bg-[#3D08BA] text-white'
+                : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            {option.label}
+          </button>
         ))}
+      </div>
+
+      {notice && (
+        <p className='mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700'>
+          {notice}
+        </p>
+      )}
+
+      <div className='space-y-3'>
+        {isLoading && (
+          <div className='rounded-lg border border-gray-100 bg-gray-50 px-3 py-4 text-xs text-gray-500'>
+            Loading release updates...
+          </div>
+        )}
+        {!isLoading && notifications.length === 0 && (
+          <div className='rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-xs text-gray-600'>
+            No release updates yet. Published exam results will appear here.
+          </div>
+        )}
+        {!isLoading && notifications.length > 0 && visibleNotifications.length === 0 && (
+          <div className='rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-xs text-gray-600'>
+            No release updates match this filter.
+          </div>
+        )}
+        {!isLoading &&
+          visibleNotifications.map((notification) => (
+            <div
+              key={notification.id}
+              className={`rounded-xl border p-3 ${
+                notification.isRead
+                  ? 'border-gray-200 bg-gray-50'
+                  : 'border-amber-200 bg-amber-50/70'
+              }`}
+            >
+              <div className='flex items-start justify-between gap-3'>
+                <div className='min-w-0'>
+                  <div className='flex items-center gap-2'>
+                    {!notification.isRead && <span className='h-2 w-2 rounded-full bg-amber-500' />}
+                    <p className='text-sm font-semibold text-gray-900'>{notification.title}</p>
+                  </div>
+                  <p className='mt-1 text-xs leading-5 text-gray-600'>{notification.message}</p>
+                  <p className='mt-2 text-[11px] text-gray-400'>{formatRelativeTime(notification.createdAt)}</p>
+                </div>
+                <span className='inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700'>
+                  <FaCheckCircle size={12} />
+                </span>
+              </div>
+
+              <div className='mt-3 flex flex-wrap justify-end gap-2'>
+                <button
+                  type='button'
+                  onClick={() => navigate('/school-exams')}
+                  className='rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-50'
+                >
+                  Open exams
+                </button>
+                {!notification.isRead && (
+                  <button
+                    type='button'
+                    onClick={() => void handleMarkAsRead(notification.id)}
+                    disabled={busyId === notification.id}
+                    className='rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-wait disabled:opacity-60'
+                  >
+                    Mark as read
+                  </button>
+                )}
+                <button
+                  type='button'
+                  onClick={() => void handleArchive(notification.id)}
+                  disabled={busyId === notification.id}
+                  className='rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-rose-600 hover:bg-rose-50 disabled:cursor-wait disabled:opacity-60'
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))}
       </div>
     </div>
   );
@@ -227,6 +615,7 @@ const SchoolDashboard = () => {
     const fallbackFromEmail = deriveNameFromEmail(localDevSession?.email || '');
     setSchoolDisplayName(localStorageSchoolName || fallbackFromEmail || 'School');
     setAdminDisplayName(localStorageAdminName || fallbackFromEmail || 'School Admin');
+    setProfileImage(loadSchoolProfileImage(localDevSession?.email || ''));
   }, []);
 
   useEffect(() => {
@@ -288,7 +677,9 @@ const SchoolDashboard = () => {
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setProfileImage(reader.result as string);
+        const imageDataUrl = String(reader.result || '');
+        setProfileImage(imageDataUrl);
+        persistSchoolProfileImage(imageDataUrl);
       };
       reader.readAsDataURL(file);
     }
@@ -317,7 +708,7 @@ const SchoolDashboard = () => {
       instructor: liveInstructorName,
       schedule: 'Live now',
       students: 40,
-      description: 'Live class room managed by school administrators and tutors.',
+      description: 'Live class room managed by school administrators and teachers.',
       level: 'Intermediate' as const,
       duration: '90 mins',
     };
@@ -327,6 +718,10 @@ const SchoolDashboard = () => {
 
   const handleScheduleClick = () => {
     navigate('/school-schedule');
+  };
+
+  const handleExamManagementClick = () => {
+    navigate('/school-exams');
   };
 
   const handleWaecPrepClick = () => {
@@ -465,7 +860,7 @@ const SchoolDashboard = () => {
             <div className='flex-1 min-w-0'>
               <div className='flex items-center gap-2 flex-wrap'>
                 <h2 className='text-lg sm:text-xl font-bold text-gray-900'>Welcome, {schoolDisplayName}</h2>
-                <FaCheckCircle className='text-blue-500 shrink-0' size={18} />
+                <CheckBadgeIcon className='h-[18px] w-[18px] shrink-0 text-orange-500' />
               </div>
               <p className='text-sm text-gray-600 mt-1'>
                 Admin: {adminDisplayName}
@@ -613,12 +1008,17 @@ const SchoolDashboard = () => {
           <h3 className='text-base font-bold text-gray-900 mb-4'>Quick Actions</h3>
           <div className='grid grid-cols-3 gap-3'>
             <QuickActionButton icon={FaIdCard} label="Student Lists" onClick={handleStudentListClick}/>
-            <QuickActionButton icon={FaUsers} label="Tutor Directory" onClick={handleTutorListClick} />
+            <QuickActionButton icon={FaUsers} label="Find Tutors" onClick={handleTutorListClick} />
             <QuickActionButton icon={FaCertificate} label="WAEC Prep" badge="NEW" onClick={handleWaecPrepClick} />
             <QuickActionButton icon={FaChartLine} label="Revenue" onClick={handleFinanceClick} />
             <QuickActionButton icon={FaCalendarAlt} label="Schedule" onClick={handleScheduleClick} />
+            <QuickActionButton icon={FaFileAlt} label="Exams" onClick={handleExamManagementClick} />
             <QuickActionButton icon={FaVideo} label="Live Classes" badge="8" onClick={handleLiveClassesClick} />
             <QuickActionButton icon={FaFileAlt} label="Upload Resources" onClick={handleResourceUploadClick} />
+          </div>
+          <div className='mt-3 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700'>
+            Use <span className='font-semibold'>Schedule</span> for your internal school teachers. Use{' '}
+            <span className='font-semibold'>Find Tutors</span> only when you want to hire external independent tutors.
           </div>
         </div>
 
@@ -626,6 +1026,10 @@ const SchoolDashboard = () => {
         <div className='grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6'>
           <RecentActivity />
           <PerformanceOverview />
+        </div>
+
+        <div className='mb-6'>
+          <ReleaseInbox />
         </div>
 
         {/* Upcoming Events */}
@@ -743,6 +1147,15 @@ const SchoolDashboard = () => {
                     <button
                       type='button'
                       onClick={() => navigate('/school-finance')}
+                      className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
+                    >
+                      Open
+                    </button>
+                  )}
+                  {activeSchoolModule.id === 'exam-result-management' && (
+                    <button
+                      type='button'
+                      onClick={() => navigate('/school-exams')}
                       className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
                     >
                       Open

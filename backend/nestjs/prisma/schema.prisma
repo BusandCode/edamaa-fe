@@ -49,6 +49,7 @@ model User {
   schoolFeePayments     SchoolFeePayment[]   @relation("SchoolFeePaymentPayer")
   schoolFeeInvoices     SchoolFeeInvoice[]   @relation("SchoolFeeInvoiceStudent")
   schoolScheduleSessions SchoolScheduleSession[] @relation("SchoolScheduleOwner")
+  schoolScheduleNotifications SchoolScheduleNotification[] @relation("SchoolScheduleNotificationOwner")
 }
 
 model School {
@@ -341,6 +342,52 @@ model SchoolScheduleSession {
   @@index([schoolUserId, startAt])
   @@index([schoolUserId, instructor, startAt])
   @@index([schoolUserId, roomCode, startAt])
+}
+
+model SchoolScheduleNotification {
+  id               Int      @id @default(autoincrement())
+  publicId         String   @unique
+  schoolUser       User     @relation("SchoolScheduleNotificationOwner", fields: [schoolUserId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  schoolUserId     Int
+  kind             String
+  sessionPublicId  String
+  sessionTitle     String
+  subject          String
+  instructor       String
+  roomCode         String
+  startAt          DateTime
+  assignedTutorEmail String?
+  department       String?
+  classGroup       String?
+  audienceTag      String?
+  targetEmail      String?
+  tutorJoinLink    String?
+  tutorJoinCode    String?
+  tutorJoinToken   String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  reads SchoolScheduleNotificationRead[]
+
+  @@index([schoolUserId, createdAt])
+  @@index([targetEmail, createdAt])
+  @@index([kind, createdAt])
+  @@index([sessionPublicId, createdAt])
+}
+
+model SchoolScheduleNotificationRead {
+  id             Int      @id @default(autoincrement())
+  publicId       String   @unique
+  notification   SchoolScheduleNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  notificationId Int
+  userEmail      String
+  readAt         DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userEmail, notificationId])
+  @@index([userEmail, createdAt])
+  @@index([notificationId, createdAt])
 }
 
 model SchoolFeeInvoice {

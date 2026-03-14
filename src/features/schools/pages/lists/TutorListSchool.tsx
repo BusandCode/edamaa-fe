@@ -6,6 +6,7 @@ import {
   FaEnvelope,
   FaSearch,
   FaUserTie,
+  FaUserPlus,
   FaVideo,
 } from 'react-icons/fa';
 import NavBar from '../../../../components/layout/school-layout/NavBar';
@@ -74,6 +75,20 @@ const TutorListSchool = () => {
       duration: '90 mins',
     };
     navigate(`/live-class/${classId}?role=teacher&actor=school`, { state: { classItem } });
+  };
+
+  const inviteTutorToSchoolRoster = (tutor: SchoolTutorDirectoryItem) => {
+    navigate('/school-schedule', {
+      state: {
+        inviteTeacher: {
+          name: tutor.name || '',
+          email: tutor.email,
+          department: '',
+          classGroup: '',
+          subjectFocus: '',
+        },
+      },
+    });
   };
 
   return (
@@ -209,6 +224,13 @@ const TutorListSchool = () => {
                             >
                               <FaChalkboardTeacher size={15} />
                             </button>
+                            <button
+                              onClick={() => inviteTutorToSchoolRoster(tutor)}
+                              className="text-[#3D08BA] transition-colors hover:text-[#2D0690]"
+                              title={`Invite ${tutor.name || tutor.email} to school roster`}
+                            >
+                              <FaUserPlus size={15} />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -254,6 +276,13 @@ const TutorListSchool = () => {
                     >
                       <FaVideo size={12} />
                       Go Live
+                    </button>
+                    <button
+                      onClick={() => inviteTutorToSchoolRoster(tutor)}
+                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-[#3D08BA]/20 bg-white py-2 text-sm font-semibold text-[#3D08BA] transition-colors hover:bg-[#3D08BA]/5"
+                    >
+                      <FaUserPlus size={12} />
+                      Invite
                     </button>
                   </div>
                 </div>

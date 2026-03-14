@@ -9,6 +9,7 @@ import {
   PlusIcon,
   Cog6ToothIcon,
   AcademicCapIcon,
+  CheckCircleIcon,
   HomeIcon,
   QuestionMarkCircleIcon,
   ArrowRightOnRectangleIcon,
@@ -32,6 +33,10 @@ import {
   loadPersistedLocalDevAuthSession,
   loadPersistedSupabaseAccessToken,
 } from '../../../utils/authSession';
+import {
+  archiveStudentExamNotification,
+  markStudentExamNotificationAsRead,
+} from '../../schools/utils/examsApi';
 
 type StudentSchoolInvoiceStatus =
   | 'draft'
@@ -59,6 +64,56 @@ type PaySchoolInvoiceResponse = {
   mode: 'checkout' | 'settled';
   checkoutUrl?: string | null;
   message?: string;
+};
+
+type DashboardNotification = {
+  id: string;
+  title?: string;
+  message?: string;
+  time?: string;
+  isRead?: boolean;
+  createdAt?: string;
+  source?: 'seed' | 'schedule' | 'local' | 'exam';
+  examId?: string;
+  examDepartment?: string;
+  examClassGroup?: string;
+};
+
+const EXAM_NOTIFICATION_PREFIX = 'exam:';
+
+const isExamNotification = (notification: DashboardNotification) =>
+  notification.source === 'exam' &&
+  String(notification.id || '').startsWith(EXAM_NOTIFICATION_PREFIX) &&
+  Boolean(notification.examId && notification.examDepartment && notification.examClassGroup);
+
+const fromExamNotificationId = (notificationId: string) =>
+  String(notificationId || '').slice(EXAM_NOTIFICATION_PREFIX.length);
+
+const readDashboardNotifications = (): DashboardNotification[] => {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  const stored = window.localStorage.getItem('notifications');
+  if (!stored) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(stored) as unknown;
+    return Array.isArray(parsed) ? (parsed as DashboardNotification[]) : [];
+  } catch {
+    return [];
+  }
+};
+
+const writeDashboardNotifications = (notifications: DashboardNotification[]) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem('notifications', JSON.stringify(notifications));
+  window.dispatchEvent(new Event('notificationsUpdated'));
 };
 
 const STUDENT_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
@@ -110,6 +165,8 @@ const StudentDashboard = () => {
   const [isSchoolInvoicesLoading, setIsSchoolInvoicesLoading] = useState(false);
   const [schoolInvoicesError, setSchoolInvoicesError] = useState<string | null>(null);
   const [activeSchoolInvoiceId, setActiveSchoolInvoiceId] = useState('');
+  const [resultNotifications, setResultNotifications] = useState<DashboardNotification[]>([]);
+  const [activeResultNotificationId, setActiveResultNotificationId] = useState('');
   const outstandingSchoolInvoices = useMemo(
     () =>
       schoolInvoices.filter(
@@ -123,6 +180,11 @@ const StudentDashboard = () => {
 
   // Use the notification count hook for real-time sync
   const notificationCount = useNotificationCount();
+
+  const unreadResultNotifications = useMemo(
+    () => resultNotifications.filter((notification) => !notification.isRead),
+    [resultNotifications]
+  );
 
   const handleProfileUpdate = (updatedProfile: {
     name: string;
@@ -153,6 +215,18 @@ const StudentDashboard = () => {
     navigate('/notifications');
   };
 
+  const syncResultNotifications = () => {
+    const notifications = readDashboardNotifications();
+    const examNotifications = notifications
+      .filter(isExamNotification)
+      .sort((left, right) => {
+        const leftTs = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+        const rightTs = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+        return rightTs - leftTs;
+      });
+    setResultNotifications(examNotifications);
+  };
+
   const handleAssignmentsClick = () => {
     navigate('/assignments');
   };
@@ -166,6 +240,9 @@ const StudentDashboard = () => {
   };
   const handleResourcesClick = () => {
     navigate('/resources');
+  };
+  const handleExamsClick = () => {
+    navigate('/student-exams');
   };
 
   const handleLogout = async () => {
@@ -278,6 +355,67 @@ const StudentDashboard = () => {
   useEffect(() => {
     void loadSchoolInvoices();
   }, []);
+
+  useEffect(() => {
+    syncResultNotifications();
+
+    const handleNotificationsUpdated = () => {
+      syncResultNotifications();
+    };
+
+    window.addEventListener('notificationsUpdated', handleNotificationsUpdated);
+    window.addEventListener('storage', handleNotificationsUpdated);
+    return () => {
+      window.removeEventListener('notificationsUpdated', handleNotificationsUpdated);
+      window.removeEventListener('storage', handleNotificationsUpdated);
+    };
+  }, []);
+
+  const openPublishedResult = async (notification: DashboardNotification) => {
+    if (!isExamNotification(notification)) {
+      return;
+    }
+
+    setActiveResultNotificationId(notification.id);
+    const nextNotifications = readDashboardNotifications().map((item) =>
+      item.id === notification.id ? { ...item, isRead: true } : item
+    );
+    writeDashboardNotifications(nextNotifications);
+
+    try {
+      await markStudentExamNotificationAsRead(fromExamNotificationId(notification.id));
+    } catch {
+      // Keep optimistic local read state to avoid blocking result access.
+    } finally {
+      setActiveResultNotificationId('');
+    }
+
+    const params = new URLSearchParams({
+      examId: notification.examId || '',
+      department: notification.examDepartment || '',
+      classGroup: notification.examClassGroup || '',
+      view: 'result',
+    });
+    navigate(`/student-exams?${params.toString()}`);
+  };
+
+  const dismissPublishedResult = async (notification: DashboardNotification) => {
+    if (!isExamNotification(notification)) {
+      return;
+    }
+
+    setActiveResultNotificationId(notification.id);
+    const nextNotifications = readDashboardNotifications().filter((item) => item.id !== notification.id);
+    writeDashboardNotifications(nextNotifications);
+
+    try {
+      await archiveStudentExamNotification(fromExamNotificationId(notification.id));
+    } catch {
+      // Keep local dismissal to avoid a disruptive UX.
+    } finally {
+      setActiveResultNotificationId('');
+    }
+  };
 
   // Menu items configuration
   const menuItems = [
@@ -474,6 +612,77 @@ const StudentDashboard = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
           {/* LEFT COLUMN - Main Content */}
           <div className="lg:col-span-2 space-y-4 sm:space-y-6">
+            {unreadResultNotifications.length > 0 && (
+              <div className="bg-[linear-gradient(135deg,_rgba(61,8,186,0.08),_rgba(255,255,255,0.98))] rounded-xl sm:rounded-2xl border border-[#3D08BA]/15 shadow-sm p-4 sm:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">
+                      <CheckCircleIcon className="h-4 w-4" />
+                      Result release
+                    </div>
+                    <h2 className="mt-3 text-lg sm:text-xl font-bold text-gray-900">
+                      New published result{unreadResultNotifications.length === 1 ? '' : 's'} ready
+                    </h2>
+                    <p className="mt-1 text-xs sm:text-sm text-gray-600">
+                      Your school has released exam result{unreadResultNotifications.length === 1 ? '' : 's'}. Open them directly from here.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleNotificationClick}
+                    className="inline-flex items-center rounded-lg border border-[#3D08BA]/20 bg-white px-3 py-2 text-xs sm:text-sm font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5 transition-colors"
+                  >
+                    View all notifications
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {unreadResultNotifications.slice(0, 2).map((notification) => (
+                    <div
+                      key={notification.id}
+                      className="rounded-xl border border-white/80 bg-white/90 px-4 py-4 shadow-sm"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm sm:text-base font-semibold text-gray-900">
+                            {notification.title || 'Published result available'}
+                          </p>
+                          <p className="mt-1 text-xs sm:text-sm text-gray-600 leading-5">
+                            {notification.message}
+                          </p>
+                          <p className="mt-2 text-[11px] text-gray-500">
+                            {notification.time || 'Recently'}
+                          </p>
+                        </div>
+                        <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                          Published
+                        </span>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void openPublishedResult(notification)}
+                          disabled={activeResultNotificationId === notification.id}
+                          className="inline-flex items-center rounded-lg bg-[#3D08BA] px-3 py-2 text-xs sm:text-sm font-semibold text-white hover:bg-[#2e06a1] disabled:opacity-60"
+                        >
+                          {activeResultNotificationId === notification.id ? 'Opening...' : 'Open result'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void dismissPublishedResult(notification)}
+                          disabled={activeResultNotificationId === notification.id}
+                          className="inline-flex items-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs sm:text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Performance Stats */}
             <PerformanceStats />
 
@@ -486,6 +695,7 @@ const StudentDashboard = () => {
               onPerformanceClick={handlePerformanceClick}
               onJoinClass={handleJoinClassClick}
               onResourceClick={handleResourcesClick}
+              onExamsClick={handleExamsClick}
             />
 
             <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-6">

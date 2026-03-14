@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { FaSearch, FaBook, FaUserGraduate, FaMoneyBillWave, FaHome, FaClock, FaCalendar, FaCopy, FaVideo, FaPlus } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import NewLogo from '../../../components/common/NewLogo';
@@ -24,6 +24,73 @@ import {
   fetchTeachingSubscriptionState,
   type TeachingSubscriptionState,
 } from '../../subscriptions/utils/teachingSubscriptionApi';
+import {
+  fetchSchoolScheduleFeed,
+  type SchoolScheduleFeedSession,
+} from '../../schools/utils/schoolScheduleApi';
+
+const formatDashboardDate = (isoValue: string) => {
+  const parsed = new Date(isoValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return '--';
+  }
+  return parsed.toLocaleDateString('en-US', {
+    day: '2-digit',
+    month: 'short',
+    year: '2-digit',
+  });
+};
+
+const formatDashboardTime = (isoValue: string) => {
+  const parsed = new Date(isoValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return '--';
+  }
+  const value = parsed.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+  return value.replace(/\s+/g, '').toLowerCase();
+};
+
+const formatDashboardDuration = (durationMinutes: number) => {
+  if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+    return '60 mins';
+  }
+  if (durationMinutes < 60) {
+    return `${Math.round(durationMinutes)} mins`;
+  }
+  const hours = Math.floor(durationMinutes / 60);
+  const minutes = durationMinutes % 60;
+  if (minutes === 0) {
+    return `${hours} hr${hours > 1 ? 's' : ''}`;
+  }
+  return `${hours} hr ${minutes} mins`;
+};
+
+const mapAssignedSessionToTutorClass = (
+  session: SchoolScheduleFeedSession
+): NewClassData => ({
+  id: session.id,
+  title: session.title,
+  date: formatDashboardDate(session.startAt),
+  time: formatDashboardTime(session.startAt),
+  students: session.expectedStudents,
+  avatars: 3,
+  source: 'assigned-school',
+  roomCode: session.roomCode,
+  subject: session.subject,
+  instructor: session.instructor,
+  instructorImage: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(session.instructor)}`,
+  scheduleLabel: `${formatDashboardDate(session.startAt)} ${formatDashboardTime(session.startAt)}`,
+  duration: formatDashboardDuration(session.durationMinutes),
+  notes: session.notes || undefined,
+  startAtIso: session.startAt,
+  durationMinutes: session.durationMinutes,
+});
+
+const INDEPENDENT_CLASSES_STORAGE_KEY = 'edamaa_tutor_independent_classes';
 
 const TutorDashboard = () => {
   const navigate = useNavigate();
@@ -40,6 +107,12 @@ const TutorDashboard = () => {
   const [showMobileSearch, setShowMobileSearch] = useState(false);
   const [subscriptionState, setSubscriptionState] = useState<TeachingSubscriptionState | null>(null);
   const [isSubscriptionLoading, setIsSubscriptionLoading] = useState(false);
+  const [isUpcomingLoading, setIsUpcomingLoading] = useState(false);
+  const [upcomingNotice, setUpcomingNotice] = useState('');
+  const [editingClass, setEditingClass] = useState<NewClassData | null>(null);
+  const [activeClassActionId, setActiveClassActionId] = useState<string | null>(null);
+  const [independentClasses, setIndependentClasses] = useState<NewClassData[]>([]);
+  const [assignedSchoolClasses, setAssignedSchoolClasses] = useState<NewClassData[]>([]);
 
   const handleProfileUpdate = (updatedProfile: {
     name: string;
@@ -57,28 +130,18 @@ const TutorDashboard = () => {
     setProfileSrc(updatedProfile.profileImage);
   };
 
-  const [upcomingClasses, setUpcomingClasses] = useState([
-    {
-      id: 1,
-      title: 'Introduction to Financial Accounting',
-      date: '24 May 26',
-      time: '12:00pm',
-      students: 25,
-      avatars: 3
-    },
-    {
-      id: 2,
-      title: 'Advanced Mathematics',
-      date: '25 May 26',
-      time: '2:30pm',
-      students: 18,
-      avatars: 3
-    }
-  ]);
-
   const classroomId = '224091556';
   const isSubscriptionActive = Boolean(subscriptionState?.isActive);
   const offlineScheduleLimit = subscriptionState?.features.maxScheduledOfflineClasses ?? 1;
+  const scheduledClassCount = independentClasses.length;
+  const upcomingClasses = useMemo(() => {
+    const merged = [...independentClasses, ...assignedSchoolClasses];
+    return merged.sort((a, b) => {
+      const aTs = a.startAtIso ? new Date(a.startAtIso).getTime() : Number.POSITIVE_INFINITY;
+      const bTs = b.startAtIso ? new Date(b.startAtIso).getTime() : Number.POSITIVE_INFINITY;
+      return aTs - bTs;
+    });
+  }, [assignedSchoolClasses, independentClasses]);
 
   const openSubscriptionPage = (message: string) => {
     toast.info(message);
@@ -97,8 +160,46 @@ const TutorDashboard = () => {
     }
   };
 
+  const loadUpcomingClasses = async () => {
+    setIsUpcomingLoading(true);
+    setUpcomingNotice('');
+    try {
+      const payload = await fetchSchoolScheduleFeed({
+        status: 'upcoming',
+        limit: 120,
+      });
+      const mapped = payload.sessions.map(mapAssignedSessionToTutorClass);
+      setAssignedSchoolClasses(mapped);
+
+      if (mapped.length === 0) {
+        setUpcomingNotice(
+          'No school-assigned classes yet. You can still schedule your own independent classes.'
+        );
+      }
+    } catch {
+      setAssignedSchoolClasses([]);
+      setUpcomingNotice(
+        'We could not load school-assigned classes right now. Your independent classes are still available.'
+      );
+    } finally {
+      setIsUpcomingLoading(false);
+    }
+  };
+
   useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(INDEPENDENT_CLASSES_STORAGE_KEY);
+      if (!stored) {
+        setIndependentClasses([]);
+      } else {
+        const parsed = JSON.parse(stored) as unknown;
+        setIndependentClasses(Array.isArray(parsed) ? (parsed as NewClassData[]) : []);
+      }
+    } catch {
+      setIndependentClasses([]);
+    }
     void loadSubscriptionState();
+    void loadUpcomingClasses();
   }, []);
 
   const copyToClipboard = async () => {
@@ -111,25 +212,87 @@ const TutorDashboard = () => {
     }
   };
 
-  const handleScheduleClass = (newClass: NewClassData) => {
-    if (!isSubscriptionActive && upcomingClasses.length >= offlineScheduleLimit) {
-      openSubscriptionPage(
-        `Free mode allows up to ${offlineScheduleLimit} scheduled offline class. Upgrade to unlock unlimited scheduling.`
-      );
+  const handleSaveClass = async (newClass: NewClassData) => {
+    const isEditing = Boolean(editingClass);
+
+    if (!isEditing && !isSubscriptionActive && scheduledClassCount >= offlineScheduleLimit) {
+      const message = `Free mode allows up to ${offlineScheduleLimit} scheduled offline class. Upgrade to unlock unlimited scheduling.`;
+      openSubscriptionPage(message);
+      return { ok: false, message };
+    }
+
+    const normalized: NewClassData = {
+      ...newClass,
+      source: 'independent',
+      subject: newClass.subject || 'General Studies',
+      instructor: name,
+      instructorImage:
+        newClass.instructorImage ||
+        `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}`,
+      scheduleLabel: `${newClass.date} ${newClass.time}`,
+      duration: newClass.duration || formatDashboardDuration(newClass.durationMinutes || 60),
+      startAtIso: newClass.startAtIso || new Date().toISOString(),
+      durationMinutes: newClass.durationMinutes || 60,
+    };
+
+    const nextClasses = isEditing && editingClass
+      ? independentClasses.map((item) => (item.id === editingClass.id ? normalized : item))
+      : [normalized, ...independentClasses];
+
+    setIndependentClasses(nextClasses);
+    window.localStorage.setItem(INDEPENDENT_CLASSES_STORAGE_KEY, JSON.stringify(nextClasses));
+    setEditingClass(null);
+    return {
+      ok: true,
+      message: isEditing ? 'Independent class updated successfully.' : 'Independent class scheduled successfully.',
+    };
+  };
+
+  const handleEditClass = (classItem: NewClassData) => {
+    if (classItem.source !== 'independent') {
+      toast.info('Only independent tutor classes can be edited here.');
+      return;
+    }
+    setEditingClass(classItem);
+    setShowScheduleModal(true);
+  };
+
+  const handleCancelClass = async (classItem: NewClassData) => {
+    if (classItem.source !== 'independent') {
+      toast.info('Only independent tutor classes can be canceled here.');
       return;
     }
 
-    setUpcomingClasses((previous) => [...previous, newClass]);
+    if (!window.confirm(`Cancel "${classItem.title}" from your schedule?`)) {
+      return;
+    }
+
+    setActiveClassActionId(classItem.id);
+    const nextClasses = independentClasses.filter((item) => item.id !== classItem.id);
+    setIndependentClasses(nextClasses);
+    window.localStorage.setItem(INDEPENDENT_CLASSES_STORAGE_KEY, JSON.stringify(nextClasses));
+    toast.success('Independent class removed from schedule.');
+    if (editingClass?.id === classItem.id) {
+      setEditingClass(null);
+      setShowScheduleModal(false);
+    }
+    setActiveClassActionId(null);
+  };
+
+  const handleCloseScheduleModal = () => {
+    setShowScheduleModal(false);
+    setEditingClass(null);
   };
 
   const handleOpenScheduleClass = () => {
-    if (!isSubscriptionActive && upcomingClasses.length >= offlineScheduleLimit) {
+    if (!isSubscriptionActive && scheduledClassCount >= offlineScheduleLimit) {
       openSubscriptionPage(
         `Free mode allows up to ${offlineScheduleLimit} scheduled offline class. Upgrade to schedule more.`
       );
       return;
     }
 
+    setEditingClass(null);
     setShowScheduleModal(true);
   };
 
@@ -180,16 +343,18 @@ const TutorDashboard = () => {
     const liveClassId = `live-${String(classItem.id)}`;
     const classState = {
       id: liveClassId,
-      code: classroomId,
+      code: classItem.roomCode || classroomId,
       name: classItem.title,
-      subject: 'Scheduled Session',
-      instructor: name,
-      instructorImage: profileSrc || undefined,
-      schedule: `${classItem.date} ${classItem.time}`,
+      subject: classItem.subject || 'Scheduled Session',
+      instructor: classItem.instructor || name,
+      instructorImage: classItem.instructorImage || profileSrc || undefined,
+      schedule: classItem.scheduleLabel || `${classItem.date} ${classItem.time}`,
       students: classItem.students,
-      description: 'Scheduled tutor session with live instruction and interactive collaboration.',
+      description:
+        classItem.notes ||
+        'Scheduled tutor session with live instruction and interactive collaboration.',
       level: 'Intermediate' as const,
-      duration: '60 mins',
+      duration: classItem.duration || '60 mins',
     };
 
     navigate(`/live-class/${liveClassId}?role=teacher`, { state: { classItem: classState } });
@@ -509,8 +674,25 @@ const TutorDashboard = () => {
               className="mb-6"
             >
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-base sm:text-lg md:text-xl font-bold text-gray-800">Upcoming Classes</h3>
+                <div>
+                  <h3 className="text-base sm:text-lg md:text-xl font-bold text-gray-800">Upcoming Classes</h3>
+                  <p className="text-[11px] text-gray-500">
+                    Independent classes are editable. School-assigned classes are managed by the school.
+                  </p>
+                </div>
               </div>
+
+              {isUpcomingLoading && (
+                <p className="mb-3 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600">
+                  Refreshing your latest class schedule...
+                </p>
+              )}
+
+              {!isUpcomingLoading && upcomingNotice && (
+                <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {upcomingNotice}
+                </p>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
                 {upcomingClasses.map((classItem, index) => (
@@ -544,6 +726,11 @@ const TutorDashboard = () => {
                     <h4 className="text-sm sm:text-base md:text-lg font-bold text-white mb-3 sm:mb-4 line-clamp-2">
                       {classItem.title}
                     </h4>
+                    <div className="mb-2 flex items-center justify-end">
+                      <span className="rounded-lg bg-white/20 px-2.5 py-1 text-[10px] font-semibold text-white/95">
+                        {classItem.source === 'assigned-school' ? 'Assigned by school' : 'Independent class'}
+                      </span>
+                    </div>
 
                     <div className="flex items-center justify-between gap-2">
                       <div className="bg-white/20 backdrop-blur-sm px-3 py-1.5 rounded-lg flex items-center gap-1.5">
@@ -559,9 +746,40 @@ const TutorDashboard = () => {
                         Start Class
                       </motion.button>
                     </div>
+
+                    {classItem.source === 'independent' ? (
+                      <div className="mt-2 flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => handleEditClass(classItem)}
+                          disabled={activeClassActionId === classItem.id}
+                          className="rounded-lg border border-white/30 bg-white/20 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-white/30 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => void handleCancelClass(classItem)}
+                          disabled={activeClassActionId === classItem.id}
+                          className="rounded-lg border border-red-200/40 bg-red-500/20 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-red-500/30 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {activeClassActionId === classItem.id ? 'Canceling...' : 'Cancel'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-2 flex items-center justify-end">
+                        <span className="rounded-lg bg-white/20 px-3 py-1.5 text-[11px] font-semibold text-white/90">
+                          Managed by school schedule
+                        </span>
+                      </div>
+                    )}
                   </motion.div>
                 ))}
               </div>
+
+              {!isUpcomingLoading && upcomingClasses.length === 0 && (
+                <div className="mt-3 rounded-xl border border-gray-200 bg-white p-6 text-center text-sm text-gray-600">
+                  No classes yet. Schedule an independent class or wait for a school to assign one.
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -606,13 +824,13 @@ const TutorDashboard = () => {
                       <FaCalendar className="text-white text-2xl sm:text-3xl" />
                     </div>
                     <h4 className="text-xl sm:text-2xl font-bold text-white mb-2">Schedule Live Class</h4>
-                    <p className="text-white/90 mb-6 text-sm sm:text-base">Plan and schedule a live session for later</p>
+                    <p className="text-white/90 mb-6 text-sm sm:text-base">Plan and schedule your independent tutor session</p>
                     <button
                       onClick={handleOpenScheduleClass}
                       className="bg-white text-[#F68C29] px-6 sm:px-8 py-3 rounded-xl font-bold hover:shadow-lg active:scale-95 transition-all duration-200 text-sm sm:text-base w-full sm:w-auto flex items-center justify-center gap-2 shadow-md"
                     >
                       <FaPlus className="text-sm" />
-                      Schedule Class
+                      Schedule Independent Class
                     </button>
                   </div>
                 </div>
@@ -735,8 +953,10 @@ const TutorDashboard = () => {
       {/* Schedule Class Modal */}
       <ScheduleClass
         isOpen={showScheduleModal}
-        onClose={() => setShowScheduleModal(false)}
-        onSchedule={handleScheduleClass}
+        onClose={handleCloseScheduleModal}
+        onSchedule={handleSaveClass}
+        mode={editingClass ? 'edit' : 'create'}
+        initialClass={editingClass}
       />
 
       <ToastContainer

@@ -194,6 +194,14 @@ const SignIn: React.FC = () => {
       return false;
     }
 
+    // Class launch routes can be entered by invited school teachers regardless of account default role.
+    if (
+      normalizedPath.startsWith('/school-teacher/live/') ||
+      normalizedPath.startsWith('/live-class/')
+    ) {
+      return true;
+    }
+
     if (role === 'school') {
       return normalizedPath.startsWith('/school-') || normalizedPath === '/account-roles';
     }
@@ -536,6 +544,9 @@ const SignIn: React.FC = () => {
           </h1>
           <p className='text-gray-600 text-sm mb-8 text-center'>
             Sign in to continue your learning journey
+          </p>
+          <p className='mb-6 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700'>
+            Independent tutors use Tutor registration. School-assigned teachers can sign in with the invited email and class link from their school.
           </p>
 
           {/* Login Form */}

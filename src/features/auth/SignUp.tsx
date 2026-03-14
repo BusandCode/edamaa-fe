@@ -42,20 +42,30 @@ const SignUp: React.FC = () => {
               onClick={() => handleNavigate('/student-registration')}
               className='bg-[#3D08BA] cursor-pointer rounded-lg sm:rounded-xl w-full h-12 sm:h-14 text-white text-sm sm:text-base font-medium hover:bg-[#2F0695] active:scale-98 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2'
             >
-              Join as a Student
+              Join as Student
             </button>
-            <button 
-              onClick={() => handleNavigate('/tutor-registration')}
-              className='bg-[#3D08BA] cursor-pointer rounded-lg sm:rounded-xl w-full h-12 sm:h-14 text-white text-sm sm:text-base font-medium hover:bg-[#2F0695] active:scale-98 transition-all text-center flex items-center justify-center shadow-lg hover:shadow-xl'
-            >
-              Register as a Tutor
-            </button>
-            <button 
-              onClick={() => handleNavigate('/school-registration')}
-              className='bg-[#3D08BA] cursor-pointer rounded-lg sm:rounded-xl w-full h-12 sm:h-14 text-white text-sm sm:text-base font-medium hover:bg-[#2F0695] active:scale-98 transition-all text-center flex items-center justify-center shadow-lg hover:shadow-xl'
-            >
-              Enroll Your School
-            </button>
+            <div>
+              <button 
+                onClick={() => handleNavigate('/tutor-registration')}
+                className='bg-[#3D08BA] cursor-pointer rounded-lg sm:rounded-xl w-full h-12 sm:h-14 text-white text-sm sm:text-base font-medium hover:bg-[#2F0695] active:scale-98 transition-all text-center flex items-center justify-center shadow-lg hover:shadow-xl'
+              >
+                Register as an Independent Tutor
+              </button>
+              <p className='mt-1 text-[11px] text-gray-500'>
+                For private tutoring centers and skill instructors.
+              </p>
+            </div>
+            <div>
+              <button 
+                onClick={() => handleNavigate('/school-registration')}
+                className='bg-[#3D08BA] cursor-pointer rounded-lg sm:rounded-xl w-full h-12 sm:h-14 text-white text-sm sm:text-base font-medium hover:bg-[#2F0695] active:scale-98 transition-all text-center flex items-center justify-center shadow-lg hover:shadow-xl'
+              >
+                Enroll Your School
+              </button>
+              <p className='mt-1 text-[11px] text-gray-500'>
+                School staff teachers do not need tutor registration. They join via school invite links.
+              </p>
+            </div>
           </div>
 
           {/* Sign In Link */}

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   FaArrowLeft,
   FaCalendarAlt,
@@ -7,11 +7,14 @@ import {
   FaChevronLeft,
   FaChevronRight,
   FaClock,
+  FaCopy,
+  FaEdit,
   FaFilter,
+  FaShareAlt,
   FaListUl,
-  FaPlay,
   FaPlus,
   FaSearch,
+  FaSyncAlt,
   FaTable,
   FaTimes,
   FaTrash,
@@ -21,9 +24,25 @@ import {
 import NavBar from '../../../components/layout/school-layout/NavBar';
 import {
   createSchoolScheduleSession,
+  createSchoolTeacher,
   deleteSchoolScheduleSession,
+  deleteSchoolTeacher,
+  fetchSchoolScheduleAttendance,
+  fetchSchoolScheduleNotifications,
   fetchSchoolScheduleSessions,
+  fetchSchoolScheduleTeacherAccess,
+  fetchSchoolTeachers,
+  regenerateSchoolScheduleTeacherAccess,
+  resendSchoolTeacherInvite,
+  updateSchoolScheduleSession,
+  updateSchoolScheduleAttendance,
+  upsertSchoolScheduleAttendance,
+  updateSchoolTeacher,
+  type SchoolScheduleAttendanceRecord,
+  type SchoolScheduleAttendanceResponse,
+  type SchoolScheduleNotification,
   type SchoolScheduleSession,
+  type SchoolTeacherRosterItem,
 } from '../utils/schoolScheduleApi';
 
 type ScheduleStatus = 'upcoming' | 'live' | 'completed';
@@ -32,10 +51,42 @@ type SessionFormState = {
   title: string;
   subject: string;
   instructor: string;
+  assignedTutorEmail: string;
+  assignedTutorName: string;
+  department: string;
+  classGroup: string;
+  audienceTag: string;
   startAt: string;
   durationMinutes: string;
   expectedStudents: string;
   notes: string;
+};
+
+type TeacherFormState = {
+  name: string;
+  email: string;
+  department: string;
+  classGroup: string;
+  subjectFocus: string;
+};
+
+type AttendanceFormState = {
+  participantName: string;
+  participantId: string;
+  status: 'present' | 'absent';
+  note: string;
+};
+
+type SchoolScheduleRouteState = {
+  inviteTeacher?: {
+    name?: string;
+    email?: string;
+    department?: string;
+    classGroup?: string;
+    subjectFocus?: string;
+  };
+  openCreate?: boolean;
+  highlightSessionId?: string;
 };
 
 const buildSeedSchedule = () => {
@@ -139,6 +190,30 @@ const formatDateTime = (isoDate: string) => {
   });
 };
 
+const formatDateTimeInputValue = (isoDate: string) => {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+};
+
+const formatAttendanceMoment = (value: string | null) => {
+  if (!value) {
+    return 'Not recorded';
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return 'Invalid time';
+  }
+  return parsed.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+};
+
 const addDays = (date: Date, amount: number) => {
   const copy = new Date(date);
   copy.setDate(copy.getDate() + amount);
@@ -196,8 +271,66 @@ const formatSessionTime = (isoDate: string) => {
   });
 };
 
+const normalizeScheduleCompareLabel = (value: string | null | undefined) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
+const getSessionAudienceLabel = (session: SchoolScheduleSession) =>
+  session.audienceTag || [session.department, session.classGroup].filter(Boolean).join(' • ') || '';
+
+const teacherInviteStatusLabel = (teacher: SchoolTeacherRosterItem) => {
+  if (!teacher.isActive || teacher.inviteStatus === 'inactive') {
+    return 'Inactive';
+  }
+  if (teacher.inviteStatus === 'accepted') {
+    return 'Accepted';
+  }
+  return 'Invited';
+};
+
+const teacherInviteStatusClass = (teacher: SchoolTeacherRosterItem) => {
+  if (!teacher.isActive || teacher.inviteStatus === 'inactive') {
+    return 'bg-gray-100 text-gray-700';
+  }
+  if (teacher.inviteStatus === 'accepted') {
+    return 'bg-emerald-100 text-emerald-700';
+  }
+  return 'bg-amber-100 text-amber-700';
+};
+
+const inviteActivityTypeLabel = (kind: SchoolScheduleNotification['kind']) => {
+  if (kind === 'teacher_access_accepted') {
+    return 'Accepted';
+  }
+  if (kind === 'class_assignment') {
+    return 'Class Invite';
+  }
+  if (kind === 'teacher_invite') {
+    return 'Teacher Invite';
+  }
+  return 'Update';
+};
+
+const inviteActivityTypeClass = (kind: SchoolScheduleNotification['kind']) => {
+  if (kind === 'teacher_access_accepted') {
+    return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+  }
+  if (kind === 'class_assignment') {
+    return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+  }
+  if (kind === 'teacher_invite') {
+    return 'bg-amber-100 text-amber-700 border-amber-200';
+  }
+  return 'bg-gray-100 text-gray-700 border-gray-200';
+};
+
 const SchoolSchedule = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const hasConsumedInvite = useRef(false);
+  const sessionCardRefs = useRef<Record<string, HTMLElement | null>>({});
   const [sessions, setSessions] = useState<SchoolScheduleSession[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -207,15 +340,74 @@ const SchoolSchedule = () => {
   const [notice, setNotice] = useState<string | null>(null);
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [formState, setFormState] = useState<SessionFormState>({
     title: '',
     subject: '',
     instructor: '',
+    assignedTutorEmail: '',
+    assignedTutorName: '',
+    department: '',
+    classGroup: '',
+    audienceTag: '',
     startAt: '',
     durationMinutes: '60',
     expectedStudents: '',
     notes: '',
   });
+  const [teacherRoster, setTeacherRoster] = useState<SchoolTeacherRosterItem[]>([]);
+  const [isTeacherLoading, setIsTeacherLoading] = useState(false);
+  const [teacherNotice, setTeacherNotice] = useState<string | null>(null);
+  const [teacherSearch, setTeacherSearch] = useState('');
+  const [teacherInviteFilter, setTeacherInviteFilter] = useState<'all' | 'invited' | 'accepted' | 'inactive'>('all');
+  const [teacherForm, setTeacherForm] = useState<TeacherFormState>({
+    name: '',
+    email: '',
+    department: '',
+    classGroup: '',
+    subjectFocus: '',
+  });
+  const [editingTeacherId, setEditingTeacherId] = useState<string | null>(null);
+  const [isTeacherSubmitting, setIsTeacherSubmitting] = useState(false);
+  const [activeTeacherActionId, setActiveTeacherActionId] = useState<string | null>(null);
+  const [inviteActivity, setInviteActivity] = useState<SchoolScheduleNotification[]>([]);
+  const [isInviteActivityLoading, setIsInviteActivityLoading] = useState(false);
+  const [inviteActivityFilter, setInviteActivityFilter] = useState<'all' | 'accepted' | 'pending'>(
+    'all'
+  );
+  const [highlightedSessionId, setHighlightedSessionId] = useState<string | null>(null);
+  const [attendanceTargetSession, setAttendanceTargetSession] = useState<SchoolScheduleSession | null>(null);
+  const [attendancePayload, setAttendancePayload] = useState<SchoolScheduleAttendanceResponse | null>(null);
+  const [isAttendanceLoading, setIsAttendanceLoading] = useState(false);
+  const [attendanceBusyId, setAttendanceBusyId] = useState<string | null>(null);
+  const [attendanceForm, setAttendanceForm] = useState<AttendanceFormState>({
+    participantName: '',
+    participantId: '',
+    status: 'absent',
+    note: '',
+  });
+  const liveSyncIntervalMs = 15000;
+  const calendarYearOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    return Array.from({ length: 41 }, (_, index) => currentYear - 20 + index);
+  }, []);
+  const monthOptions = useMemo(
+    () => [
+      { value: 1, label: 'Jan' },
+      { value: 2, label: 'Feb' },
+      { value: 3, label: 'Mar' },
+      { value: 4, label: 'Apr' },
+      { value: 5, label: 'May' },
+      { value: 6, label: 'Jun' },
+      { value: 7, label: 'Jul' },
+      { value: 8, label: 'Aug' },
+      { value: 9, label: 'Sep' },
+      { value: 10, label: 'Oct' },
+      { value: 11, label: 'Nov' },
+      { value: 12, label: 'Dec' },
+    ],
+    []
+  );
 
   const refreshSessions = useCallback(async () => {
     setIsLoading(true);
@@ -233,9 +425,87 @@ const SchoolSchedule = () => {
     }
   }, []);
 
+  const refreshTeacherRoster = useCallback(async () => {
+    setIsTeacherLoading(true);
+    try {
+      const payload = await fetchSchoolTeachers({
+        search: teacherSearch.trim() || undefined,
+        includeInactive: true,
+      });
+      setTeacherRoster(Array.isArray(payload.teachers) ? payload.teachers : []);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not load the teacher roster right now.';
+      setTeacherNotice(message);
+    } finally {
+      setIsTeacherLoading(false);
+    }
+  }, [teacherSearch]);
+
+  const refreshInviteActivity = useCallback(async () => {
+    setIsInviteActivityLoading(true);
+    try {
+      const payload = await fetchSchoolScheduleNotifications();
+      const events = (payload.notifications || [])
+        .filter(
+          (item) =>
+            item.kind === 'teacher_invite' ||
+            item.kind === 'class_assignment' ||
+            item.kind === 'teacher_access_accepted'
+        )
+        .slice(0, 10);
+      setInviteActivity(events);
+    } catch {
+      // Keep previous activity when notification feed is unavailable.
+    } finally {
+      setIsInviteActivityLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void refreshSessions();
   }, [refreshSessions]);
+
+  useEffect(() => {
+    void refreshTeacherRoster();
+  }, [refreshTeacherRoster]);
+
+  useEffect(() => {
+    void refreshInviteActivity();
+  }, [refreshInviteActivity]);
+
+  useEffect(() => {
+    const refreshLiveState = () => {
+      void refreshTeacherRoster();
+      void refreshInviteActivity();
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshLiveState();
+      }
+    };
+
+    const onWindowFocus = () => {
+      refreshLiveState();
+    };
+
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+      refreshLiveState();
+    }, liveSyncIntervalMs);
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', onWindowFocus);
+
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', onWindowFocus);
+    };
+  }, [liveSyncIntervalMs, refreshInviteActivity, refreshTeacherRoster]);
 
   useEffect(() => {
     if (!notice) {
@@ -244,6 +514,64 @@ const SchoolSchedule = () => {
     const timer = window.setTimeout(() => setNotice(null), 3500);
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => {
+    if (!teacherNotice) {
+      return;
+    }
+    const timer = window.setTimeout(() => setTeacherNotice(null), 3500);
+    return () => window.clearTimeout(timer);
+  }, [teacherNotice]);
+
+  useEffect(() => {
+    if (!highlightedSessionId) {
+      return;
+    }
+    const timer = window.setTimeout(() => setHighlightedSessionId(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [highlightedSessionId]);
+
+  useEffect(() => {
+    const routeState = (location.state || null) as SchoolScheduleRouteState | null;
+    if (!routeState) {
+      return;
+    }
+
+    let shouldClearState = false;
+
+    if (routeState.openCreate) {
+      setIsCreateOpen(true);
+      shouldClearState = true;
+    }
+
+    if (routeState.highlightSessionId) {
+      setViewMode('list');
+      setFilter('all');
+      setSearchQuery('');
+      setHighlightedSessionId(routeState.highlightSessionId);
+      shouldClearState = true;
+    }
+
+    const invited = routeState.inviteTeacher;
+    if (invited?.email && !hasConsumedInvite.current) {
+      hasConsumedInvite.current = true;
+      setTeacherForm({
+        name: String(invited.name || '').trim(),
+        email: String(invited.email || '').trim().toLowerCase(),
+        department: String(invited.department || '').trim(),
+        classGroup: String(invited.classGroup || '').trim(),
+        subjectFocus: String(invited.subjectFocus || '').trim(),
+      });
+      setTeacherNotice(
+        `Tutor ${invited.name || invited.email} selected from directory. Review details and click "Add teacher".`
+      );
+      shouldClearState = true;
+    }
+
+    if (shouldClearState) {
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.pathname, location.state, navigate]);
 
   const scheduleStats = useMemo(() => {
     const now = Date.now();
@@ -285,6 +613,232 @@ const SchoolSchedule = () => {
       .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
   }, [filter, searchQuery, sessions]);
 
+  const filteredTeachers = useMemo(() => {
+    const query = teacherSearch.trim().toLowerCase();
+    return teacherRoster
+      .filter((teacher) => {
+        if (teacherInviteFilter === 'all') {
+          return true;
+        }
+        return teacherInviteStatusLabel(teacher).toLowerCase() === teacherInviteFilter;
+      })
+      .filter((teacher) => {
+        if (!query) {
+          return true;
+        }
+        return (
+          teacher.name.toLowerCase().includes(query) ||
+          teacher.email.toLowerCase().includes(query) ||
+          (teacher.department || '').toLowerCase().includes(query) ||
+          (teacher.classGroup || '').toLowerCase().includes(query) ||
+          (teacher.subjectFocus || '').toLowerCase().includes(query)
+        );
+      });
+  }, [teacherInviteFilter, teacherRoster, teacherSearch]);
+
+  const teacherInsights = useMemo(() => {
+    const now = Date.now();
+    const nextWeekMs = now + 1000 * 60 * 60 * 24 * 7;
+    const map = new Map<
+      string,
+      {
+        liveCount: number;
+        upcomingCount: number;
+        weekCount: number;
+        nextSession: SchoolScheduleSession | null;
+      }
+    >();
+
+    teacherRoster.forEach((teacher) => {
+      map.set(teacher.email, {
+        liveCount: 0,
+        upcomingCount: 0,
+        weekCount: 0,
+        nextSession: null,
+      });
+    });
+
+    sessions.forEach((session) => {
+      const assignedEmail = normalizeScheduleCompareLabel(session.assignedTutorEmail);
+      if (!assignedEmail) {
+        return;
+      }
+
+      const insight = map.get(assignedEmail) || {
+        liveCount: 0,
+        upcomingCount: 0,
+        weekCount: 0,
+        nextSession: null,
+      };
+      const status = getSessionStatus(session, now);
+      const startMs = new Date(session.startAt).getTime();
+
+      if (status === 'live') {
+        insight.liveCount += 1;
+      }
+      if (status === 'upcoming') {
+        insight.upcomingCount += 1;
+        if (Number.isFinite(startMs) && startMs <= nextWeekMs) {
+          insight.weekCount += 1;
+        }
+        if (
+          !insight.nextSession ||
+          new Date(insight.nextSession.startAt).getTime() > startMs
+        ) {
+          insight.nextSession = session;
+        }
+      }
+
+      map.set(assignedEmail, insight);
+    });
+
+    return map;
+  }, [sessions, teacherRoster]);
+
+  const teacherRosterStats = useMemo(() => {
+    let activeCount = 0;
+    let acceptedCount = 0;
+    let liveCount = 0;
+    let weekLoadCount = 0;
+
+    teacherRoster.forEach((teacher) => {
+      if (teacher.isActive) {
+        activeCount += 1;
+      }
+      if (teacher.inviteStatus === 'accepted') {
+        acceptedCount += 1;
+      }
+      const insight = teacherInsights.get(teacher.email);
+      if (insight) {
+        if (insight.liveCount > 0) {
+          liveCount += 1;
+        }
+        if (insight.weekCount > 0) {
+          weekLoadCount += 1;
+        }
+      }
+    });
+
+    return {
+      total: teacherRoster.length,
+      activeCount,
+      acceptedCount,
+      liveCount,
+      weekLoadCount,
+    };
+  }, [teacherInsights, teacherRoster]);
+
+  const selectedAssignedTeacher = useMemo(() => {
+    const selectedEmail = normalizeScheduleCompareLabel(formState.assignedTutorEmail);
+    if (!selectedEmail) {
+      return null;
+    }
+    return (
+      teacherRoster.find((teacher) => normalizeScheduleCompareLabel(teacher.email) === selectedEmail) ||
+      null
+    );
+  }, [formState.assignedTutorEmail, teacherRoster]);
+
+  const selectedTeacherInsight = useMemo(() => {
+    if (!selectedAssignedTeacher) {
+      return null;
+    }
+    return teacherInsights.get(selectedAssignedTeacher.email) || null;
+  }, [selectedAssignedTeacher, teacherInsights]);
+
+  const scheduleConflictPreview = useMemo(() => {
+    const startAt = formState.startAt.trim();
+    const durationMinutes = Number(formState.durationMinutes);
+    const startDate = new Date(startAt);
+    if (!startAt || Number.isNaN(startDate.getTime()) || !Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+      return [];
+    }
+
+    const endMs = startDate.getTime() + durationMinutes * 60 * 1000;
+    const normalizedInstructor = normalizeScheduleCompareLabel(formState.instructor);
+    const normalizedAssignedTutorEmail = normalizeScheduleCompareLabel(formState.assignedTutorEmail);
+    const normalizedAudience = normalizeScheduleCompareLabel(
+      formState.audienceTag || [formState.department, formState.classGroup].filter(Boolean).join(' • ')
+    );
+
+    return sessions
+      .map((session) => {
+        const sessionStartMs = new Date(session.startAt).getTime();
+        const sessionEndMs = new Date(session.endAt).getTime();
+        if (
+          !Number.isFinite(sessionStartMs) ||
+          !Number.isFinite(sessionEndMs) ||
+          sessionStartMs >= endMs ||
+          sessionEndMs <= startDate.getTime()
+        ) {
+          return null;
+        }
+
+        const reasons: string[] = [];
+        if (
+          normalizedInstructor &&
+          normalizeScheduleCompareLabel(session.instructor) === normalizedInstructor
+        ) {
+          reasons.push('same instructor');
+        }
+        if (
+          normalizedAssignedTutorEmail &&
+          normalizeScheduleCompareLabel(session.assignedTutorEmail) === normalizedAssignedTutorEmail
+        ) {
+          reasons.push('same assigned teacher');
+        }
+        if (
+          normalizedAudience &&
+          normalizeScheduleCompareLabel(getSessionAudienceLabel(session)) === normalizedAudience
+        ) {
+          reasons.push('same class audience');
+        }
+
+        if (reasons.length === 0) {
+          return null;
+        }
+
+        return {
+          session,
+          reasons,
+        };
+      })
+      .filter(
+        (
+          item
+        ): item is {
+          session: SchoolScheduleSession;
+          reasons: string[];
+        } => Boolean(item)
+      )
+      .slice(0, 3);
+  }, [formState, sessions]);
+
+  const filteredInviteActivity = useMemo(() => {
+    return inviteActivity.filter((event) => {
+      if (inviteActivityFilter === 'accepted') {
+        return event.kind === 'teacher_access_accepted';
+      }
+      if (inviteActivityFilter === 'pending') {
+        return event.kind === 'teacher_invite' || event.kind === 'class_assignment';
+      }
+      return true;
+    });
+  }, [inviteActivity, inviteActivityFilter]);
+
+  const acceptedInviteBySessionId = useMemo(() => {
+    const map = new Map<string, SchoolScheduleNotification>();
+    inviteActivity
+      .filter((event) => event.kind === 'teacher_access_accepted')
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .forEach((event) => {
+        if (!map.has(event.sessionId)) {
+          map.set(event.sessionId, event);
+        }
+      });
+    return map;
+  }, [inviteActivity]);
+
   const weekDays = useMemo(() => {
     return Array.from({ length: 7 }).map((_, index) => {
       const date = addDays(weekStartDate, index);
@@ -325,14 +879,45 @@ const SchoolSchedule = () => {
       title: '',
       subject: '',
       instructor: '',
+      assignedTutorEmail: '',
+      assignedTutorName: '',
+      department: '',
+      classGroup: '',
+      audienceTag: '',
       startAt: '',
       durationMinutes: '60',
       expectedStudents: '',
       notes: '',
     });
+    setEditingSessionId(null);
   };
 
-  const handleCreateSession = async () => {
+  const resetTeacherForm = () => {
+    setTeacherForm({
+      name: '',
+      email: '',
+      department: '',
+      classGroup: '',
+      subjectFocus: '',
+    });
+    setEditingTeacherId(null);
+  };
+
+  const copyTextToClipboard = async (value: string) => {
+    const normalized = String(value || '').trim();
+    if (!normalized) {
+      return false;
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(normalized);
+      return true;
+    }
+
+    return false;
+  };
+
+  const handleSaveSession = async () => {
     if (activeActionId) {
       return;
     }
@@ -360,9 +945,9 @@ const SchoolSchedule = () => {
       return;
     }
 
-    setActiveActionId('create-session');
+    setActiveActionId('save-session');
     try {
-      const payload = await createSchoolScheduleSession({
+      const sessionInput = {
         title,
         subject,
         instructor,
@@ -373,28 +958,413 @@ const SchoolSchedule = () => {
             ? Math.round(expectedStudents)
             : 0,
         notes: formState.notes.trim() || undefined,
-      });
+        assignedTutorEmail: formState.assignedTutorEmail.trim() || undefined,
+        assignedTutorName: formState.assignedTutorName.trim() || undefined,
+        department: formState.department.trim() || undefined,
+        classGroup: formState.classGroup.trim() || undefined,
+        audienceTag: formState.audienceTag.trim() || undefined,
+      };
 
-      if (payload?.session) {
-        setSessions((current) =>
-          [payload.session, ...current].sort(
-            (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime()
-          )
-        );
+      if (editingSessionId) {
+        const payload = await updateSchoolScheduleSession(editingSessionId, {
+          ...sessionInput,
+          notes: formState.notes.trim() || null,
+          assignedTutorEmail: formState.assignedTutorEmail.trim() || null,
+          assignedTutorName: formState.assignedTutorName.trim() || null,
+          department: formState.department.trim() || null,
+          classGroup: formState.classGroup.trim() || null,
+          audienceTag: formState.audienceTag.trim() || null,
+        });
+
+        if (payload?.session) {
+          setSessions((current) =>
+            current
+              .map((session) => (session.id === payload.session.id ? payload.session : session))
+              .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
+          );
+          setHighlightedSessionId(payload.session.id);
+        } else {
+          await refreshSessions();
+        }
+
+        resetForm();
+        setIsCreateOpen(false);
+        setNotice(payload.message || 'Class updated successfully.');
+        void refreshInviteActivity();
       } else {
-        await refreshSessions();
-      }
+        const payload = await createSchoolScheduleSession(sessionInput);
 
-      resetForm();
-      setIsCreateOpen(false);
-      setNotice(payload?.message || 'Class added to your schedule successfully.');
+        if (payload?.session) {
+          setSessions((current) =>
+            [payload.session, ...current].sort(
+              (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime()
+            )
+          );
+        } else {
+          await refreshSessions();
+        }
+
+        resetForm();
+        setIsCreateOpen(false);
+        const teacherAccessLines = [
+          payload?.session?.id ? `Session ID: ${payload.session.id}` : '',
+          payload?.session?.tutorJoinLink ? `Teacher link: ${payload.session.tutorJoinLink}` : '',
+          payload?.session?.tutorAccessCode ? `Teacher code: ${payload.session.tutorAccessCode}` : '',
+        ].filter(Boolean);
+        if (teacherAccessLines.length > 0) {
+          const copied = await copyTextToClipboard(teacherAccessLines.join('\n'));
+          if (copied) {
+            setNotice(
+              'Class scheduled. Teacher link + access code copied. Share it with the assigned teacher.'
+            );
+            void refreshInviteActivity();
+            return;
+          }
+        }
+        const inviteChannelLabel =
+          payload?.classInvite?.channel === 'both'
+            ? 'In-app + Email'
+            : payload?.classInvite?.channel === 'in_app'
+              ? 'In-app'
+              : payload?.classInvite?.channel === 'email'
+                ? 'Email'
+                : '';
+        const inviteSummary = payload?.classInvite
+          ? ` Invite channel: ${inviteChannelLabel || 'N/A'}. ${payload.classInvite.note || ''}`.trim()
+          : '';
+        setNotice(
+          `${payload?.message || 'Class added to your schedule successfully.'}${inviteSummary}`
+        );
+        void refreshInviteActivity();
+      }
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Could not create this class schedule right now.';
+        error instanceof Error
+          ? error.message
+          : editingSessionId
+            ? 'Could not update this class schedule right now.'
+            : 'Could not create this class schedule right now.';
       setNotice(message);
     } finally {
       setActiveActionId(null);
     }
+  };
+
+  const handleStartAtYearChange = (yearText: string) => {
+    const selectedYear = Number.parseInt(yearText, 10);
+    if (!Number.isFinite(selectedYear)) {
+      return;
+    }
+
+    setFormState((prev) => {
+      if (!prev.startAt) {
+        const now = new Date();
+        now.setFullYear(selectedYear);
+        const isoValue = new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
+          .toISOString()
+          .slice(0, 16);
+        return { ...prev, startAt: isoValue };
+      }
+
+      const parsed = new Date(prev.startAt);
+      if (Number.isNaN(parsed.getTime())) {
+        return prev;
+      }
+
+      parsed.setFullYear(selectedYear);
+      const normalized = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60_000)
+        .toISOString()
+        .slice(0, 16);
+      return { ...prev, startAt: normalized };
+    });
+  };
+
+  const handleStartAtMonthChange = (monthText: string) => {
+    const selectedMonth = Number.parseInt(monthText, 10);
+    if (!Number.isFinite(selectedMonth) || selectedMonth < 1 || selectedMonth > 12) {
+      return;
+    }
+
+    setFormState((prev) => {
+      if (!prev.startAt) {
+        const now = new Date();
+        now.setMonth(selectedMonth - 1);
+        const isoValue = new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
+          .toISOString()
+          .slice(0, 16);
+        return { ...prev, startAt: isoValue };
+      }
+
+      const parsed = new Date(prev.startAt);
+      if (Number.isNaN(parsed.getTime())) {
+        return prev;
+      }
+
+      parsed.setMonth(selectedMonth - 1);
+      const normalized = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60_000)
+        .toISOString()
+        .slice(0, 16);
+      return { ...prev, startAt: normalized };
+    });
+  };
+
+  const handleCreateTeacher = async () => {
+    if (isTeacherSubmitting) {
+      return;
+    }
+
+    const name = teacherForm.name.trim();
+    const email = teacherForm.email.trim().toLowerCase();
+
+    if (!name || !email || !email.includes('@')) {
+      setTeacherNotice('Please enter a teacher name and email address.');
+      return;
+    }
+
+    setIsTeacherSubmitting(true);
+    try {
+      if (editingTeacherId) {
+        const payload = await updateSchoolTeacher(editingTeacherId, {
+          name,
+          email,
+          department: teacherForm.department.trim() || null,
+          classGroup: teacherForm.classGroup.trim() || null,
+          subjectFocus: teacherForm.subjectFocus.trim() || null,
+        });
+        setTeacherRoster(payload.teachers || []);
+        resetTeacherForm();
+        setTeacherNotice(payload.message || 'Teacher profile updated.');
+      } else {
+        const payload = await createSchoolTeacher({
+          name,
+          email,
+          department: teacherForm.department.trim() || undefined,
+          classGroup: teacherForm.classGroup.trim() || undefined,
+          subjectFocus: teacherForm.subjectFocus.trim() || undefined,
+          isActive: true,
+        });
+        setTeacherRoster(payload.teachers || []);
+        resetTeacherForm();
+        setTeacherNotice([payload.message, payload.invite?.note].filter(Boolean).join(' '));
+      }
+      void refreshInviteActivity();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : editingTeacherId
+            ? 'Could not update this teacher right now.'
+            : 'Could not add this teacher right now.';
+      setTeacherNotice(message);
+    } finally {
+      setIsTeacherSubmitting(false);
+    }
+  };
+
+  const handleEditTeacher = (teacher: SchoolTeacherRosterItem) => {
+    setEditingTeacherId(teacher.id);
+    setTeacherForm({
+      name: teacher.name,
+      email: teacher.email,
+      department: teacher.department || '',
+      classGroup: teacher.classGroup || '',
+      subjectFocus: teacher.subjectFocus || '',
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleToggleTeacher = async (teacher: SchoolTeacherRosterItem) => {
+    if (activeTeacherActionId) {
+      return;
+    }
+
+    setActiveTeacherActionId(`toggle-${teacher.id}`);
+    try {
+      const payload = await updateSchoolTeacher(teacher.id, {
+        isActive: !teacher.isActive,
+      });
+      setTeacherRoster(payload.teachers || []);
+      setTeacherNotice(
+        teacher.isActive ? 'Teacher set to inactive.' : 'Teacher reactivated.'
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not update teacher status.';
+      setTeacherNotice(message);
+    } finally {
+      setActiveTeacherActionId(null);
+    }
+  };
+
+  const handleRemoveTeacher = async (teacher: SchoolTeacherRosterItem) => {
+    if (activeTeacherActionId) {
+      return;
+    }
+
+    setActiveTeacherActionId(`remove-${teacher.id}`);
+    try {
+      const payload = await deleteSchoolTeacher(teacher.id);
+      setTeacherRoster(payload.teachers || []);
+      setTeacherNotice(payload.message || 'Teacher removed from roster.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not remove this teacher right now.';
+      setTeacherNotice(message);
+    } finally {
+      setActiveTeacherActionId(null);
+    }
+  };
+
+  const handleResendTeacherInvite = async (teacher: SchoolTeacherRosterItem) => {
+    if (activeTeacherActionId) {
+      return;
+    }
+
+    if (!teacher.isActive) {
+      setTeacherNotice('Activate this teacher before resending invite.');
+      return;
+    }
+
+    setActiveTeacherActionId(`invite-${teacher.id}`);
+    try {
+      const payload = await resendSchoolTeacherInvite(teacher.id);
+      setTeacherRoster(payload.teachers || []);
+      setTeacherNotice([payload.message, payload.invite?.note].filter(Boolean).join(' '));
+      void refreshInviteActivity();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not resend invite right now.';
+      setTeacherNotice(message);
+    } finally {
+      setActiveTeacherActionId(null);
+    }
+  };
+
+  const handleResendPendingInvites = async () => {
+    if (activeTeacherActionId) {
+      return;
+    }
+
+    const pending = teacherRoster.filter(
+      (teacher) => teacher.isActive && teacher.inviteStatus === 'invited'
+    );
+    if (pending.length === 0) {
+      setTeacherNotice('No pending invited teachers to resend right now.');
+      return;
+    }
+
+    setActiveTeacherActionId('bulk-invite');
+    let successful = 0;
+    let failed = 0;
+
+    for (const teacher of pending) {
+      try {
+        const payload = await resendSchoolTeacherInvite(teacher.id);
+        setTeacherRoster(payload.teachers || []);
+        successful += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+
+    setActiveTeacherActionId(null);
+    if (failed > 0) {
+      setTeacherNotice(`Resent ${successful} invite(s), ${failed} failed. You can retry failed ones.`);
+      return;
+    }
+    setTeacherNotice(`Successfully resent ${successful} pending invite(s).`);
+  };
+
+  const handleExportInvitedTeachersCsv = () => {
+    const invitedTeachers = teacherRoster.filter(
+      (teacher) => teacher.isActive && teacher.inviteStatus === 'invited'
+    );
+    if (invitedTeachers.length === 0) {
+      setTeacherNotice('No invited teachers available to export.');
+      return;
+    }
+
+    const toCsvCell = (value: unknown) => {
+      const text = String(value ?? '').replace(/"/g, '""');
+      return `"${text}"`;
+    };
+
+    const headers = [
+      'Teacher Name',
+      'Teacher Email',
+      'Department',
+      'Class Group',
+      'Subject Focus',
+      'Invite Status',
+      'Invite Channel',
+      'Delivery Status',
+      'Invite Sent At',
+      'Accepted At',
+      'Delivery Note',
+    ];
+
+    const rows = invitedTeachers.map((teacher) => [
+      teacher.name,
+      teacher.email,
+      teacher.department || '',
+      teacher.classGroup || '',
+      teacher.subjectFocus || '',
+      teacher.inviteStatus,
+      teacher.lastInviteChannel || '',
+      teacher.lastInviteDeliveryStatus || '',
+      teacher.lastInviteSentAt || '',
+      teacher.acceptedAt || '',
+      teacher.lastInviteDeliveryNote || '',
+    ]);
+
+    const csvContent = [headers, ...rows]
+      .map((row) => row.map((cell) => toCsvCell(cell)).join(','))
+      .join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 10);
+    anchor.href = url;
+    anchor.download = `school-invited-teachers-${stamp}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    window.URL.revokeObjectURL(url);
+    setTeacherNotice(`Exported ${invitedTeachers.length} invited teacher(s) to CSV.`);
+  };
+
+  const handleAssignTeacherToClass = (teacher: SchoolTeacherRosterItem) => {
+    setFormState((prev) => ({
+      ...prev,
+      instructor: teacher.name || prev.instructor,
+      assignedTutorName: teacher.name || prev.assignedTutorName,
+      assignedTutorEmail: teacher.email || prev.assignedTutorEmail,
+      department: teacher.department || prev.department,
+      classGroup: teacher.classGroup || prev.classGroup,
+      audienceTag: prev.audienceTag,
+    }));
+    setEditingSessionId(null);
+    setIsCreateOpen(true);
+  };
+
+  const handleEditSession = (session: SchoolScheduleSession) => {
+    setEditingSessionId(session.id);
+    setFormState({
+      title: session.title || '',
+      subject: session.subject || '',
+      instructor: session.instructor || '',
+      assignedTutorEmail: session.assignedTutorEmail || '',
+      assignedTutorName: session.assignedTutorName || '',
+      department: session.department || '',
+      classGroup: session.classGroup || '',
+      audienceTag: session.audienceTag || '',
+      startAt: formatDateTimeInputValue(session.startAt),
+      durationMinutes: String(session.durationMinutes || 60),
+      expectedStudents: String(session.expectedStudents ?? ''),
+      notes: session.notes || '',
+    });
+    setIsCreateOpen(true);
   };
 
   const handleDeleteSession = async (sessionId: string) => {
@@ -410,6 +1380,72 @@ const SchoolSchedule = () => {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Could not remove this class schedule right now.';
+      setNotice(message);
+    } finally {
+      setActiveActionId(null);
+    }
+  };
+
+  const handleCopyTeacherAccess = async (sessionId: string) => {
+    if (activeActionId) {
+      return;
+    }
+
+    setActiveActionId(`teacher-access-${sessionId}`);
+    try {
+      const payload = await fetchSchoolScheduleTeacherAccess(sessionId);
+      const lines = [
+        payload.sessionId ? `Session ID: ${payload.sessionId}` : '',
+        payload.tutorJoinLink ? `Teacher link: ${payload.tutorJoinLink}` : '',
+        payload.tutorAccessCode ? `Teacher code: ${payload.tutorAccessCode}` : '',
+      ].filter(Boolean);
+
+      if (lines.length === 0) {
+        setNotice('Teacher access has not been generated for this class yet.');
+        return;
+      }
+
+      const copied = await copyTextToClipboard(lines.join('\n'));
+      if (!copied) {
+        setNotice('Clipboard is unavailable right now. Please copy manually from the class details.');
+        return;
+      }
+
+      setNotice('Teacher link and code copied. Share this with the assigned teacher.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not load teacher access details right now.';
+      setNotice(message);
+    } finally {
+      setActiveActionId(null);
+    }
+  };
+
+  const handleRegenerateTeacherAccess = async (sessionId: string) => {
+    if (activeActionId) {
+      return;
+    }
+
+    setActiveActionId(`teacher-access-regenerate-${sessionId}`);
+    try {
+      const payload = await regenerateSchoolScheduleTeacherAccess(sessionId);
+      const lines = [
+        payload.tutorJoinLink ? `Teacher link: ${payload.tutorJoinLink}` : '',
+        payload.tutorAccessCode ? `Teacher code: ${payload.tutorAccessCode}` : '',
+      ].filter(Boolean);
+      if (lines.length > 0) {
+        await copyTextToClipboard(lines.join('\n'));
+      }
+      setNotice(
+        payload.message ||
+          'Teacher access has been refreshed. Share the latest link and code with your teacher.'
+      );
+      await refreshSessions();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Could not regenerate teacher access right now.';
       setNotice(message);
     } finally {
       setActiveActionId(null);
@@ -435,6 +1471,149 @@ const SchoolSchedule = () => {
     });
   };
 
+  const handleShareTeacherAccess = async (session: SchoolScheduleSession) => {
+    if (activeActionId) {
+      return;
+    }
+
+    setActiveActionId(`teacher-share-${session.id}`);
+    try {
+      let joinLink = session.tutorJoinLink || '';
+      let accessCode = session.tutorAccessCode || '';
+
+      if (!joinLink || !accessCode) {
+        const payload = await fetchSchoolScheduleTeacherAccess(session.id);
+        joinLink = payload.tutorJoinLink || joinLink;
+        accessCode = payload.tutorAccessCode || accessCode;
+      }
+
+      const messageLines = [
+        `Class: ${session.title}`,
+        `Subject: ${session.subject}`,
+        `Session ID: ${session.id}`,
+        joinLink ? `Teacher link: ${joinLink}` : '',
+        accessCode ? `Teacher access code: ${accessCode}` : '',
+      ].filter(Boolean);
+
+      const message = messageLines.join('\n');
+      if (typeof navigator !== 'undefined' && navigator.share) {
+        await navigator.share({ text: message });
+        return;
+      }
+
+      const copied = await copyTextToClipboard(message);
+      if (copied) {
+        setNotice('Share message copied. Paste into any app to send.');
+      } else {
+        setNotice('Share is unavailable. Please copy the details manually.');
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not prepare share message right now.';
+      setNotice(message);
+    } finally {
+      setActiveActionId(null);
+    }
+  };
+
+  const loadAttendance = useCallback(async (session: SchoolScheduleSession) => {
+    setAttendanceTargetSession(session);
+    setIsAttendanceLoading(true);
+    setAttendancePayload(null);
+    try {
+      const payload = await fetchSchoolScheduleAttendance(session.id);
+      setAttendancePayload(payload);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not load attendance for this class right now.';
+      setNotice(message);
+    } finally {
+      setIsAttendanceLoading(false);
+    }
+  }, []);
+
+  const handleManualAttendanceSubmit = async () => {
+    if (!attendanceTargetSession || attendanceBusyId) {
+      return;
+    }
+
+    const participantName = attendanceForm.participantName.trim();
+    if (!participantName) {
+      setNotice('Enter the student name before saving attendance.');
+      return;
+    }
+
+    setAttendanceBusyId('manual');
+    try {
+      const payload = await upsertSchoolScheduleAttendance(attendanceTargetSession.id, {
+        participantName,
+        participantId: attendanceForm.participantId.trim() || undefined,
+        status: attendanceForm.status,
+        note: attendanceForm.note.trim() || undefined,
+      });
+      setAttendancePayload(payload.attendance);
+      setAttendanceForm({
+        participantName: '',
+        participantId: '',
+        status: 'absent',
+        note: '',
+      });
+      setNotice(payload.message);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not save this attendance update right now.';
+      setNotice(message);
+    } finally {
+      setAttendanceBusyId(null);
+    }
+  };
+
+  const handleAttendanceStatusUpdate = async (
+    record: SchoolScheduleAttendanceRecord,
+    status: 'present' | 'absent'
+  ) => {
+    if (!attendanceTargetSession || attendanceBusyId) {
+      return;
+    }
+
+    setAttendanceBusyId(record.id);
+    try {
+      const payload = await updateSchoolScheduleAttendance(attendanceTargetSession.id, record.id, {
+        status,
+        note: record.note || undefined,
+      });
+      setAttendancePayload(payload.attendance);
+      setNotice(payload.message);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not update this attendance record.';
+      setNotice(message);
+    } finally {
+      setAttendanceBusyId(null);
+    }
+  };
+
+  const closeAttendanceModal = () => {
+    setAttendanceTargetSession(null);
+    setAttendancePayload(null);
+    setAttendanceBusyId(null);
+    setAttendanceForm({
+      participantName: '',
+      participantId: '',
+      status: 'absent',
+      note: '',
+    });
+  };
+
+  const jumpToSessionFromActivity = (sessionId: string) => {
+    setViewMode('list');
+    setHighlightedSessionId(sessionId);
+    window.setTimeout(() => {
+      const target = sessionCardRefs.current[sessionId];
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
+  };
+
   const shiftWeek = (direction: -1 | 1) => {
     setWeekStartDate((current) => addDays(current, direction * 7));
   };
@@ -456,13 +1635,16 @@ const SchoolSchedule = () => {
               <div>
                 <h1 className="text-2xl font-bold text-[#3D08BA]">Class Schedule Workspace</h1>
                 <p className="mt-1 text-sm text-gray-600">
-                  Plan live and offline classes with clear timing and tutor ownership.
+                  Plan live and offline classes with clear timing and teacher ownership.
                 </p>
               </div>
             </div>
 
             <button
-              onClick={() => setIsCreateOpen(true)}
+              onClick={() => {
+                resetForm();
+                setIsCreateOpen(true);
+              }}
               className="inline-flex items-center gap-2 rounded-lg bg-[#3D08BA] px-3 py-2 text-sm font-semibold text-white hover:bg-[#2D0690]"
             >
               <FaPlus size={12} />
@@ -506,7 +1688,7 @@ const SchoolSchedule = () => {
               <input
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search by class, subject, tutor, or room code..."
+                placeholder="Search by class, subject, teacher, or room code..."
                 className="w-full rounded-lg border border-gray-300 py-2.5 pl-10 pr-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
               />
               <FaSearch className="absolute left-3 top-3.5 text-gray-400" size={13} />
@@ -582,6 +1764,371 @@ const SchoolSchedule = () => {
           </div>
         </section>
 
+        <section className="mt-5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">Teacher roster</h2>
+              <p className="mt-1 text-xs text-gray-600">
+                Keep a trusted list of teachers to assign quickly when scheduling classes.
+              </p>
+              <p className="mt-1 text-[11px] text-gray-500">
+                This roster is for your internal school teachers. Need external teachers? Use Tutor Directory.
+              </p>
+            </div>
+            <div className="min-w-[220px]">
+              <input
+                value={teacherSearch}
+                onChange={(event) => setTeacherSearch(event.target.value)}
+                placeholder="Search teachers..."
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-semibold text-gray-500">Status:</label>
+              <select
+                value={teacherInviteFilter}
+                onChange={(event) =>
+                  setTeacherInviteFilter(
+                    event.target.value as 'all' | 'invited' | 'accepted' | 'inactive'
+                  )
+                }
+                className="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs text-gray-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+              >
+                <option value="all">All</option>
+                <option value="invited">Invited</option>
+                <option value="accepted">Accepted</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+            <button
+              onClick={() => void handleResendPendingInvites()}
+              disabled={Boolean(activeTeacherActionId)}
+              className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {activeTeacherActionId === 'bulk-invite' ? 'Resending...' : 'Resend pending invites'}
+            </button>
+            <button
+              onClick={handleExportInvitedTeachersCsv}
+              className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+            >
+              Export invited CSV
+            </button>
+          </div>
+
+          {teacherNotice && (
+            <div className="mt-3 rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs text-[#3D08BA]">
+              {teacherNotice}
+            </div>
+          )}
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">Total teachers</p>
+              <p className="mt-1 text-xl font-semibold text-gray-900">{teacherRosterStats.total}</p>
+            </div>
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Active</p>
+              <p className="mt-1 text-xl font-semibold text-emerald-700">{teacherRosterStats.activeCount}</p>
+            </div>
+            <div className="rounded-xl border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]">Accepted</p>
+              <p className="mt-1 text-xl font-semibold text-[#3D08BA]">{teacherRosterStats.acceptedCount}</p>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">Busy this week</p>
+              <p className="mt-1 text-xl font-semibold text-amber-700">{teacherRosterStats.weekLoadCount}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-[1.1fr_1.1fr_1.8fr]">
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs font-semibold text-gray-700">
+                {editingTeacherId ? 'Edit teacher profile' : 'Add teacher'}
+              </p>
+              <p className="mt-1 text-[11px] text-gray-500">
+                {editingTeacherId
+                  ? 'Update the teacher profile, class ownership, and subject coverage without removing the teacher from your roster.'
+                  : 'Add the same email the teacher uses to sign in. They will access classes via generated teacher link + code.'}
+              </p>
+              <div className="mt-3 space-y-2">
+                <input
+                  value={teacherForm.name}
+                  onChange={(event) => setTeacherForm((prev) => ({ ...prev, name: event.target.value }))}
+                  placeholder="Full name"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                />
+                <input
+                  value={teacherForm.email}
+                  onChange={(event) => setTeacherForm((prev) => ({ ...prev, email: event.target.value }))}
+                  placeholder="Email"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                />
+                <input
+                  value={teacherForm.department}
+                  onChange={(event) => setTeacherForm((prev) => ({ ...prev, department: event.target.value }))}
+                  placeholder="Department (optional)"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                />
+                <input
+                  value={teacherForm.classGroup}
+                  onChange={(event) => setTeacherForm((prev) => ({ ...prev, classGroup: event.target.value }))}
+                  placeholder="Class group (optional)"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                />
+                <input
+                  value={teacherForm.subjectFocus}
+                  onChange={(event) => setTeacherForm((prev) => ({ ...prev, subjectFocus: event.target.value }))}
+                  placeholder="Subject focus (optional)"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                />
+              </div>
+              <button
+                onClick={handleCreateTeacher}
+                disabled={isTeacherSubmitting}
+                className="mt-3 w-full rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2D0690] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isTeacherSubmitting
+                  ? 'Saving...'
+                  : editingTeacherId
+                    ? 'Save teacher changes'
+                    : 'Add teacher'}
+              </button>
+              {editingTeacherId && (
+                <button
+                  onClick={resetTeacherForm}
+                  className="mt-2 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel edit
+                </button>
+              )}
+              <button
+                onClick={() => navigate('/tutor-list-school')}
+                className="mt-2 w-full rounded-lg border border-[#3D08BA]/20 bg-white px-3 py-2 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5"
+              >
+                Need to hire? Browse tutor directory
+              </button>
+            </div>
+
+            <div className="rounded-xl border border-gray-200 bg-white p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-gray-700">Invite activity</p>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setInviteActivityFilter('all')}
+                    className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${
+                      inviteActivityFilter === 'all'
+                        ? 'border-[#3D08BA]/30 bg-[#3D08BA]/10 text-[#3D08BA]'
+                        : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    All
+                  </button>
+                  <button
+                    onClick={() => setInviteActivityFilter('accepted')}
+                    className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${
+                      inviteActivityFilter === 'accepted'
+                        ? 'border-emerald-300 bg-emerald-100 text-emerald-700'
+                        : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    Accepted
+                  </button>
+                  <button
+                    onClick={() => setInviteActivityFilter('pending')}
+                    className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${
+                      inviteActivityFilter === 'pending'
+                        ? 'border-amber-300 bg-amber-100 text-amber-700'
+                        : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    Pending
+                  </button>
+                  <button
+                    onClick={() => void refreshInviteActivity()}
+                    className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                  >
+                    Refresh
+                  </button>
+                </div>
+              </div>
+
+              {isInviteActivityLoading && (
+                <p className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-2 py-2 text-[11px] text-gray-500">
+                  Loading invite activity...
+                </p>
+              )}
+
+              {!isInviteActivityLoading && filteredInviteActivity.length === 0 && (
+                <p className="mt-2 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-2 py-4 text-center text-[11px] text-gray-500">
+                  No invite activity for this filter yet.
+                </p>
+              )}
+
+              <div className="mt-2 space-y-2">
+                {filteredInviteActivity.map((event) => (
+                  <div
+                    key={event.id}
+                    className={`rounded-lg border px-2.5 py-2 ${
+                      event.kind === 'teacher_access_accepted'
+                        ? 'border-emerald-200 bg-emerald-50'
+                        : 'border-gray-200 bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        {event.kind === 'teacher_access_accepted' && (
+                          <FaCheckCircle className="text-[11px] text-emerald-600" />
+                        )}
+                        <p className="text-[11px] font-semibold text-gray-800">{event.title}</p>
+                      </div>
+                      <span className="text-[10px] text-gray-500">{event.createdAtLabel}</span>
+                    </div>
+                    <div className="mt-1">
+                      <span
+                        className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${inviteActivityTypeClass(
+                          event.kind
+                        )}`}
+                      >
+                        {inviteActivityTypeLabel(event.kind)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-gray-600">{event.message}</p>
+                    <button
+                      onClick={() => jumpToSessionFromActivity(event.sessionId)}
+                      className="mt-1.5 rounded-md border border-gray-200 bg-white px-2 py-1 text-[10px] font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                      Open class
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-gray-200 bg-white p-3">
+              {isTeacherLoading && (
+                <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                  Loading teacher roster...
+                </p>
+              )}
+
+              {!isTeacherLoading && filteredTeachers.length === 0 && (
+                <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-6 text-center text-xs text-gray-500">
+                  No teachers match this search yet.
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {filteredTeachers.map((teacher) => (
+                  <div
+                    key={teacher.id}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3"
+                  >
+                    <div className="min-w-[240px]">
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-semibold text-gray-900">{teacher.name}</p>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${teacherInviteStatusClass(
+                            teacher
+                          )}`}
+                        >
+                          {teacherInviteStatusLabel(teacher)}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-gray-600">{teacher.email}</p>
+                      <p className="text-[11px] text-gray-500">
+                        {[teacher.department, teacher.classGroup, teacher.subjectFocus]
+                          .filter(Boolean)
+                          .join(' • ') || 'No tags yet'}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-semibold">
+                        <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-600">
+                          Live now: {teacherInsights.get(teacher.email)?.liveCount || 0}
+                        </span>
+                        <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-600">
+                          Upcoming: {teacherInsights.get(teacher.email)?.upcomingCount || 0}
+                        </span>
+                        <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-600">
+                          This week: {teacherInsights.get(teacher.email)?.weekCount || 0}
+                        </span>
+                      </div>
+                      {teacherInsights.get(teacher.email)?.nextSession && (
+                        <p className="mt-2 text-[10px] text-gray-500">
+                          Next class:{' '}
+                          {teacherInsights.get(teacher.email)?.nextSession?.title} •{' '}
+                          {formatDateTime(teacherInsights.get(teacher.email)?.nextSession?.startAt || '')}
+                        </p>
+                      )}
+                      {teacher.lastInviteSentAt && (
+                        <p className="text-[10px] text-gray-500">
+                          Invite sent: {new Date(teacher.lastInviteSentAt).toLocaleString()}
+                        </p>
+                      )}
+                      {teacher.lastInviteChannel && (
+                        <p className="text-[10px] text-gray-500">
+                          Channel:{' '}
+                          {teacher.lastInviteChannel === 'in_app'
+                            ? 'In-app'
+                            : teacher.lastInviteChannel === 'email'
+                              ? 'Email'
+                              : 'In-app + Email'}
+                        </p>
+                      )}
+                      {teacher.lastInviteDeliveryNote && (
+                        <p className="text-[10px] text-gray-500">{teacher.lastInviteDeliveryNote}</p>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => handleEditTeacher(teacher)}
+                        disabled={Boolean(activeTeacherActionId)}
+                        className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          <FaEdit size={10} />
+                          Edit
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => handleAssignTeacherToClass(teacher)}
+                        className="rounded-lg border border-[#3D08BA]/20 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10"
+                      >
+                        Assign to class
+                      </button>
+                      <button
+                        onClick={() => handleResendTeacherInvite(teacher)}
+                        disabled={Boolean(activeTeacherActionId) || !teacher.isActive}
+                        className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {activeTeacherActionId === `invite-${teacher.id}`
+                          ? 'Sending...'
+                          : 'Resend invite'}
+                      </button>
+                      <button
+                        onClick={() => handleToggleTeacher(teacher)}
+                        disabled={Boolean(activeTeacherActionId)}
+                        className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {activeTeacherActionId === `toggle-${teacher.id}`
+                          ? 'Updating...'
+                          : teacher.isActive
+                            ? 'Set inactive'
+                            : 'Activate'}
+                      </button>
+                      <button
+                        onClick={() => handleRemoveTeacher(teacher)}
+                        disabled={Boolean(activeTeacherActionId)}
+                        className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {activeTeacherActionId === `remove-${teacher.id}` ? 'Removing...' : 'Remove'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section className="mt-5">
           {viewMode === 'list' ? (
             <div className="space-y-3">
@@ -601,20 +2148,81 @@ const SchoolSchedule = () => {
 
               {filteredSessions.map((session) => {
                 const status = getSessionStatus(session, Date.now());
+                const acceptedEvent = acceptedInviteBySessionId.get(session.id);
                 return (
-                  <article key={session.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <article
+                    key={session.id}
+                    ref={(element) => {
+                      sessionCardRefs.current[session.id] = element;
+                    }}
+                    className={`rounded-xl border bg-white p-4 shadow-sm transition-colors ${
+                      highlightedSessionId === session.id
+                        ? 'border-emerald-300 ring-2 ring-emerald-200'
+                        : 'border-gray-200'
+                    }`}
+                  >
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-[220px]">
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-sm font-semibold text-gray-900">{session.title}</h3>
-                          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusPillClass(status)}`}>
-                            {statusLabel(status)}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-xs text-gray-600">
-                          {session.subject} • {session.instructor}
-                        </p>
-                        <p className="mt-1 text-xs text-gray-500">Room: {session.roomCode}</p>
+                  <div className="min-w-[220px]">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-semibold text-gray-900">{session.title}</h3>
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusPillClass(status)}`}>
+                        {statusLabel(status)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-gray-600">
+                      {session.subject} • {session.instructor}
+                    </p>
+                    <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-gray-700">
+                      Session ID: {session.id}
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const copied = await copyTextToClipboard(session.id);
+                          setNotice(copied ? 'Session ID copied.' : 'Clipboard is unavailable right now.');
+                        }}
+                        className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-500 hover:bg-gray-50"
+                        aria-label="Copy session ID"
+                        title="Copy session ID"
+                      >
+                        <FaCopy size={10} />
+                      </button>
+                    </p>
+                    <p className="mt-1 text-xs text-gray-500">Room: {session.roomCode}</p>
+                    {session.assignedTutorEmail && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        Assigned teacher: {session.assignedTutorName || 'Teacher'} ({session.assignedTutorEmail})
+                      </p>
+                    )}
+                    {session.tutorAccessCode && (
+                      <p className="mt-1 flex items-center gap-1 text-xs text-gray-500">
+                        Teacher access code:{' '}
+                        <span className="font-semibold tracking-widest">{session.tutorAccessCode}</span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const copied = await copyTextToClipboard(session.tutorAccessCode || '');
+                            setNotice(copied ? 'Teacher access code copied.' : 'Clipboard is unavailable right now.');
+                          }}
+                          className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-500 hover:bg-gray-50"
+                          aria-label="Copy teacher access code"
+                          title="Copy teacher access code"
+                        >
+                          <FaCopy size={10} />
+                        </button>
+                      </p>
+                    )}
+                    {(session.department || session.classGroup || session.audienceTag) && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        Audience:{' '}
+                        {session.audienceTag ||
+                          [session.department, session.classGroup].filter(Boolean).join(' • ')}
+                          </p>
+                        )}
+                        {acceptedEvent && (
+                          <p className="mt-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
+                            Accepted: {acceptedEvent.message}
+                          </p>
+                        )}
                         {session.notes && <p className="mt-2 text-xs text-gray-600">{session.notes}</p>}
                       </div>
 
@@ -640,19 +2248,68 @@ const SchoolSchedule = () => {
 
                     <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
                       <button
+                        onClick={() => handleEditSession(session)}
+                        disabled={Boolean(activeActionId)}
+                        className="group inline-flex h-9 w-9 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-sky-700 shadow-sm hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        aria-label="Edit class"
+                        title="Edit"
+                      >
+                        <FaEdit size={11} />
+                      </button>
+                      <button
+                        onClick={() => void loadAttendance(session)}
+                        className="group inline-flex h-9 w-9 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm hover:bg-emerald-100"
+                        aria-label="Open attendance"
+                        title="Attendance"
+                      >
+                        <FaUsers size={11} />
+                      </button>
+                      <button
+                        onClick={() => void handleCopyTeacherAccess(session.id)}
+                        disabled={Boolean(activeActionId)}
+                        className="group inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        aria-label="Copy teacher link and access code"
+                        title="Copy teacher link + code"
+                      >
+                        <FaCopy size={12} />
+                      </button>
+                      <button
+                        onClick={() => void handleRegenerateTeacherAccess(session.id)}
+                        disabled={Boolean(activeActionId)}
+                        className="group inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#3D08BA]/20 bg-[#3D08BA]/5 text-[#3D08BA] shadow-sm hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-60"
+                        aria-label="Regenerate teacher access"
+                        title="Regenerate access"
+                      >
+                        <FaSyncAlt size={12} />
+                      </button>
+                      <button
+                        onClick={() => void handleShareTeacherAccess(session)}
+                        disabled={Boolean(activeActionId)}
+                        className="group inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#3D08BA]/20 bg-[#3D08BA]/5 text-[#3D08BA] shadow-sm hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-60"
+                        aria-label="Share class access"
+                        title="Share"
+                      >
+                        <FaShareAlt size={12} />
+                      </button>
+                      <button
                         onClick={() => handleDeleteSession(session.id)}
                         disabled={Boolean(activeActionId)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
+                        className="group inline-flex h-9 w-9 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-700 shadow-sm hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        aria-label="Remove class"
+                        title="Remove"
                       >
                         <FaTrash size={10} />
-                        {activeActionId === `delete-${session.id}` ? 'Removing...' : 'Remove'}
                       </button>
                       <button
                         onClick={() => handleStartLiveClass(session)}
-                        className="inline-flex items-center gap-1 rounded-lg bg-[#3D08BA] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#2D0690]"
+                        className="group relative inline-flex h-9 w-9 items-center justify-center rounded-full bg-red-600 text-white shadow-sm hover:bg-red-700"
+                        aria-label={status === 'live' ? 'Rejoin live room' : 'Go live'}
+                        title={status === 'live' ? 'Rejoin live room' : 'Go live'}
                       >
-                        {status === 'live' ? <FaVideo size={11} /> : <FaPlay size={11} />}
-                        {status === 'live' ? 'Rejoin live room' : 'Go live'}
+                        <FaVideo size={11} />
+                        <span className="absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white shadow">
+                          <span className="h-2 w-2 rounded-full bg-red-600 animate-pulse" />
+                        </span>
                       </button>
                     </div>
                   </article>
@@ -748,9 +2405,12 @@ const SchoolSchedule = () => {
                               </p>
                               <button
                                 onClick={() => handleStartLiveClass(session)}
-                                className="mt-2 inline-flex items-center gap-1 rounded-md bg-[#3D08BA] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#2D0690]"
+                                className="mt-2 inline-flex items-center gap-2 rounded-md bg-[#3D08BA] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#2D0690]"
                               >
-                                <FaPlay size={9} />
+                                <span className="relative inline-flex">
+                                  <FaVideo size={9} />
+                                <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                                </span>
                                 Open class
                               </button>
                             </div>
@@ -767,19 +2427,29 @@ const SchoolSchedule = () => {
       </main>
 
       {isCreateOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6">
-          <div className="w-full max-w-xl rounded-2xl bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
-              <h2 className="text-base font-semibold text-gray-900">Add New Class to Schedule</h2>
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 px-4 py-6">
+          <div className="mx-auto flex min-h-full w-full max-w-3xl items-start justify-center">
+            <div className="my-auto w-full overflow-hidden rounded-2xl bg-white shadow-xl">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-5 py-4">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">
+                  {editingSessionId ? 'Edit Scheduled Class' : 'Add New Class to Schedule'}
+                </h2>
+                <p className="mt-1 text-xs text-gray-500">
+                  {editingSessionId
+                    ? 'Update teacher, timing, and class audience without removing the session.'
+                    : 'Set the teacher, audience, and time for the next class.'}
+                </p>
+              </div>
               <button
                 onClick={() => {
-                  if (activeActionId === 'create-session') {
+                  if (activeActionId === 'save-session') {
                     return;
                   }
                   setIsCreateOpen(false);
                   resetForm();
                 }}
-                disabled={activeActionId === 'create-session'}
+                disabled={activeActionId === 'save-session'}
                 className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label="Close modal"
               >
@@ -787,7 +2457,79 @@ const SchoolSchedule = () => {
               </button>
             </div>
 
+            <div className="max-h-[calc(100vh-10rem)] overflow-y-auto">
             <div className="grid gap-3 p-5 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-semibold text-gray-600">Assign from roster</label>
+                <select
+                  value={formState.assignedTutorEmail}
+                  onChange={(event) => {
+                    const selectedEmail = event.target.value;
+                    const selectedTeacher = teacherRoster.find(
+                      (teacher) => teacher.email === selectedEmail
+                    );
+                    if (!selectedTeacher) {
+                      setFormState((prev) => ({
+                        ...prev,
+                        assignedTutorEmail: '',
+                        assignedTutorName: '',
+                      }));
+                      return;
+                    }
+                    setFormState((prev) => ({
+                      ...prev,
+                      instructor: selectedTeacher.name || prev.instructor,
+                      assignedTutorEmail: selectedTeacher.email,
+                      assignedTutorName: selectedTeacher.name,
+                      department: selectedTeacher.department || prev.department,
+                      classGroup: selectedTeacher.classGroup || prev.classGroup,
+                    }));
+                  }}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs text-gray-600 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                >
+                  <option value="">Select a teacher (optional)</option>
+                  {teacherRoster
+                    .filter((teacher) => teacher.isActive)
+                    .map((teacher) => (
+                      <option key={teacher.id} value={teacher.email}>
+                        {teacher.name} • {teacher.email}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              {selectedAssignedTeacher && (
+                <div className="sm:col-span-2 rounded-xl border border-[#3D08BA]/15 bg-[#3D08BA]/5 p-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold text-[#3D08BA]">
+                        {selectedAssignedTeacher.name}
+                      </p>
+                      <p className="mt-1 text-[11px] text-gray-600">
+                        {[selectedAssignedTeacher.department, selectedAssignedTeacher.classGroup, selectedAssignedTeacher.subjectFocus]
+                          .filter(Boolean)
+                          .join(' • ') || 'No profile tags yet'}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-[10px] font-semibold">
+                      <span className="rounded-full border border-white/70 bg-white px-2 py-1 text-slate-600">
+                        Live: {selectedTeacherInsight?.liveCount || 0}
+                      </span>
+                      <span className="rounded-full border border-white/70 bg-white px-2 py-1 text-slate-600">
+                        Upcoming: {selectedTeacherInsight?.upcomingCount || 0}
+                      </span>
+                      <span className="rounded-full border border-white/70 bg-white px-2 py-1 text-slate-600">
+                        This week: {selectedTeacherInsight?.weekCount || 0}
+                      </span>
+                    </div>
+                  </div>
+                  {selectedTeacherInsight?.nextSession && (
+                    <p className="mt-2 text-[11px] text-gray-600">
+                      Next assigned class: {selectedTeacherInsight.nextSession.title} •{' '}
+                      {formatDateTime(selectedTeacherInsight.nextSession.startAt)}
+                    </p>
+                  )}
+                </div>
+              )}
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-semibold text-gray-600">Class title</label>
                 <input
@@ -809,23 +2551,125 @@ const SchoolSchedule = () => {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs font-semibold text-gray-600">Tutor / Instructor</label>
+                <label className="mb-1 block text-xs font-semibold text-gray-600">Lead teacher / Instructor</label>
                 <input
                   value={formState.instructor}
                   onChange={(event) => setFormState((prev) => ({ ...prev, instructor: event.target.value }))}
-                  placeholder="Tutor name"
+                  placeholder="Teacher name"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-gray-600">Assigned teacher email</label>
+                <input
+                  type="email"
+                  value={formState.assignedTutorEmail}
+                  onChange={(event) =>
+                    setFormState((prev) => ({ ...prev, assignedTutorEmail: event.target.value }))
+                  }
+                  placeholder="teacher@school.com"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                />
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Use the teacher&apos;s sign-in email. They can join even if their default account role is not tutor.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-gray-600">Assigned teacher name</label>
+                <input
+                  value={formState.assignedTutorName}
+                  onChange={(event) =>
+                    setFormState((prev) => ({ ...prev, assignedTutorName: event.target.value }))
+                  }
+                  placeholder="Optional"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-gray-600">Department</label>
+                <input
+                  value={formState.department}
+                  onChange={(event) =>
+                    setFormState((prev) => ({ ...prev, department: event.target.value }))
+                  }
+                  placeholder="e.g. Science"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-gray-600">Class group / Level</label>
+                <input
+                  value={formState.classGroup}
+                  onChange={(event) =>
+                    setFormState((prev) => ({ ...prev, classGroup: event.target.value }))
+                  }
+                  placeholder="e.g. SS2"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-semibold text-gray-600">Audience tag</label>
+                <input
+                  value={formState.audienceTag}
+                  onChange={(event) =>
+                    setFormState((prev) => ({ ...prev, audienceTag: event.target.value }))
+                  }
+                  placeholder="Optional override, e.g. SS2 Science"
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
                 />
               </div>
 
               <div>
                 <label className="mb-1 block text-xs font-semibold text-gray-600">Start date and time</label>
-                <input
-                  type="datetime-local"
-                  value={formState.startAt}
-                  onChange={(event) => setFormState((prev) => ({ ...prev, startAt: event.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
-                />
+                <div className="space-y-2">
+                  <input
+                    type="datetime-local"
+                    value={formState.startAt}
+                    onChange={(event) => setFormState((prev) => ({ ...prev, startAt: event.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                  />
+                  <div className="flex items-center gap-2">
+                    <label className="text-[11px] font-semibold text-gray-500">Jump year:</label>
+                    <select
+                      value={
+                        formState.startAt && Number.isFinite(new Date(formState.startAt).getTime())
+                          ? String(new Date(formState.startAt).getFullYear())
+                          : ''
+                      }
+                      onChange={(event) => handleStartAtYearChange(event.target.value)}
+                      className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                    >
+                      <option value="">Select year</option>
+                      {calendarYearOptions.map((year) => (
+                        <option key={year} value={year}>
+                          {year}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="text-[11px] font-semibold text-gray-500">Month:</label>
+                    <select
+                      value={
+                        formState.startAt && Number.isFinite(new Date(formState.startAt).getTime())
+                          ? String(new Date(formState.startAt).getMonth() + 1)
+                          : ''
+                      }
+                      onChange={(event) => handleStartAtMonthChange(event.target.value)}
+                      className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                    >
+                      <option value="">Select month</option>
+                      {monthOptions.map((month) => (
+                        <option key={month.value} value={month.value}>
+                          {month.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
               </div>
 
               <div>
@@ -857,34 +2701,393 @@ const SchoolSchedule = () => {
                 <textarea
                   value={formState.notes}
                   onChange={(event) => setFormState((prev) => ({ ...prev, notes: event.target.value }))}
-                  placeholder="Optional context for tutors and school admins."
+                  placeholder="Optional context for assigned teachers and school admins."
                   rows={3}
                   className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
                 />
               </div>
+              {scheduleConflictPreview.length > 0 && (
+                <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                  <p className="text-xs font-semibold text-amber-800">
+                    Potential clash detected
+                  </p>
+                  <p className="mt-1 text-[11px] text-amber-700">
+                    These overlaps are based on the schedule already loaded on this page. The backend will still do the final check.
+                  </p>
+                  <div className="mt-3 space-y-2">
+                    {scheduleConflictPreview.map(({ session, reasons }) => (
+                      <div
+                        key={session.id}
+                        className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-[11px] text-gray-700"
+                      >
+                        <p className="font-semibold text-gray-900">{session.title}</p>
+                        <p className="mt-1 text-gray-600">
+                          {formatDateTime(session.startAt)} • {reasons.join(' • ')}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 border-t border-gray-200 px-5 py-4">
+            <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t border-gray-200 bg-white px-5 py-4">
               <button
                 onClick={() => {
-                  if (activeActionId === 'create-session') {
+                  if (activeActionId === 'save-session') {
                     return;
                   }
                   setIsCreateOpen(false);
                   resetForm();
                 }}
-                disabled={activeActionId === 'create-session'}
+                disabled={activeActionId === 'save-session'}
                 className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Cancel
               </button>
               <button
-                onClick={handleCreateSession}
-                disabled={activeActionId === 'create-session'}
+                onClick={handleSaveSession}
+                disabled={activeActionId === 'save-session'}
                 className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2D0690] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {activeActionId === 'create-session' ? 'Saving...' : 'Save class'}
+                {activeActionId === 'save-session'
+                  ? editingSessionId
+                    ? 'Updating...'
+                    : 'Saving...'
+                  : editingSessionId
+                    ? 'Update class'
+                    : 'Save class'}
               </button>
+            </div>
+          </div>
+          </div>
+        </div>
+      )}
+
+      {attendanceTargetSession && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/55 px-4 py-6">
+          <div className="mx-auto flex min-h-full w-full max-w-5xl items-start justify-center">
+            <div className="my-auto flex w-full max-h-[92vh] flex-col overflow-hidden rounded-[28px] border border-white/60 bg-white shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b border-emerald-100 bg-linear-to-r from-emerald-50 via-white to-white px-6 py-5">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                    <FaUsers size={10} />
+                    Attendance
+                  </div>
+                  <h2 className="mt-3 text-xl font-semibold text-slate-900">
+                    {attendanceTargetSession.title}
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {attendanceTargetSession.subject} • {attendanceTargetSession.classGroup || 'All classes'} •{' '}
+                    {formatDateTime(attendanceTargetSession.startAt)}
+                  </p>
+                </div>
+                <button
+                  onClick={closeAttendanceModal}
+                  disabled={Boolean(attendanceBusyId)}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label="Close attendance"
+                  title="Close attendance"
+                >
+                  <FaTimes size={12} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto bg-slate-50/70 px-6 py-5">
+                {isAttendanceLoading && (
+                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-500 shadow-sm">
+                    Loading attendance...
+                  </div>
+                )}
+
+                {!isAttendanceLoading && attendancePayload && (
+                  <div className="space-y-5">
+                    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                          Expected
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold text-slate-900">
+                          {attendancePayload.summary.expectedStudents}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                          Present
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold text-emerald-700">
+                          {attendancePayload.summary.presentCount}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+                          Absent
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold text-amber-700">
+                          {attendancePayload.summary.absentCount}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-sky-200 bg-white p-4 shadow-sm">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-700">
+                          In class now
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold text-sky-700">
+                          {attendancePayload.summary.liveCount}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-[#3D08BA]/15 bg-white p-4 shadow-sm">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]">
+                          Coverage
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold text-[#3D08BA]">
+                          {attendancePayload.summary.attendanceRate}%
+                        </p>
+                      </div>
+                    </section>
+
+                    <section className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+                      <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-semibold text-slate-900">Mark attendance manually</h3>
+                            <p className="mt-1 text-xs leading-5 text-slate-500">
+                              Use this for late corrections, offline learners, or students the live room did not capture.
+                            </p>
+                          </div>
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                            Manual
+                          </span>
+                        </div>
+
+                        <div className="mt-4 space-y-3">
+                          <div>
+                            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                              Student name
+                            </label>
+                            <input
+                              value={attendanceForm.participantName}
+                              onChange={(event) =>
+                                setAttendanceForm((prev) => ({
+                                  ...prev,
+                                  participantName: event.target.value,
+                                }))
+                              }
+                              placeholder="Enter student name"
+                              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                              Student ID
+                            </label>
+                            <input
+                              value={attendanceForm.participantId}
+                              onChange={(event) =>
+                                setAttendanceForm((prev) => ({
+                                  ...prev,
+                                  participantId: event.target.value,
+                                }))
+                              }
+                              placeholder="Optional admission number"
+                              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                              Status
+                            </label>
+                            <div className="grid grid-cols-2 gap-2">
+                              {(['present', 'absent'] as const).map((value) => (
+                                <button
+                                  key={value}
+                                  type="button"
+                                  onClick={() =>
+                                    setAttendanceForm((prev) => ({
+                                      ...prev,
+                                      status: value,
+                                    }))
+                                  }
+                                  className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                                    attendanceForm.status === value
+                                      ? value === 'present'
+                                        ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                                        : 'border-amber-300 bg-amber-50 text-amber-700'
+                                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  {value === 'present' ? 'Present' : 'Absent'}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div>
+                            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                              Note
+                            </label>
+                            <textarea
+                              value={attendanceForm.note}
+                              onChange={(event) =>
+                                setAttendanceForm((prev) => ({
+                                  ...prev,
+                                  note: event.target.value,
+                                }))
+                              }
+                              rows={4}
+                              placeholder="Optional note, e.g. Excused, joined from shared device."
+                              className="w-full resize-none rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => void handleManualAttendanceSubmit()}
+                          disabled={attendanceBusyId === 'manual'}
+                          className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-[#3D08BA] px-4 py-3 text-sm font-semibold text-white hover:bg-[#2D0690] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {attendanceBusyId === 'manual' ? 'Saving attendance...' : 'Save attendance'}
+                        </button>
+                      </div>
+
+                      <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-semibold text-slate-900">Attendance register</h3>
+                            <p className="mt-1 text-xs leading-5 text-slate-500">
+                              Live learners are captured automatically. You can still correct any record below.
+                            </p>
+                          </div>
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                            {attendancePayload.records.length} record
+                            {attendancePayload.records.length === 1 ? '' : 's'}
+                          </span>
+                        </div>
+
+                        {attendancePayload.records.length === 0 ? (
+                          <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                            No attendance record yet. Live join events or manual entries will appear here.
+                          </div>
+                        ) : (
+                          <div className="mt-4 space-y-3">
+                            {attendancePayload.records.map((record) => {
+                              const isUpdating = attendanceBusyId === record.id;
+                              const statusClass =
+                                record.status === 'present'
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                  : 'border-amber-200 bg-amber-50 text-amber-700';
+                              const sourceClass =
+                                record.source === 'live'
+                                  ? 'border-sky-200 bg-sky-50 text-sky-700'
+                                  : 'border-slate-200 bg-slate-50 text-slate-600';
+
+                              return (
+                                <div
+                                  key={record.id}
+                                  className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4"
+                                >
+                                  <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <p className="text-sm font-semibold text-slate-900">
+                                          {record.participantName}
+                                        </p>
+                                        <span
+                                          className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${statusClass}`}
+                                        >
+                                          {record.status}
+                                        </span>
+                                        <span
+                                          className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${sourceClass}`}
+                                        >
+                                          {record.source === 'live' ? 'Live capture' : 'Manual'}
+                                        </span>
+                                        {record.isLive && (
+                                          <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-red-700">
+                                            In class
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="mt-1 text-xs text-slate-500">
+                                        {record.participantId
+                                          ? `ID: ${record.participantId}`
+                                          : 'No student ID attached'}
+                                      </p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          void handleAttendanceStatusUpdate(record, 'present')
+                                        }
+                                        disabled={isUpdating || record.status === 'present'}
+                                        className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        Mark present
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleAttendanceStatusUpdate(record, 'absent')}
+                                        disabled={isUpdating || record.status === 'absent'}
+                                        className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        Mark absent
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                                    <div className="rounded-xl border border-white bg-white px-3 py-2">
+                                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                        Joined
+                                      </p>
+                                      <p className="mt-1 text-xs font-medium text-slate-700">
+                                        {formatAttendanceMoment(record.joinedAt)}
+                                      </p>
+                                    </div>
+                                    <div className="rounded-xl border border-white bg-white px-3 py-2">
+                                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                        Last seen
+                                      </p>
+                                      <p className="mt-1 text-xs font-medium text-slate-700">
+                                        {formatAttendanceMoment(record.lastSeenAt)}
+                                      </p>
+                                    </div>
+                                    <div className="rounded-xl border border-white bg-white px-3 py-2">
+                                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                        Left class
+                                      </p>
+                                      <p className="mt-1 text-xs font-medium text-slate-700">
+                                        {formatAttendanceMoment(record.leftAt)}
+                                      </p>
+                                    </div>
+                                    <div className="rounded-xl border border-white bg-white px-3 py-2">
+                                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                        Duration
+                                      </p>
+                                      <p className="mt-1 text-xs font-medium text-slate-700">
+                                        {record.durationMinutes !== null
+                                          ? `${record.durationMinutes} min`
+                                          : 'Not recorded'}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  {record.note && (
+                                    <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                                      {record.note}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

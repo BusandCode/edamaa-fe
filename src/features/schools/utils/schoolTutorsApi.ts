@@ -122,7 +122,7 @@ const requestWithAuth = async (endpoint: string, init?: RequestInit) => {
   const fallbackMessage =
     networkError?.message && networkError.message.trim() ? networkError.message : 'Failed to fetch';
   throw new Error(
-    `${fallbackMessage}. Could not reach backend API on ${bases.join(', ')}. Start the API with "bash scripts/api-up.sh", then retry.`
+    `${fallbackMessage}. Could not reach backend API on ${bases.join(', ')}. Start the API with "bash scripts/api-up.sh" or run backend/nestjs with "SKIP_PRISMA_CONNECT=1 npm run start", then retry.`
   );
 };
 
@@ -158,23 +158,33 @@ export const fetchSchoolTutorDirectory = async (search?: string): Promise<School
   const endpoint = normalizedSearch
     ? `/users/directory/tutors?search=${encodeURIComponent(normalizedSearch)}`
     : '/users/directory/tutors';
+  const query = normalizedSearch.toLowerCase();
+
+  const filteredFallbackTutors = fallbackTutors.filter((tutor) => {
+    if (!query) {
+      return true;
+    }
+    return tutor.name?.toLowerCase().includes(query) || tutor.email.toLowerCase().includes(query);
+  });
 
   try {
     const response = await requestWithAuth(endpoint, { method: 'GET' });
-    return (await response.json()) as SchoolTutorDirectoryResponse;
+    const payload = (await response.json()) as SchoolTutorDirectoryResponse;
+
+    if (import.meta.env.DEV && (!Array.isArray(payload.tutors) || payload.tutors.length === 0)) {
+      return {
+        tutors: filteredFallbackTutors,
+      };
+    }
+
+    return payload;
   } catch (error) {
     if (!import.meta.env.DEV) {
       throw error;
     }
 
-    const query = normalizedSearch.toLowerCase();
     return {
-      tutors: fallbackTutors.filter((tutor) => {
-        if (!query) {
-          return true;
-        }
-        return tutor.name?.toLowerCase().includes(query) || tutor.email.toLowerCase().includes(query);
-      }),
+      tutors: filteredFallbackTutors,
     };
   }
 };

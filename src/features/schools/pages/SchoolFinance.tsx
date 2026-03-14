@@ -36,6 +36,13 @@ import {
   type SchoolFinanceStudent,
   updateSchoolWithdrawalStatus,
 } from '../utils/schoolFinanceApi';
+import {
+  buildSchoolReportFrame,
+  createPdfBlob,
+  downloadFile,
+  joinCsvRow,
+  schoolReportStyles,
+} from '../../../utils/exportFiles';
 
 const fmt = (amount: number) => `₦${Number.isFinite(amount) ? amount.toLocaleString() : '0'}`;
 
@@ -91,77 +98,6 @@ type ReminderExportSnapshot = {
     batchLimit: number;
     exportedPages: number;
   };
-};
-
-type PdfDocumentLike = {
-  getBlob: () => Promise<Blob>;
-};
-
-type PdfMakeLike = {
-  createPdf: (docDefinition: Record<string, unknown>) => PdfDocumentLike;
-  vfs?: Record<string, string>;
-};
-
-const csvEscape = (value: string | number) => {
-  const rawValue = String(value);
-  if (/[",\n]/.test(rawValue)) {
-    return `"${rawValue.replaceAll('"', '""')}"`;
-  }
-  return rawValue;
-};
-
-const joinCsvRow = (values: Array<string | number>) => values.map(csvEscape).join(',');
-
-const downloadFile = (blob: Blob, filename: string) => {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-};
-
-const looksLikeVfsMap = (value: unknown): value is Record<string, string> => {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-  const entries = Object.entries(value as Record<string, unknown>);
-  if (entries.length === 0) {
-    return false;
-  }
-  return entries.every(([key, item]) => key.toLowerCase().endsWith('.ttf') && typeof item === 'string');
-};
-
-const resolvePdfMake = (pdfMakeModule: unknown, pdfFontsModule: unknown): PdfMakeLike => {
-  const resolvedPdfMake =
-    (pdfMakeModule as { default?: PdfMakeLike }).default || (pdfMakeModule as PdfMakeLike);
-
-  const fontsModule = pdfFontsModule as {
-    default?: { pdfMake?: { vfs?: Record<string, string> }; vfs?: Record<string, string> } | Record<string, string>;
-    pdfMake?: { vfs?: Record<string, string> };
-    vfs?: Record<string, string>;
-  };
-
-  const defaultFonts = fontsModule.default;
-  const resolvedVfs =
-    fontsModule.pdfMake?.vfs ||
-    fontsModule.vfs ||
-    (defaultFonts && 'pdfMake' in defaultFonts
-      ? (defaultFonts as { pdfMake?: { vfs?: Record<string, string> } }).pdfMake?.vfs
-      : undefined) ||
-    (defaultFonts && 'vfs' in defaultFonts
-      ? (defaultFonts as { vfs?: Record<string, string> }).vfs
-      : undefined) ||
-    (looksLikeVfsMap(defaultFonts) ? defaultFonts : undefined) ||
-    (looksLikeVfsMap(fontsModule) ? (fontsModule as Record<string, string>) : undefined);
-
-  if (resolvedVfs) {
-    resolvedPdfMake.vfs = resolvedVfs;
-  }
-
-  return resolvedPdfMake;
 };
 
 const SchoolFinance = () => {
@@ -224,6 +160,27 @@ const SchoolFinance = () => {
   const [invoiceStudentEmail, setInvoiceStudentEmail] = useState('');
   const [invoiceStudentName, setInvoiceStudentName] = useState('');
   const [invoiceDueDate, setInvoiceDueDate] = useState('');
+  const calendarYearOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    return Array.from({ length: 41 }, (_, index) => currentYear - 20 + index);
+  }, []);
+  const monthOptions = useMemo(
+    () => [
+      { value: '01', label: 'Jan' },
+      { value: '02', label: 'Feb' },
+      { value: '03', label: 'Mar' },
+      { value: '04', label: 'Apr' },
+      { value: '05', label: 'May' },
+      { value: '06', label: 'Jun' },
+      { value: '07', label: 'Jul' },
+      { value: '08', label: 'Aug' },
+      { value: '09', label: 'Sep' },
+      { value: '10', label: 'Oct' },
+      { value: '11', label: 'Nov' },
+      { value: '12', label: 'Dec' },
+    ],
+    []
+  );
 
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawalStatusFilter, setWithdrawalStatusFilter] = useState<
@@ -885,11 +842,6 @@ const SchoolFinance = () => {
       const snapshot = await fetchReminderExportSnapshot();
       setLastReminderHealth(snapshot.health);
 
-      const [pdfMakeModule, pdfFontsModule] = await Promise.all([
-        import('pdfmake/build/pdfmake'),
-        import('pdfmake/build/vfs_fonts'),
-      ]);
-      const pdfMake = resolvePdfMake(pdfMakeModule, pdfFontsModule);
       const dateStamp = new Date().toISOString().split('T')[0];
       const maxRows = 80;
       const displayDispatches = snapshot.dispatches.slice(0, maxRows);
@@ -924,13 +876,21 @@ const SchoolFinance = () => {
         ]),
       ];
 
+      const reportFrame = buildSchoolReportFrame({
+        title: 'Reminder Analytics Report',
+        subtitle: 'Fee reminder delivery health',
+        documentLabel: 'Finance delivery report',
+        documentCode: `REM-${dateStamp.replaceAll('-', '')}`,
+        generatedAt: new Date(snapshot.generatedAt).toLocaleString(),
+        metaLines: [
+          `Window: ${snapshot.health.windowDays} days`,
+          `Dispatches in export set: ${snapshot.dispatches.length}`,
+          `Filters: channel ${snapshot.filters.channel} • status ${snapshot.filters.status}`,
+        ],
+      });
+
       const content: Record<string, unknown>[] = [
-        { text: 'EDAMAA Reminder Analytics Report', style: 'title' },
-        {
-          text: `Generated ${new Date(snapshot.generatedAt).toLocaleString()}`,
-          style: 'meta',
-          margin: [0, 2, 0, 12],
-        },
+        ...reportFrame.headerContent,
         { text: 'Delivery Health (7 days)', style: 'sectionTitle', margin: [0, 0, 0, 6] },
         {
           table: {
@@ -960,16 +920,20 @@ const SchoolFinance = () => {
         });
       }
 
+      content.push(...reportFrame.signOffContent);
+
       const docDefinition: Record<string, unknown> = {
         pageSize: 'A4',
         pageMargins: [20, 22, 20, 22],
+        footer: reportFrame.footer,
         defaultStyle: {
-          font: 'Roboto',
+          font: 'Helvetica',
           fontSize: 10,
           color: '#111827',
         },
         content,
         styles: {
+          ...schoolReportStyles,
           title: {
             fontSize: 16,
             bold: true,
@@ -992,8 +956,7 @@ const SchoolFinance = () => {
         },
       };
 
-      const pdfDocument = pdfMake.createPdf(docDefinition);
-      const pdfBlob = await pdfDocument.getBlob();
+      const pdfBlob = await createPdfBlob(docDefinition);
       downloadFile(pdfBlob, `edamaa-reminder-analytics-${dateStamp}.pdf`);
 
       await recordReminderExportAuditSafely('pdf', snapshot);
@@ -1080,11 +1043,6 @@ const SchoolFinance = () => {
     setError(null);
     setNotice(null);
     try {
-      const [pdfMakeModule, pdfFontsModule] = await Promise.all([
-        import('pdfmake/build/pdfmake'),
-        import('pdfmake/build/vfs_fonts'),
-      ]);
-      const pdfMake = resolvePdfMake(pdfMakeModule, pdfFontsModule);
       const dateStamp = new Date().toISOString().slice(0, 10);
       const bodyRows = [
         ['Payout ID', 'Amount', 'Status', 'Requested', 'Processed'],
@@ -1097,14 +1055,23 @@ const SchoolFinance = () => {
         ]),
       ];
 
+      const reportFrame = buildSchoolReportFrame({
+        title: 'Withdrawal Report',
+        subtitle: 'School payout activity',
+        documentLabel: 'Finance payout report',
+        documentCode: `PAY-${dateStamp.replaceAll('-', '')}`,
+        metaLines: [
+          `Status filter: ${withdrawalStatusFilter || 'all'}`,
+          `Rows exported: ${visibleWithdrawals.length}`,
+        ],
+      });
+
       const docDefinition = {
         pageSize: 'A4',
         pageMargins: [28, 28, 28, 32],
+        footer: reportFrame.footer,
         content: [
-          { text: 'Edamaa Withdrawal Report', style: 'header' },
-          { text: `Generated: ${new Date().toLocaleString()}`, style: 'muted' },
-          { text: `Status filter: ${withdrawalStatusFilter || 'all'}`, style: 'muted' },
-          { text: `Rows exported: ${visibleWithdrawals.length}`, style: 'muted', margin: [0, 0, 0, 10] },
+          ...reportFrame.headerContent,
           {
             table: {
               headerRows: 1,
@@ -1113,15 +1080,16 @@ const SchoolFinance = () => {
             },
             layout: 'lightHorizontalLines',
           },
+          ...reportFrame.signOffContent,
         ],
         styles: {
+          ...schoolReportStyles,
           header: { fontSize: 16, bold: true, margin: [0, 0, 0, 6] },
           muted: { fontSize: 10, color: '#4b5563', margin: [0, 0, 0, 2] },
         },
       } as Record<string, unknown>;
 
-      const pdfDocument = pdfMake.createPdf(docDefinition);
-      const pdfBlob = await pdfDocument.getBlob();
+      const pdfBlob = await createPdfBlob(docDefinition);
       downloadFile(pdfBlob, `edamaa-withdrawals-${dateStamp}.pdf`);
       setNotice('Withdrawal PDF export started.');
     } catch (requestError) {
@@ -1497,12 +1465,62 @@ const SchoolFinance = () => {
                 className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
                 required={!invoicePlanId}
               />
-              <input
-                value={invoiceDueDate}
-                onChange={(event) => setInvoiceDueDate(event.target.value)}
-                type="date"
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
-              />
+              <div className="space-y-2">
+                <input
+                  value={invoiceDueDate}
+                  onChange={(event) => setInvoiceDueDate(event.target.value)}
+                  type="date"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                />
+                <div className="flex items-center gap-2">
+                  <label className="text-[11px] font-semibold text-gray-500">Jump year:</label>
+                  <select
+                    value={invoiceDueDate ? invoiceDueDate.slice(0, 4) : ''}
+                    onChange={(event) => {
+                      const selectedYear = event.target.value;
+                      if (!selectedYear) {
+                        return;
+                      }
+                      setInvoiceDueDate((previous) => {
+                        const base = previous || `${new Date().getFullYear()}-01-01`;
+                        const [, month = '01', day = '01'] = base.split('-');
+                        return `${selectedYear}-${month}-${day}`;
+                      });
+                    }}
+                    className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                  >
+                    <option value="">Select year</option>
+                    {calendarYearOptions.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
+                  <label className="text-[11px] font-semibold text-gray-500">Month:</label>
+                  <select
+                    value={invoiceDueDate ? invoiceDueDate.slice(5, 7) : ''}
+                    onChange={(event) => {
+                      const selectedMonth = event.target.value;
+                      if (!selectedMonth) {
+                        return;
+                      }
+                      setInvoiceDueDate((previous) => {
+                        const base = previous || `${new Date().getFullYear()}-01-01`;
+                        const [year = String(new Date().getFullYear()), , day = '01'] = base.split('-');
+                        return `${year}-${selectedMonth}-${day}`;
+                      });
+                    }}
+                    className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                  >
+                    <option value="">Select month</option>
+                    {monthOptions.map((month) => (
+                      <option key={month.value} value={month.value}>
+                        {month.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
               <input
                 value={invoiceDescription}
                 onChange={(event) => setInvoiceDescription(event.target.value)}

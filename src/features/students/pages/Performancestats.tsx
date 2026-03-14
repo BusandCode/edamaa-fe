@@ -13,6 +13,13 @@ import {
   LightBulbIcon,
 } from '@heroicons/react/24/outline';
 import { loadPersistedLocalDevAuthSession, loadPersistedSupabaseAccessToken } from '../../../utils/authSession';
+import {
+  buildSchoolReportFrame,
+  createPdfBlob,
+  downloadFile,
+  joinCsvRow,
+  schoolReportStyles,
+} from '../../../utils/exportFiles';
 import { loadStudentIdentity } from '../utils/studentIdentity';
 
 type WeeklyMetric = {
@@ -74,14 +81,6 @@ type PerformanceApiResponse = {
   dataQuality?: {
     degraded?: boolean;
     dataSources?: string[];
-  };
-};
-
-type PdfMakeLike = {
-  vfs?: Record<string, string>;
-  createPdf: (docDefinition: Record<string, unknown>) => {
-    download: (filename: string) => void;
-    getBlob: () => Promise<Blob>;
   };
 };
 
@@ -285,17 +284,6 @@ const buildReportText = (params: ReportSnapshot) => {
   return lines.join('\n');
 };
 
-const csvEscape = (value: string | number) => {
-  const rawValue = String(value);
-  if (/[",\n]/.test(rawValue)) {
-    return `"${rawValue.replaceAll('"', '""')}"`;
-  }
-
-  return rawValue;
-};
-
-const joinCsvRow = (values: Array<string | number>) => values.map(csvEscape).join(',');
-
 const buildReportCsv = (params: ReportSnapshot) => {
   const {
     studentName,
@@ -363,18 +351,6 @@ const buildReportCsv = (params: ReportSnapshot) => {
   });
 
   return lines.join('\n');
-};
-
-const downloadFile = (blob: Blob, filename: string) => {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
 };
 
 const toFiniteNumber = (value: unknown, fallback: number) => {
@@ -482,45 +458,6 @@ const normalizeSummary = (value: unknown, fallback: OverallMetrics): OverallMetr
     trendDelta: round(toFiniteNumber(candidate.trendDelta, fallback.trendDelta)),
     attendanceRate: clamp(Math.round(toFiniteNumber(candidate.attendanceRate, fallback.attendanceRate)), 0, 100),
   };
-};
-
-const looksLikeVfsMap = (value: unknown): value is Record<string, string> => {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
-  const entries = Object.entries(value as Record<string, unknown>);
-  if (entries.length === 0) {
-    return false;
-  }
-
-  return entries.every(([key, item]) => key.toLowerCase().endsWith('.ttf') && typeof item === 'string');
-};
-
-const resolvePdfMake = (pdfMakeModule: unknown, pdfFontsModule: unknown): PdfMakeLike => {
-  const resolvedPdfMake =
-    (pdfMakeModule as { default?: PdfMakeLike }).default || (pdfMakeModule as PdfMakeLike);
-
-  const fontsModule = pdfFontsModule as {
-    default?: { pdfMake?: { vfs?: Record<string, string> }; vfs?: Record<string, string> } | Record<string, string>;
-    pdfMake?: { vfs?: Record<string, string> };
-    vfs?: Record<string, string>;
-  };
-
-  const defaultFonts = fontsModule.default;
-  const resolvedVfs =
-    fontsModule.pdfMake?.vfs ||
-    fontsModule.vfs ||
-    (defaultFonts && 'pdfMake' in defaultFonts ? (defaultFonts as { pdfMake?: { vfs?: Record<string, string> } }).pdfMake?.vfs : undefined) ||
-    (defaultFonts && 'vfs' in defaultFonts ? (defaultFonts as { vfs?: Record<string, string> }).vfs : undefined) ||
-    (looksLikeVfsMap(defaultFonts) ? defaultFonts : undefined) ||
-    (looksLikeVfsMap(fontsModule) ? (fontsModule as Record<string, string>) : undefined);
-
-  if (resolvedVfs) {
-    resolvedPdfMake.vfs = resolvedVfs;
-  }
-
-  return resolvedPdfMake;
 };
 
 const createCanvasSlices = (
@@ -834,14 +771,11 @@ const Performancestats = () => {
     setIsExportingPdf(true);
 
     try {
-      const [html2canvasModule, pdfMakeModule, pdfFontsModule] = await Promise.all([
+      const [html2canvasModule] = await Promise.all([
         import('html2canvas'),
-        import('pdfmake/build/pdfmake'),
-        import('pdfmake/build/vfs_fonts'),
       ]);
 
       const html2canvas = html2canvasModule.default;
-      const pdfMake = resolvePdfMake(pdfMakeModule, pdfFontsModule);
 
       const canvas = await html2canvas(reportElement, {
         backgroundColor: '#f9fafb',
@@ -861,17 +795,22 @@ const Performancestats = () => {
 
       const reportSnapshot = buildReportSnapshot();
 
-      const content: Record<string, unknown>[] = [
-        {
-          text: `EDAMAA Performance Report - ${reportSnapshot.studentName}`,
-          style: 'title',
-        },
-        {
-          text: `Generated ${reportSnapshot.generatedAt}`,
-          style: 'meta',
-          margin: [0, 2, 0, 10],
-        },
-      ];
+      const reportFrame = buildSchoolReportFrame({
+        title: 'Student Performance Report',
+        subtitle: reportSnapshot.studentName,
+        documentLabel: 'Learner progress report',
+        documentCode: `STU-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}`,
+        generatedAt: reportSnapshot.generatedAt,
+        metaLines: [
+          `Overall score: ${Math.round(reportSnapshot.overallScore)}%`,
+          `Completion rate: ${Math.round(reportSnapshot.completionRate)}%`,
+          `On-time rate: ${Math.round(reportSnapshot.onTimeRate)}%`,
+        ],
+        leftSignatoryRole: 'Prepared by',
+        rightSignatoryRole: 'For learner records',
+      });
+
+      const content: Record<string, unknown>[] = [...reportFrame.headerContent];
 
       slices.forEach((slice, index) => {
         const renderedHeightPt = (slice.heightPx * usableWidthPt) / canvas.width;
@@ -892,11 +831,13 @@ const Performancestats = () => {
       const docDefinition: Record<string, unknown> = {
         pageSize: 'A4',
         pageMargins: [marginPt, marginPt, marginPt, marginPt],
+        footer: reportFrame.footer,
         defaultStyle: {
-          font: 'Roboto',
+          font: 'Helvetica',
         },
-        content,
+        content: [...content, ...reportFrame.signOffContent],
         styles: {
+          ...schoolReportStyles,
           title: {
             fontSize: 16,
             bold: true,
@@ -915,8 +856,7 @@ const Performancestats = () => {
       };
 
       const dateStamp = new Date().toISOString().split('T')[0];
-      const pdfDocument = pdfMake.createPdf(docDefinition);
-      const pdfBlob = await pdfDocument.getBlob();
+      const pdfBlob = await createPdfBlob(docDefinition);
       downloadFile(pdfBlob, `edamaa-performance-report-${dateStamp}.pdf`);
       setExportNotice({
         kind: 'success',

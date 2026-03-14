@@ -25,10 +25,13 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { buildRtcConfiguration } from '../../../utils/rtc';
+import { loadSchoolBrandingNames, loadSchoolProfileImage } from '../../../utils/schoolBranding';
+import { recordSchoolScheduleAttendance } from '../../schools/utils/schoolScheduleApi';
 import {
   fetchTeachingSubscriptionState,
   type TeachingActor,
 } from '../../subscriptions/utils/teachingSubscriptionApi';
+import { loadStudentIdentity } from '../utils/studentIdentity';
 
 type ClassLevel = 'Beginner' | 'Intermediate' | 'Advanced';
 type RoomRole = 'teacher' | 'student';
@@ -69,6 +72,18 @@ type ChatMessage = {
   replyToMessageId?: string;
   replyToSenderName?: string;
   replyToText?: string;
+};
+
+type LiveQuestion = {
+  id: string;
+  studentId: string;
+  studentName: string;
+  text: string;
+  status: 'open' | 'spotlight' | 'resolved';
+  submittedAt: string;
+  votes: number;
+  voterIds: string[];
+  lastActivityAt: string;
 };
 
 type GiftDefinition = {
@@ -115,6 +130,13 @@ type GiftNotification = {
   accentClass: string;
 };
 
+type ReactionBurst = {
+  id: string;
+  label: string;
+  accentClass: string;
+  lane: number;
+};
+
 type AdvancedGiftSpotlight = {
   id: string;
   senderName: string;
@@ -137,6 +159,13 @@ type GifterBadge = {
   level: number;
   name: string;
   minTotalGiftedCoins: number;
+};
+
+type NoticeTone = 'info' | 'success' | 'warning' | 'error';
+
+type NoticeMessage = {
+  type: NoticeTone;
+  text: string;
 };
 
 type FloatingGift = {
@@ -201,6 +230,39 @@ const AVATAR_GRADIENTS: Array<[string, string]> = [
 const GIFTING_STORAGE_KEY = 'edamaa_live_total_gifted_coins';
 const GIFT_PIN_STORAGE_KEY = 'edamaa_live_pinned_gifts';
 const GIFT_COIN_ICON_URL = '/gifts/coin.svg';
+const HOT_QUESTION_COOLDOWN_MS = 5 * 60 * 1000;
+const HOT_COOLDOWN_OPTIONS = [
+  { label: '2 min', value: 2 * 60 * 1000 },
+  { label: '5 min', value: 5 * 60 * 1000 },
+  { label: '10 min', value: 10 * 60 * 1000 },
+];
+const HOT_COOLDOWN_STORAGE_KEY = 'edamaa_live_hot_question_cooldown_ms';
+const AUTO_HOT_STORAGE_KEY = 'edamaa_live_auto_hot_enabled';
+const REACTION_SET_STORAGE_KEY = 'edamaa_live_reaction_set';
+const DEFAULT_REACTION_PALETTE = [
+  { emoji: '👏', label: 'Clap', accentClass: 'from-amber-400 to-orange-500' },
+  { emoji: '🔥', label: 'Fire', accentClass: 'from-red-500 to-orange-500' },
+  { emoji: '🎯', label: 'On point', accentClass: 'from-emerald-400 to-cyan-500' },
+  { emoji: '🙌', label: 'Celebrate', accentClass: 'from-fuchsia-400 to-pink-500' },
+  { emoji: '🤔', label: 'Thinking', accentClass: 'from-slate-400 to-indigo-400' },
+];
+const REACTION_PALETTE_BY_SET: Record<string, typeof DEFAULT_REACTION_PALETTE> = {
+  classic: DEFAULT_REACTION_PALETTE,
+  energy: [
+    { emoji: '⚡', label: 'Energy', accentClass: 'from-yellow-400 to-amber-500' },
+    { emoji: '🔥', label: 'Fire', accentClass: 'from-red-500 to-orange-500' },
+    { emoji: '💥', label: 'Boom', accentClass: 'from-rose-500 to-fuchsia-500' },
+    { emoji: '👏', label: 'Clap', accentClass: 'from-amber-400 to-orange-500' },
+    { emoji: '🚀', label: 'Lift', accentClass: 'from-sky-400 to-indigo-500' },
+  ],
+  focus: [
+    { emoji: '🧠', label: 'Think', accentClass: 'from-indigo-400 to-violet-500' },
+    { emoji: '✅', label: 'Clear', accentClass: 'from-emerald-400 to-lime-500' },
+    { emoji: '📌', label: 'Pin', accentClass: 'from-rose-400 to-pink-500' },
+    { emoji: '🎯', label: 'On point', accentClass: 'from-emerald-400 to-cyan-500' },
+    { emoji: '🤝', label: 'Agree', accentClass: 'from-slate-400 to-blue-500' },
+  ],
+};
 const LIVE_CLASS_END_STORAGE_KEY = 'edamaa_live_class_last_ended_at';
 
 const COIN_PACKS: CoinPack[] = [
@@ -385,8 +447,32 @@ const LiveClassroom = () => {
   const roomRole: RoomRole = searchParams.get('role') === 'teacher' ? 'teacher' : 'student';
   const isTeacher = roomRole === 'teacher';
   const teacherActor: TeachingActor = searchParams.get('actor') === 'school' ? 'school' : 'tutor';
+  const giftingEnabled = teacherActor !== 'school';
 
   const liveClass = useMemo(() => normalizeClass(classFromState, classId), [classFromState, classId]);
+  const studentIdentity = useMemo(() => loadStudentIdentity(), []);
+  const schoolBranding = useMemo(() => {
+    if (teacherActor !== 'school') {
+      return null;
+    }
+
+    const { schoolName } = loadSchoolBrandingNames();
+    const logoDataUrl = loadSchoolProfileImage();
+    const resolvedSchoolName = schoolName || 'School';
+    const initials =
+      resolvedSchoolName
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase() || '')
+        .join('') || 'SC';
+
+    return {
+      schoolName: resolvedSchoolName,
+      logoDataUrl: /^data:image\//.test(logoDataUrl) ? logoDataUrl : '',
+      initials,
+    };
+  }, [teacherActor]);
   const teacherId = useMemo(() => `teacher-${liveClass.id}`, [liveClass.id]);
   const schoolSupportId = useMemo(() => `school-${liveClass.id}`, [liveClass.id]);
   const schoolSupportName = useMemo(() => `${liveClass.subject} School Support`, [liveClass.subject]);
@@ -406,6 +492,7 @@ const LiveClassroom = () => {
   const knownPeerClientsRef = useRef<Map<string, { participantId: string; role: RoomRole }>>(new Map());
   const giftComboTimerRef = useRef<number | null>(null);
   const pendingGiftComboRef = useRef<{ giftId: string; recipientId: string; quantity: number } | null>(null);
+  const lastHotQuestionRef = useRef<{ studentId: string; atMs: number } | null>(null);
   const sessionStartMsRef = useRef<number>(Date.now());
   const announcedClassworkIdsRef = useRef<Set<string>>(new Set());
   const latestPresenceRef = useRef({
@@ -447,6 +534,12 @@ const LiveClassroom = () => {
     };
   }, [isTeacher, liveClass.instructor, liveClass.instructorImage, searchParams, teacherId]);
 
+  const attendanceParticipantId = useMemo(() => `student-${studentIdentity.id}`, [studentIdentity.id]);
+  const attendanceParticipantName = useMemo(
+    () => studentIdentity.name || selfParticipant.name,
+    [selfParticipant.name, studentIdentity.name]
+  );
+
   const teacherPlaceholder = useMemo<Participant>(
     () => ({
       id: teacherId,
@@ -485,12 +578,44 @@ const LiveClassroom = () => {
 
   const [giftFeed, setGiftFeed] = useState<GiftEvent[]>([]);
   const [floatingGifts, setFloatingGifts] = useState<FloatingGift[]>([]);
+  const [floatingReactions, setFloatingReactions] = useState<ReactionBurst[]>([]);
   const [giftNotifications, setGiftNotifications] = useState<GiftNotification[]>([]);
   const [advancedGiftSpotlight, setAdvancedGiftSpotlight] = useState<AdvancedGiftSpotlight | null>(null);
 
   const [likesCount, setLikesCount] = useState(0);
   const [streamStatus, setStreamStatus] = useState<'connecting' | 'live' | 'ended'>('connecting');
-  const [notice, setNotice] = useState('Connecting to live classroom...');
+  const [notice, setNoticeState] = useState<NoticeMessage | null>({
+    type: 'info',
+    text: 'Connecting to live classroom...',
+  });
+
+  useEffect(() => {
+    if (isTeacher || !liveClass.id) {
+      return;
+    }
+
+    const attendanceBase = {
+      sessionId: liveClass.id,
+      participantId: attendanceParticipantId,
+      participantName: attendanceParticipantName,
+    };
+
+    void recordSchoolScheduleAttendance({
+      ...attendanceBase,
+      action: 'join',
+    }).catch(() => {
+      // Ignore attendance sync failures in local/dev flows that are not tied to school schedule.
+    });
+
+    return () => {
+      void recordSchoolScheduleAttendance({
+        ...attendanceBase,
+        action: 'leave',
+      }).catch(() => {
+        // Ignore attendance sync failures during teardown.
+      });
+    };
+  }, [attendanceParticipantId, attendanceParticipantName, isTeacher, liveClass.id]);
   const [isTeacherSubscriptionChecking, setIsTeacherSubscriptionChecking] = useState(isTeacher);
   const [isTeacherSubscriptionLocked, setIsTeacherSubscriptionLocked] = useState(false);
   const [teacherSubscriptionLockReason, setTeacherSubscriptionLockReason] = useState('');
@@ -502,6 +627,7 @@ const LiveClassroom = () => {
     return window.localStorage.getItem(LIVE_CLASS_END_STORAGE_KEY);
   });
   const [activeClassworkPromptId, setActiveClassworkPromptId] = useState<string | null>(null);
+  const [showTeacherWelcome, setShowTeacherWelcome] = useState(false);
 
   const [chatInput, setChatInput] = useState('');
   const [isChatOpen, setIsChatOpen] = useState(true);
@@ -514,6 +640,35 @@ const LiveClassroom = () => {
   const [onStageParticipantIds, setOnStageParticipantIds] = useState<string[]>([]);
   const [pendingStageInvites, setPendingStageInvites] = useState<PendingStageInvite[]>([]);
   const [incomingStageInvite, setIncomingStageInvite] = useState<IncomingStageInvite | null>(null);
+  const [questionDraft, setQuestionDraft] = useState('');
+  const [questionQueue, setQuestionQueue] = useState<LiveQuestion[]>([]);
+  const [spotlightQuestion, setSpotlightQuestion] = useState<LiveQuestion | null>(null);
+  const [hotQuestionId, setHotQuestionId] = useState<string | null>(null);
+  const [hotQuestionEndsAtMs, setHotQuestionEndsAtMs] = useState<number | null>(null);
+  const classAutoHotKey = `${AUTO_HOT_STORAGE_KEY}:${liveClass.id}`;
+  const classReactionSetKey = `${REACTION_SET_STORAGE_KEY}:${liveClass.id}`;
+  const classCooldownKey = `${HOT_COOLDOWN_STORAGE_KEY}:${liveClass.id}`;
+  const [autoHotEnabled, setAutoHotEnabled] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    const scoped = window.localStorage.getItem(classAutoHotKey);
+    if (scoped !== null) {
+      return scoped === 'true';
+    }
+    return window.localStorage.getItem(AUTO_HOT_STORAGE_KEY) === 'true';
+  });
+  const [hotCooldownMs, setHotCooldownMs] = useState(() => {
+    if (typeof window === 'undefined') {
+      return HOT_QUESTION_COOLDOWN_MS;
+    }
+    const scoped = Number(window.localStorage.getItem(classCooldownKey));
+    if (HOT_COOLDOWN_OPTIONS.some((option) => option.value === scoped)) {
+      return scoped;
+    }
+    const stored = Number(window.localStorage.getItem(HOT_COOLDOWN_STORAGE_KEY));
+    return HOT_COOLDOWN_OPTIONS.some((option) => option.value === stored) ? stored : HOT_QUESTION_COOLDOWN_MS;
+  });
   const [coinBalance, setCoinBalance] = useState(2500);
   const [totalGiftedCoins, setTotalGiftedCoins] = useState(() => {
     if (typeof window === 'undefined') {
@@ -550,12 +705,37 @@ const LiveClassroom = () => {
   const [cardExpiry, setCardExpiry] = useState('');
   const [cardCvv, setCardCvv] = useState('');
   const [isProcessingRecharge, setIsProcessingRecharge] = useState(false);
+  const [reactionSetKey, setReactionSetKey] = useState(() => {
+    if (typeof window === 'undefined') {
+      return 'classic';
+    }
+    const scoped = window.localStorage.getItem(classReactionSetKey);
+    if (scoped && REACTION_PALETTE_BY_SET[scoped]) {
+      return scoped;
+    }
+    const stored = window.localStorage.getItem(REACTION_SET_STORAGE_KEY);
+    return stored && REACTION_PALETTE_BY_SET[stored] ? stored : 'classic';
+  });
+
+  const reactionPalette = useMemo(
+    () => REACTION_PALETTE_BY_SET[reactionSetKey] || DEFAULT_REACTION_PALETTE,
+    [reactionSetKey]
+  );
 
   const [micOn, setMicOn] = useState(isTeacher);
   const [cameraOn, setCameraOn] = useState(isTeacher);
   const [handRaised, setHandRaised] = useState(false);
   const [screenShared, setScreenShared] = useState(false);
   const [mediaError, setMediaError] = useState('');
+  const [settingsToastVisible, setSettingsToastVisible] = useState(false);
+
+  const pushNotice = useCallback((text: string, type: NoticeTone = 'info') => {
+    setNoticeState({ type, text });
+  }, []);
+
+  const clearNotice = useCallback(() => {
+    setNoticeState(null);
+  }, []);
 
   const activeParticipants = useMemo(
     () => participants.filter((participant) => participant.online),
@@ -914,7 +1094,7 @@ const LiveClassroom = () => {
         if (stream) {
           setRemoteTeacherStream(stream);
           setStreamStatus('live');
-          setNotice('Tutor video is now live.');
+          pushNotice('Tutor video is now live.');
         }
       };
 
@@ -1132,7 +1312,7 @@ const LiveClassroom = () => {
       if (remoteTeacherStream) {
         // Some browsers require an explicit play() call after srcObject updates.
         void stageRemoteVideoRef.current.play().catch(() => {
-          setNotice('Tap the video area if playback is blocked by browser autoplay rules.');
+          pushNotice('Tap the video area if playback is blocked by browser autoplay rules.');
         });
       }
     }
@@ -1167,13 +1347,21 @@ const LiveClassroom = () => {
   }, [cameraOn, handRaised, micOn, roomRole, selfParticipant.id]);
 
   useEffect(() => {
-    if (!notice) {
+    if (!isTeacher) {
       return;
     }
 
-    const timer = window.setTimeout(() => setNotice(''), 3200);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
+    if (typeof window === 'undefined') {
+      setShowTeacherWelcome(true);
+      return;
+    }
+
+    const key = `edamaa_teacher_welcome_${liveClass.id}`;
+    if (!window.sessionStorage.getItem(key)) {
+      setShowTeacherWelcome(true);
+      window.sessionStorage.setItem(key, '1');
+    }
+  }, [isTeacher, liveClass.id]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -1209,7 +1397,7 @@ const LiveClassroom = () => {
 
     announcedClassworkIdsRef.current.add(activeLiveClasswork.id);
     setActiveClassworkPromptId(activeLiveClasswork.id);
-    setNotice(`${activeLiveClasswork.title} is now open.`);
+    pushNotice(`${activeLiveClasswork.title} is now open.`);
   }, [activeLiveClasswork, isTeacher]);
 
   useEffect(() => {
@@ -1303,7 +1491,7 @@ const LiveClassroom = () => {
     setMutedChatParticipantIds([]);
     setLikesCount(0);
     setStreamStatus('connecting');
-    setNotice(isTeacher ? 'Preparing your live stream room...' : 'Joining live stream...');
+    pushNotice(isTeacher ? 'Preparing your live stream room...' : 'Joining live stream...');
     setSelectedGiftId(GIFT_CATALOG[0].id);
     setSelectedRecipientId(teacherId);
     setGiftPanelTab('gifts');
@@ -1349,7 +1537,7 @@ const LiveClassroom = () => {
       stopLocalStream();
       closeAllPeerConnections();
       setStreamStatus('connecting');
-      setNotice('Your stream is paused. Turn camera or mic on to go live again.');
+      pushNotice('Your stream is paused. Turn camera or mic on to go live again.');
 
       const eventId = `stream-status-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
       rememberEventId(eventId);
@@ -1432,6 +1620,32 @@ const LiveClassroom = () => {
     stopLocalStream,
   ]);
 
+  const spawnReactionBurst = useCallback((label: string, accentClass: string, amount = 1) => {
+    const total = clamp(amount, 1, 12);
+    const createdIds: string[] = [];
+
+    setFloatingReactions((previous) => {
+      const next = [...previous];
+      for (let i = 0; i < total; i += 1) {
+        const id = `reaction-${Date.now()}-${Math.floor(Math.random() * 100000)}-${i}`;
+        const lane = Math.floor(Math.random() * 5);
+        createdIds.push(id);
+        next.push({ id, label, accentClass, lane });
+      }
+      return next;
+    });
+
+    window.setTimeout(() => {
+      setFloatingReactions((previous) => previous.filter((item) => !createdIds.includes(item.id)));
+    }, 2200);
+  }, []);
+
+  const getReactionAccent = useCallback(
+    (emoji: string) =>
+      reactionPalette.find((item) => item.emoji === emoji)?.accentClass || 'from-slate-400 to-slate-500',
+    [reactionPalette]
+  );
+
   // Real-time event stream: presence, chat, gifts, reactions, and WebRTC signaling.
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1448,7 +1662,7 @@ const LiveClassroom = () => {
         }
         return isTeacher ? previous : 'connecting';
       });
-      setNotice(isTeacher ? `Connected to ${liveClass.name}` : `Connected to ${liveClass.name}. Waiting for tutor media...`);
+      pushNotice(isTeacher ? `Connected to ${liveClass.name}` : `Connected to ${liveClass.name}. Waiting for tutor media...`);
     };
 
     source.onmessage = (messageEvent) => {
@@ -1589,7 +1803,7 @@ const LiveClassroom = () => {
           setRemoteTeacherStream(null);
           closeAllPeerConnections();
           markClassEnded();
-          setNotice('Tutor ended the live stream.');
+          pushNotice('Tutor ended the live stream.');
         }
 
         return;
@@ -1628,7 +1842,7 @@ const LiveClassroom = () => {
             hostName,
             sentAt: typeof data.sentAt === 'string' ? data.sentAt : new Date().toISOString(),
           });
-          setNotice(`${hostName} invited you to join the live stage.`);
+          pushNotice(`${hostName} invited you to join the live stage.`);
         }
         return;
       }
@@ -1664,7 +1878,7 @@ const LiveClassroom = () => {
         );
 
         if (!accepted) {
-          setNotice(`${studentName} declined the stage invite.`);
+          pushNotice(`${studentName} declined the stage invite.`);
           return;
         }
 
@@ -1676,7 +1890,7 @@ const LiveClassroom = () => {
               : participant
           )
         );
-        setNotice(`${studentName} joined the live stage.`);
+        pushNotice(`${studentName} joined the live stage.`);
 
         const promoteEventId = `stage-promote-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
         rememberEventId(promoteEventId);
@@ -1708,9 +1922,9 @@ const LiveClassroom = () => {
         );
 
         if (participantId === selfParticipant.id) {
-          setNotice('You are now on stage. You can ask your question live.');
+          pushNotice('You are now on stage. You can ask your question live.');
         } else {
-          setNotice(`${participantName} is now on stage.`);
+          pushNotice(`${participantName} is now on stage.`);
         }
         return;
       }
@@ -1728,9 +1942,9 @@ const LiveClassroom = () => {
         if (participantId === selfParticipant.id) {
           setMicOn(false);
           setCameraOn(false);
-          setNotice('You were moved back to audience by the tutor.');
+          pushNotice('You were moved back to audience by the tutor.');
         } else {
-          setNotice(`${participantName} was moved back to audience.`);
+          pushNotice(`${participantName} was moved back to audience.`);
         }
         return;
       }
@@ -1740,7 +1954,7 @@ const LiveClassroom = () => {
         setIsChatOpen(chatOpen);
 
         if (!isTeacher) {
-          setNotice(chatOpen ? 'Tutor reopened chat.' : 'Tutor paused chat temporarily.');
+          pushNotice(chatOpen ? 'Tutor reopened chat.' : 'Tutor paused chat temporarily.');
         }
         return;
       }
@@ -1763,13 +1977,13 @@ const LiveClassroom = () => {
         });
 
         if (!isTeacher && participantId === selfParticipant.id) {
-          setNotice(
+          pushNotice(
             muted
               ? 'Tutor muted your chat for now. Keep following the lesson.'
               : 'Tutor restored your chat access.'
           );
         } else if (isTeacher) {
-          setNotice(
+          pushNotice(
             muted
               ? `${participantName} was muted in chat.`
               : `${participantName} can chat again.`
@@ -1797,7 +2011,7 @@ const LiveClassroom = () => {
         ]);
 
         if (!isTeacher) {
-          setNotice(`${actorName} cleared the chat.`);
+          pushNotice(`${actorName} cleared the chat.`);
         }
         return;
       }
@@ -1825,6 +2039,9 @@ const LiveClassroom = () => {
       }
 
       if (eventName === 'gift.sent') {
+        if (!giftingEnabled) {
+          return;
+        }
         const incomingRecipientId = typeof data.recipientId === 'string' ? data.recipientId : teacherId;
         const incomingGiftId = typeof data.giftId === 'string' ? data.giftId : GIFT_CATALOG[0].id;
         const giftDefinition = GIFT_CATALOG.find((gift) => gift.id === incomingGiftId) || GIFT_CATALOG[0];
@@ -1864,22 +2081,123 @@ const LiveClassroom = () => {
       if (eventName === 'reaction.like') {
         const amount = Number.isFinite(Number(data.amount)) ? clamp(Number(data.amount), 1, 20) : 1;
         setLikesCount((previous) => previous + amount);
+        spawnReactionBurst('❤️', 'from-rose-500 to-pink-500', amount);
+        return;
+      }
 
-        const floatingId = `reaction-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        const lane = Math.floor(Math.random() * 5);
-        setFloatingGifts((previous) => [
-          ...previous,
-          {
-            id: floatingId,
-            label: '❤️',
-            accentClass: 'from-rose-500 to-pink-500',
-            lane,
-          },
-        ]);
+      if (eventName === 'reaction.emoji') {
+        const emoji = typeof data.emoji === 'string' ? data.emoji : '👏';
+        const amount = Number.isFinite(Number(data.amount)) ? clamp(Number(data.amount), 1, 12) : 1;
+        spawnReactionBurst(emoji, getReactionAccent(emoji), amount);
+        return;
+      }
 
-        window.setTimeout(() => {
-          setFloatingGifts((previous) => previous.filter((item) => item.id !== floatingId));
-        }, 2200);
+      if (eventName === 'question.submit') {
+        const incoming = data.question;
+        if (incoming && typeof incoming === 'object') {
+          const raw = incoming as Record<string, unknown>;
+          const questionId = typeof raw.id === 'string' ? raw.id : '';
+          if (!questionId) {
+            return;
+          }
+
+          const submittedAt =
+            typeof raw.submittedAt === 'string' ? raw.submittedAt : new Date().toISOString();
+          const lastActivityAt =
+            typeof raw.lastActivityAt === 'string' ? raw.lastActivityAt : submittedAt;
+          const votes = Number.isFinite(Number(raw.votes)) ? Math.max(0, Number(raw.votes)) : 0;
+          const voterIds = Array.isArray(raw.voterIds)
+            ? raw.voterIds.filter((value): value is string => typeof value === 'string')
+            : [];
+          const question: LiveQuestion = {
+            id: questionId,
+            studentId: typeof raw.studentId === 'string' ? raw.studentId : 'student',
+            studentName: typeof raw.studentName === 'string' ? raw.studentName : 'Student',
+            text: typeof raw.text === 'string' ? raw.text : '',
+            status: raw.status === 'resolved' ? 'resolved' : raw.status === 'spotlight' ? 'spotlight' : 'open',
+            submittedAt,
+            votes,
+            voterIds,
+            lastActivityAt,
+          };
+
+          setQuestionQueue((previous) => {
+            const exists = previous.some((item) => item.id === question.id);
+            if (exists) {
+              return previous;
+            }
+            return [question, ...previous].slice(0, 20);
+          });
+        }
+        return;
+      }
+
+      if (eventName === 'question.spotlight') {
+        const questionId = typeof data.questionId === 'string' ? data.questionId : '';
+        const text = typeof data.text === 'string' ? data.text : '';
+        if (!questionId) {
+          return;
+        }
+
+        setQuestionQueue((previous) =>
+          previous.map((item) => (item.id === questionId ? { ...item, status: 'spotlight', text } : item))
+        );
+        setSpotlightQuestion({
+          id: questionId,
+          studentId: typeof data.studentId === 'string' ? data.studentId : '',
+          studentName: typeof data.studentName === 'string' ? data.studentName : 'Student',
+          text,
+          status: 'spotlight',
+          submittedAt: new Date().toISOString(),
+          votes: 0,
+          voterIds: [],
+          lastActivityAt: new Date().toISOString(),
+        });
+        return;
+      }
+
+      if (eventName === 'question.vote') {
+        const questionId = typeof data.questionId === 'string' ? data.questionId : '';
+        const voterId = typeof data.voterId === 'string' ? data.voterId : '';
+        if (!questionId || !voterId) {
+          return;
+        }
+        setQuestionQueue((previous) =>
+          previous.map((item) => {
+            if (item.id !== questionId || item.voterIds.includes(voterId)) {
+              return item;
+            }
+            return {
+              ...item,
+              votes: item.votes + 1,
+              voterIds: [...item.voterIds, voterId],
+              lastActivityAt: new Date().toISOString(),
+            };
+          })
+        );
+        return;
+      }
+
+      if (eventName === 'question.resolve') {
+        const questionId = typeof data.questionId === 'string' ? data.questionId : '';
+        if (!questionId) {
+          return;
+        }
+        setQuestionQueue((previous) =>
+          previous.map((item) => (item.id === questionId ? { ...item, status: 'resolved' } : item))
+        );
+        setSpotlightQuestion((previous) => (previous?.id === questionId ? null : previous));
+        return;
+      }
+
+      if (eventName === 'question.hot') {
+        const questionId = typeof data.questionId === 'string' ? data.questionId : '';
+        const expiresAt = Number.isFinite(Number(data.expiresAt)) ? Number(data.expiresAt) : Date.now() + 60000;
+        if (!questionId) {
+          return;
+        }
+        setHotQuestionId(questionId);
+        setHotQuestionEndsAtMs(expiresAt);
         return;
       }
 
@@ -1887,12 +2205,12 @@ const LiveClassroom = () => {
         const streamIsLive = data.isLive === true;
         if (streamIsLive) {
           setStreamStatus('live');
-          setNotice('Tutor is now live.');
+          pushNotice('Tutor is now live.');
         } else {
           setRemoteTeacherStream(null);
           closeAllPeerConnections();
           setStreamStatus('connecting');
-          setNotice('Tutor paused the live stream.');
+          pushNotice('Tutor paused the live stream.');
         }
         return;
       }
@@ -1923,7 +2241,7 @@ const LiveClassroom = () => {
 
     source.onerror = () => {
       setStreamStatus((previous) => (previous === 'ended' ? previous : 'connecting'));
-      setNotice('Realtime sync is unstable. You can continue in this room while reconnecting.');
+      pushNotice('Realtime sync is unstable. You can continue in this room while reconnecting.', 'warning');
     };
 
     return () => {
@@ -1953,7 +2271,13 @@ const LiveClassroom = () => {
     schoolSupportId,
     schoolSupportName,
     selfParticipant.id,
+    spawnReactionBurst,
+    getReactionAccent,
     teacherId,
+    setQuestionQueue,
+    setSpotlightQuestion,
+    setHotQuestionId,
+    setHotQuestionEndsAtMs,
   ]);
 
   // Join and leave should happen only once per room session.
@@ -2060,23 +2384,7 @@ const LiveClassroom = () => {
 
   const sendLike = () => {
     setLikesCount((previous) => previous + 1);
-
-    const floatingId = `self-like-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    const lane = Math.floor(Math.random() * 5);
-
-    setFloatingGifts((previous) => [
-      ...previous,
-      {
-        id: floatingId,
-        label: '❤️',
-        accentClass: 'from-rose-500 to-pink-500',
-        lane,
-      },
-    ]);
-
-    window.setTimeout(() => {
-      setFloatingGifts((previous) => previous.filter((item) => item.id !== floatingId));
-    }, 2200);
+    spawnReactionBurst('❤️', 'from-rose-500 to-pink-500', 1);
 
     const eventId = `like-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
     rememberEventId(eventId);
@@ -2090,9 +2398,25 @@ const LiveClassroom = () => {
     });
   };
 
+  const sendReaction = (emoji: string) => {
+    spawnReactionBurst(emoji, getReactionAccent(emoji), 1);
+
+    const eventId = `reaction-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    rememberEventId(eventId);
+
+    void publishSignal('reaction.emoji', {
+      eventId,
+      clientId: clientIdRef.current,
+      emoji,
+      amount: 1,
+      senderId: selfParticipant.id,
+      senderName: selfParticipant.name,
+    });
+  };
+
   const toggleMic = () => {
     if (!isTeacher) {
-      setNotice('Tutor controls live media. Use stage invite + chat to ask questions in real time.');
+      pushNotice('Tutor controls live media. Use stage invite + chat to ask questions in real time.');
       return;
     }
 
@@ -2101,7 +2425,7 @@ const LiveClassroom = () => {
 
   const toggleCamera = () => {
     if (!isTeacher) {
-      setNotice('Tutor controls live media in this stream mode.');
+      pushNotice('Tutor controls live media in this stream mode.');
       return;
     }
 
@@ -2110,7 +2434,7 @@ const LiveClassroom = () => {
 
   const toggleHandRaise = () => {
     if (isSelfOnStage) {
-      setNotice('You are already on stage.');
+      pushNotice('You are already on stage.');
       return;
     }
 
@@ -2134,11 +2458,154 @@ const LiveClassroom = () => {
 
   const toggleScreenShare = () => {
     if (!isTeacher) {
-      setNotice('Only the tutor can share content in this livestream mode.');
+      pushNotice('Only the tutor can share content in this livestream mode.', 'warning');
       return;
     }
 
     setScreenShared((previous) => !previous);
+  };
+
+  const submitLiveQuestion = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const questionId = `question-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const nowIso = new Date().toISOString();
+    const payload: LiveQuestion = {
+      id: questionId,
+      studentId: selfParticipant.id,
+      studentName: selfParticipant.name,
+      text: trimmed.slice(0, 240),
+      status: 'open',
+      submittedAt: nowIso,
+      votes: 0,
+      voterIds: [],
+      lastActivityAt: nowIso,
+    };
+
+    setQuestionQueue((previous) => [payload, ...previous].slice(0, 20));
+    setQuestionDraft('');
+
+    const eventId = `question-submit-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    rememberEventId(eventId);
+    void publishSignal('question.submit', {
+      eventId,
+      clientId: clientIdRef.current,
+      question: payload,
+    });
+  };
+
+  const getNextHotQuestion = useCallback((queue: LiveQuestion[]) => {
+    const openQuestions = queue.filter((item) => item.status === 'open');
+    if (openQuestions.length === 0) {
+      return null;
+    }
+    const lastHot = lastHotQuestionRef.current;
+    const cooldownActive =
+      lastHot && Date.now() - lastHot.atMs < hotCooldownMs ? lastHot.studentId : null;
+    const eligibleQuestions = cooldownActive
+      ? openQuestions.filter((item) => item.studentId !== cooldownActive)
+      : openQuestions;
+    const ranked = (eligibleQuestions.length > 0 ? eligibleQuestions : openQuestions).sort((a, b) => {
+      if (b.votes !== a.votes) {
+        return b.votes - a.votes;
+      }
+      return new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime();
+    });
+    return ranked[0];
+  }, [hotCooldownMs]);
+
+  const setHotQuestion = (question: LiveQuestion | null) => {
+    if (!question) {
+      setHotQuestionId(null);
+      setHotQuestionEndsAtMs(null);
+      return;
+    }
+    setHotQuestionId(question.id);
+    setHotQuestionEndsAtMs(Date.now() + 60000);
+  };
+
+  const startHotQuestion = useCallback((candidateOverride?: LiveQuestion | null) => {
+    const candidate = candidateOverride ?? getNextHotQuestion(questionQueue);
+    if (!candidate) {
+      pushNotice('No open questions to spotlight right now.');
+      return;
+    }
+    setHotQuestion(candidate);
+    lastHotQuestionRef.current = { studentId: candidate.studentId, atMs: Date.now() };
+
+    const eventId = `question-hot-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    rememberEventId(eventId);
+    void publishSignal('question.hot', {
+      eventId,
+      clientId: clientIdRef.current,
+      questionId: candidate.id,
+      expiresAt: Date.now() + 60000,
+    });
+  }, [getNextHotQuestion, publishSignal, questionQueue, rememberEventId]);
+
+  const spotlightLiveQuestion = (question: LiveQuestion) => {
+    setSpotlightQuestion({ ...question, status: 'spotlight' });
+    setQuestionQueue((previous) =>
+      previous.map((item) => (item.id === question.id ? { ...item, status: 'spotlight' } : item))
+    );
+
+    const eventId = `question-spotlight-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    rememberEventId(eventId);
+    void publishSignal('question.spotlight', {
+      eventId,
+      clientId: clientIdRef.current,
+      questionId: question.id,
+      studentId: question.studentId,
+      studentName: question.studentName,
+      text: question.text,
+    });
+  };
+
+  const resolveLiveQuestion = (question: LiveQuestion) => {
+    setQuestionQueue((previous) =>
+      previous.map((item) => (item.id === question.id ? { ...item, status: 'resolved' } : item))
+    );
+    setSpotlightQuestion((previous) => (previous?.id === question.id ? null : previous));
+
+    const eventId = `question-resolve-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    rememberEventId(eventId);
+    void publishSignal('question.resolve', {
+      eventId,
+      clientId: clientIdRef.current,
+      questionId: question.id,
+    });
+  };
+
+  const voteForQuestion = (questionId: string) => {
+    setQuestionQueue((previous) =>
+      previous.map((item) => {
+        if (item.id !== questionId) {
+          return item;
+        }
+        if (item.voterIds.includes(selfParticipant.id)) {
+          return item;
+        }
+        const updated = {
+          ...item,
+          votes: item.votes + 1,
+          voterIds: [...item.voterIds, selfParticipant.id],
+          lastActivityAt: new Date().toISOString(),
+        };
+        return updated;
+      })
+    );
+
+    const eventId = `question-vote-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    rememberEventId(eventId);
+    void publishSignal('question.vote', {
+      eventId,
+      clientId: clientIdRef.current,
+      questionId,
+      voterId: selfParticipant.id,
+    });
   };
 
   const toggleChatAvailability = async () => {
@@ -2160,14 +2627,14 @@ const LiveClassroom = () => {
       isOpen: nextIsChatOpen,
     });
 
-    setNotice(
+    pushNotice(
       nextIsChatOpen
         ? 'Chat reopened for the class.'
         : 'Chat paused to keep focus on the lesson.'
     );
 
     if (!published) {
-      setNotice('Chat setting updated locally. Realtime sync is currently offline.');
+      pushNotice('Chat setting updated locally. Realtime sync is currently offline.', 'warning');
     }
   };
 
@@ -2201,10 +2668,10 @@ const LiveClassroom = () => {
       muted: nextMuted,
     });
 
-    setNotice(nextMuted ? `${student.name} is muted in chat.` : `${student.name} can chat again.`);
+    pushNotice(nextMuted ? `${student.name} is muted in chat.` : `${student.name} can chat again.`);
 
     if (!published) {
-      setNotice('Chat moderation updated locally. Realtime sync is currently offline.');
+      pushNotice('Chat moderation updated locally. Realtime sync is currently offline.', 'warning');
     }
   };
 
@@ -2235,9 +2702,9 @@ const LiveClassroom = () => {
       actorName: selfParticipant.name,
     });
 
-    setNotice('Chat cleared for everyone.');
+    pushNotice('Chat cleared for everyone.');
     if (!published) {
-      setNotice('Chat cleared locally. Realtime sync is currently offline.');
+      pushNotice('Chat cleared locally. Realtime sync is currently offline.', 'warning');
     }
   };
 
@@ -2246,9 +2713,9 @@ const LiveClassroom = () => {
 
     if (!canSendChat) {
       if (!isChatOpen) {
-        setNotice('Tutor paused chat temporarily.');
+        pushNotice('Tutor paused chat temporarily.');
       } else if (isSelfChatMuted) {
-        setNotice('Your chat is muted right now.');
+        pushNotice('Your chat is muted right now.');
       }
       return;
     }
@@ -2301,7 +2768,7 @@ const LiveClassroom = () => {
       (participant) => participant.id === studentId && participant.role === 'student' && participant.online
     );
     if (!student) {
-      setNotice('Student is offline or unavailable for stage invite.');
+      pushNotice('Student is offline or unavailable for stage invite.', 'warning');
       return;
     }
 
@@ -2309,7 +2776,7 @@ const LiveClassroom = () => {
       (invite) => invite.studentId === student.id && invite.status === 'pending'
     );
     if (alreadyPending) {
-      setNotice(`${student.name} already has a pending stage invite.`);
+      pushNotice(`${student.name} already has a pending stage invite.`);
       return;
     }
 
@@ -2318,7 +2785,7 @@ const LiveClassroom = () => {
     );
     const targetClientId = matchedClient?.[0];
     if (!targetClientId) {
-      setNotice(`Could not find a realtime channel for ${student.name}. Ask them to rejoin the room.`);
+      pushNotice(`Could not find a realtime channel for ${student.name}. Ask them to rejoin the room.`, 'warning');
       return;
     }
 
@@ -2352,9 +2819,9 @@ const LiveClassroom = () => {
     });
 
     if (published) {
-      setNotice(`Stage invite sent to ${student.name}.`);
+      pushNotice(`Stage invite sent to ${student.name}.`);
     } else {
-      setNotice('Invite was created locally, but realtime sync is currently offline.');
+      pushNotice('Invite was created locally, but realtime sync is currently offline.', 'warning');
     }
   };
 
@@ -2381,13 +2848,13 @@ const LiveClassroom = () => {
     });
 
     if (accept) {
-      setNotice('Stage invite accepted. Waiting for tutor confirmation...');
+      pushNotice('Stage invite accepted. Waiting for tutor confirmation...');
     } else {
-      setNotice('Stage invite declined.');
+      pushNotice('Stage invite declined.');
     }
 
     if (!published) {
-      setNotice('Could not sync stage invite response in realtime. Please retry.');
+      pushNotice('Could not sync stage invite response in realtime. Please retry.', 'warning');
     }
   };
 
@@ -2416,6 +2883,10 @@ const LiveClassroom = () => {
   };
 
   const togglePinnedGift = (giftId: string) => {
+    if (!giftingEnabled) {
+      pushNotice('Gifting is available for independent tutor classes only.', 'warning');
+      return;
+    }
     setPinnedGiftIds((previous) => {
       if (previous.includes(giftId)) {
         return previous.filter((id) => id !== giftId);
@@ -2426,6 +2897,10 @@ const LiveClassroom = () => {
   };
 
   const sendGiftBatch = async (giftId: string, quantity: number, recipientId: string) => {
+    if (!giftingEnabled) {
+      pushNotice('Gifting is available for independent tutor classes only.', 'warning');
+      return;
+    }
     const gift = GIFT_CATALOG.find((item) => item.id === giftId);
     if (!gift) {
       return;
@@ -2433,13 +2908,13 @@ const LiveClassroom = () => {
 
     if (gift.unlockBadgeLevel > currentBadge.level) {
       const unlockBadge = GIFTER_BADGES.find((badge) => badge.level === gift.unlockBadgeLevel) || GIFTER_BADGES[0];
-      setNotice(`Unlock ${unlockBadge.name} to send ${gift.name}.`);
+      pushNotice(`Unlock ${unlockBadge.name} to send ${gift.name}.`);
       return;
     }
 
     const recipient = recipientOptions.find((option) => option.id === recipientId) || recipientOptions[0];
     if (!recipient) {
-      setNotice('No recipient is available for gifting right now.');
+      pushNotice('No recipient is available for gifting right now.', 'warning');
       return;
     }
 
@@ -2447,7 +2922,7 @@ const LiveClassroom = () => {
     const totalCoins = gift.coinCost * safeQuantity;
 
     if (totalCoins > coinBalance) {
-      setNotice('Not enough coins. Recharge wallet to continue gifting.');
+      pushNotice('Not enough coins. Recharge wallet to continue gifting.', 'error');
       setIsRechargeOpen(true);
       return;
     }
@@ -2478,7 +2953,7 @@ const LiveClassroom = () => {
     };
 
     appendGiftEvent(giftEvent);
-    setNotice(`Gift sent: ${giftEvent.giftName} x${giftEvent.quantity} to ${recipient.name}.`);
+    pushNotice(`Gift sent: ${giftEvent.giftName} x${giftEvent.quantity} to ${recipient.name}.`, 'success');
 
     const published = await publishSignal('gift.sent', {
       eventId,
@@ -2503,7 +2978,7 @@ const LiveClassroom = () => {
     setIsSendingGift(false);
 
     if (!published) {
-      setNotice('Gift recorded locally. Realtime sync is offline right now.');
+      pushNotice('Gift recorded locally. Realtime sync is offline right now.', 'warning');
     }
   };
 
@@ -2522,6 +2997,10 @@ const LiveClassroom = () => {
 
   // Each tap increments the same gift combo, then auto-sends after short inactivity.
   const queueGiftTap = (giftId: string) => {
+    if (!giftingEnabled) {
+      pushNotice('Gifting is available for independent tutor classes only.', 'warning');
+      return;
+    }
     const gift = GIFT_CATALOG.find((item) => item.id === giftId);
     if (!gift) {
       return;
@@ -2529,7 +3008,7 @@ const LiveClassroom = () => {
 
     if (gift.unlockBadgeLevel > currentBadge.level) {
       const unlockBadge = GIFTER_BADGES.find((badge) => badge.level === gift.unlockBadgeLevel) || GIFTER_BADGES[0];
-      setNotice(`Unlock ${unlockBadge.name} to send ${gift.name}.`);
+      pushNotice(`Unlock ${unlockBadge.name} to send ${gift.name}.`);
       return;
     }
 
@@ -2574,7 +3053,7 @@ const LiveClassroom = () => {
     const holder = cardHolderName.trim();
 
     if (!holder || sanitizedNumber.length < 16 || sanitizedExpiry.length < 4 || sanitizedPin.length < 3) {
-      setNotice('Enter a valid card holder name, card number, expiry, and CVV.');
+      pushNotice('Enter a valid card holder name, card number, expiry, and CVV.', 'error');
       return;
     }
 
@@ -2585,7 +3064,7 @@ const LiveClassroom = () => {
     setCoinBalance((previous) => previous + creditedCoins);
     setIsProcessingRecharge(false);
     setIsRechargeOpen(false);
-    setNotice(`Wallet recharged: +${creditedCoins} coins (${selectedCoinPack.label}).`);
+    pushNotice(`Wallet recharged: +${creditedCoins} coins (${selectedCoinPack.label}).`, 'success');
 
     setCardHolderName('');
     setCardNumber('');
@@ -2602,6 +3081,9 @@ const LiveClassroom = () => {
     setStreamStatus('ended');
     stopLocalStream();
     closeAllPeerConnections();
+    if (typeof window !== 'undefined' && isTeacher && teacherActor === 'school') {
+      window.sessionStorage.removeItem(`edamaa_teacher_access_${liveClass.id}`);
+    }
     navigate(isTeacher ? (teacherActor === 'school' ? '/school-dashboard' : '/tutor-dashboard') : '/join-class');
   };
 
@@ -2610,7 +3092,7 @@ const LiveClassroom = () => {
     if (isTeacher) {
       // Persist class-end timestamp so post-class assignments can auto-release on the assignments page.
       markClassEnded();
-      setNotice('Ending class for all participants...');
+      pushNotice('Ending class for all participants...');
     }
     leaveClassroom();
   };
@@ -2623,6 +3105,86 @@ const LiveClassroom = () => {
   const shouldShowTeacherRemoteVideo = !isTeacher && !!remoteTeacherStream;
   const promptedLiveClasswork =
     activeLiveClasswork && activeClassworkPromptId === activeLiveClasswork.id ? activeLiveClasswork : null;
+  const hotQuestion =
+    hotQuestionId && hotQuestionEndsAtMs
+      ? questionQueue.find((question) => question.id === hotQuestionId) || null
+      : null;
+  const hotQuestionRemainingMs = hotQuestionEndsAtMs ? Math.max(0, hotQuestionEndsAtMs - liveNowMs) : 0;
+  const cooldownStudentId =
+    lastHotQuestionRef.current && liveNowMs - lastHotQuestionRef.current.atMs < hotCooldownMs
+      ? lastHotQuestionRef.current.studentId
+      : null;
+  const noticeTone = notice?.type ?? 'info';
+  const noticeClass =
+    noticeTone === 'success'
+      ? 'border-emerald-300/40 bg-emerald-500/10 text-emerald-100'
+      : noticeTone === 'warning'
+      ? 'border-amber-300/40 bg-amber-500/10 text-amber-100'
+      : noticeTone === 'error'
+      ? 'border-red-300/40 bg-red-500/10 text-red-100'
+      : 'border-[#F68C29]/40 bg-[#F68C29]/10 text-[#ffe4cf]';
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem(HOT_COOLDOWN_STORAGE_KEY, String(hotCooldownMs));
+    window.localStorage.setItem(classCooldownKey, String(hotCooldownMs));
+  }, [classCooldownKey, hotCooldownMs]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem(AUTO_HOT_STORAGE_KEY, autoHotEnabled ? 'true' : 'false');
+    window.localStorage.setItem(classAutoHotKey, autoHotEnabled ? 'true' : 'false');
+  }, [autoHotEnabled]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem(REACTION_SET_STORAGE_KEY, reactionSetKey);
+    window.localStorage.setItem(classReactionSetKey, reactionSetKey);
+  }, [classReactionSetKey, reactionSetKey]);
+
+  useEffect(() => {
+    if (!isTeacher || !autoHotEnabled) {
+      return;
+    }
+
+    if (hotQuestionRemainingMs > 0) {
+      return;
+    }
+
+    const nextCandidate = getNextHotQuestion(questionQueue);
+    if (nextCandidate) {
+      startHotQuestion(nextCandidate);
+    }
+  }, [autoHotEnabled, hotQuestionRemainingMs, isTeacher, questionQueue, startHotQuestion]);
+
+  useEffect(() => {
+    if (!settingsToastVisible) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setSettingsToastVisible(false);
+    }, 2200);
+    return () => window.clearTimeout(timeout);
+  }, [settingsToastVisible]);
+
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+    if (notice.type !== 'info' && notice.type !== 'success') {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      clearNotice();
+    }, 4000);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
 
   return (
     <div className="min-h-screen bg-linear-to-br from-[#080812] via-[#0f1024] to-[#15173a] text-white">
@@ -2637,7 +3199,27 @@ const LiveClassroom = () => {
             >
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
+            {schoolBranding && (
+              <div className="hidden h-11 w-11 items-center justify-center overflow-hidden rounded-2xl border border-white/12 bg-white/8 shadow-[0_10px_24px_rgba(15,23,42,0.18)] sm:flex">
+                {schoolBranding.logoDataUrl ? (
+                  <img
+                    src={schoolBranding.logoDataUrl}
+                    alt={schoolBranding.schoolName}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <span className="text-xs font-bold tracking-[0.18em] text-white/85">
+                    {schoolBranding.initials}
+                  </span>
+                )}
+              </div>
+            )}
             <div className="min-w-0">
+              {schoolBranding && (
+                <p className="truncate text-[10px] font-semibold uppercase tracking-[0.22em] text-white/45">
+                  {schoolBranding.schoolName}
+                </p>
+              )}
               <h1 className="truncate text-sm font-bold sm:text-base">{liveClass.name}</h1>
               <p className="truncate text-[11px] text-white/70 sm:text-xs">
                 {liveClass.code} • {liveClass.subject} • {liveClass.duration}
@@ -2696,7 +3278,41 @@ const LiveClassroom = () => {
         </div>
       )}
 
-      {giftNotifications.length > 0 && (
+      {isTeacher && showTeacherWelcome && (
+        <div className="fixed inset-0 z-[65] flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-lg rounded-2xl border border-white/20 bg-[#121436] p-6 text-white shadow-xl">
+            <h2 className="text-lg font-bold text-white">
+              Welcome, {selfParticipant.name}
+            </h2>
+            <p className="mt-2 text-sm text-white/80">
+              You’re hosting <span className="font-semibold">{liveClass.name}</span>.
+            </p>
+            <p className="mt-1 text-xs text-white/60">
+              {liveClass.subject} • {liveClass.duration}
+            </p>
+
+            <div className="mt-4 rounded-lg border border-white/10 bg-white/5 px-3 py-3 text-xs text-white/70">
+              <p className="font-semibold text-white/90">Quick controls</p>
+              <ul className="mt-2 space-y-1">
+                <li>Invite students to the stage when they raise hands.</li>
+                <li>Mute or remove participants from stage if needed.</li>
+                <li>Use chat + classwork prompts to keep engagement high.</li>
+              </ul>
+            </div>
+
+            <div className="mt-5 flex items-center gap-2">
+              <button
+                onClick={() => setShowTeacherWelcome(false)}
+                className="flex-1 rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-xs font-semibold text-white hover:bg-white/10"
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {giftingEnabled && giftNotifications.length > 0 && (
         <div className="pointer-events-none fixed right-3 top-20 z-50 w-[min(90vw,360px)] space-y-2">
           {giftNotifications.map((notification) => (
             <article
@@ -2713,7 +3329,7 @@ const LiveClassroom = () => {
         </div>
       )}
 
-      {advancedGiftSpotlight && (
+      {giftingEnabled && advancedGiftSpotlight && (
         <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center px-4">
           <div className="absolute inset-0 bg-black/45 backdrop-blur-[1px]"></div>
           <article
@@ -2748,6 +3364,47 @@ const LiveClassroom = () => {
                     {advancedGiftSpotlight.recipientName}
                   </p>
                 </div>
+              </div>
+            </div>
+          </article>
+        </div>
+      )}
+
+      {spotlightQuestion && (
+        <div className="fixed inset-x-0 top-2 z-40 flex justify-center px-3">
+          <article className="w-[min(92vw,720px)] rounded-2xl border border-amber-300/40 bg-amber-500/15 px-4 py-3 text-amber-50 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-amber-100/80">Spotlight Question</p>
+                <p className="text-sm font-semibold">{spotlightQuestion.studentName}</p>
+                <p className="mt-1 text-xs text-amber-50/90">{spotlightQuestion.text}</p>
+              </div>
+              {isTeacher && (
+                <button
+                  type="button"
+                  onClick={() => resolveLiveQuestion(spotlightQuestion)}
+                  className="inline-flex items-center gap-1 rounded-full bg-amber-500/25 px-3 py-1 text-[11px] font-semibold text-amber-50 hover:bg-amber-500/35"
+                >
+                  Resolve
+                </button>
+              )}
+            </div>
+          </article>
+        </div>
+      )}
+
+      {hotQuestion && hotQuestionRemainingMs > 0 && (
+        <div className="fixed inset-x-0 top-24 z-40 flex justify-center px-3">
+          <article className="w-[min(92vw,720px)] rounded-2xl border border-sky-300/40 bg-sky-500/15 px-4 py-2.5 text-sky-50 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-sky-100/80">Hot Question</p>
+                <p className="text-sm font-semibold">{hotQuestion.studentName}</p>
+                <p className="mt-1 text-xs text-sky-50/90">{hotQuestion.text}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] uppercase text-sky-100/80">Time left</p>
+                <p className="text-sm font-semibold">{formatCountdown(hotQuestionRemainingMs)}</p>
               </div>
             </div>
           </article>
@@ -2829,26 +3486,55 @@ const LiveClassroom = () => {
               </div>
 
               <div className="absolute bottom-3 right-3">
-                <button
-                  onClick={sendLike}
-                  className="inline-flex items-center gap-1 rounded-full border border-rose-300/40 bg-rose-500/25 px-3 py-1 text-xs font-semibold text-rose-50 hover:bg-rose-500/35 transition-colors"
-                >
-                  <HeartIcon className="h-4 w-4" />
-                  Tap ❤️
-                </button>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 rounded-full border border-white/15 bg-black/35 px-2 py-1">
+                    {reactionPalette.map((reaction) => (
+                      <button
+                        key={reaction.emoji}
+                        type="button"
+                        onClick={() => sendReaction(reaction.emoji)}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-sm transition-transform hover:scale-105 hover:bg-white/20"
+                        aria-label={reaction.label}
+                      >
+                        {reaction.emoji}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={sendLike}
+                    className="inline-flex items-center gap-1 rounded-full border border-rose-300/40 bg-rose-500/25 px-3 py-1 text-xs font-semibold text-rose-50 hover:bg-rose-500/35 transition-colors"
+                  >
+                    <HeartIcon className="h-4 w-4" />
+                    Tap ❤️
+                  </button>
+                </div>
               </div>
 
               <div className="pointer-events-none absolute inset-0 overflow-hidden">
-                {floatingGifts.map((gift) => (
+                {floatingReactions.map((reaction) => (
                   <div
-                    key={gift.id}
-                    className={`gift-float absolute bottom-4 rounded-full bg-linear-to-r ${gift.accentClass} px-3 py-1 text-xs font-bold text-white shadow-xl`}
-                    style={{ right: `${16 + gift.lane * 52}px` }}
+                    key={reaction.id}
+                    className={`gift-float absolute bottom-4 rounded-full bg-linear-to-r ${reaction.accentClass} px-2.5 py-1 text-xs font-bold text-white shadow-xl`}
+                    style={{ right: `${16 + reaction.lane * 52}px` }}
                   >
-                    {gift.label}
+                    {reaction.label}
                   </div>
                 ))}
               </div>
+
+              {giftingEnabled && (
+                <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                  {floatingGifts.map((gift) => (
+                    <div
+                      key={gift.id}
+                      className={`gift-float absolute bottom-4 rounded-full bg-linear-to-r ${gift.accentClass} px-3 py-1 text-xs font-bold text-white shadow-xl`}
+                      style={{ right: `${16 + gift.lane * 52}px` }}
+                    >
+                      {gift.label}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-2 border-t border-white/10 bg-black/25 p-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -2908,15 +3594,17 @@ const LiveClassroom = () => {
                 {handRaised ? 'Lower Hand' : 'Raise Hand'}
               </button>
 
-              <button
-                onClick={() => queueGiftTap(selectedGiftId)}
-                className="rounded-xl border border-[#F68C29]/40 bg-[#F68C29]/20 px-3 py-2 text-xs font-semibold text-[#ffe6cf] hover:bg-[#F68C29]/30 transition-colors"
-              >
-                <span className="mx-auto mb-1 block w-fit">
-                  <GiftTopIcon className="h-4 w-4" />
-                </span>
-                Quick School Gift
-              </button>
+              {giftingEnabled && (
+                <button
+                  onClick={() => queueGiftTap(selectedGiftId)}
+                  className="rounded-xl border border-[#F68C29]/40 bg-[#F68C29]/20 px-3 py-2 text-xs font-semibold text-[#ffe6cf] hover:bg-[#F68C29]/30 transition-colors"
+                >
+                  <span className="mx-auto mb-1 block w-fit">
+                    <GiftTopIcon className="h-4 w-4" />
+                  </span>
+                  Quick School Gift
+                </button>
+              )}
 
               <button
                 onClick={handleClassroomExit}
@@ -2966,8 +3654,18 @@ const LiveClassroom = () => {
           )}
 
           {notice && (
-            <div className="rounded-xl border border-[#F68C29]/40 bg-[#F68C29]/10 px-3 py-2 text-xs text-[#ffe4cf]">
-              {notice}
+            <div className={`animate-toast flex items-start justify-between gap-3 rounded-xl border px-3 py-2 text-xs ${noticeClass}`}>
+              <span className="min-w-0">{notice.text}</span>
+              {(notice.type === 'warning' || notice.type === 'error') && (
+                <button
+                  type="button"
+                  onClick={clearNotice}
+                  aria-label="Dismiss notice"
+                  className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/30 bg-white/10 text-[10px] font-semibold text-white/80 hover:bg-white/20"
+                >
+                  <XMarkIcon className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
           )}
 
@@ -3125,6 +3823,30 @@ const LiveClassroom = () => {
                   Invite students to the stage for questions and live discussion. Students with raised hands are shown first.
                 </p>
 
+                <div className="flex items-center justify-between rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-white/55">Stage Queue</p>
+                    <p className="text-xs text-white/80">
+                      {raisedHandStudents.length === 0
+                        ? 'No hands raised'
+                        : `${raisedHandStudents.length} waiting to speak`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (raisedHandStudents[0]) {
+                        void inviteStudentToStage(raisedHandStudents[0].id);
+                      }
+                    }}
+                    disabled={raisedHandStudents.length === 0}
+                    className="inline-flex items-center gap-1 rounded-md bg-[#F68C29] px-2.5 py-1 text-[11px] font-semibold text-white disabled:bg-white/15 disabled:text-white/50"
+                  >
+                    <UserPlusIcon className="h-3.5 w-3.5" />
+                    Invite Next
+                  </button>
+                </div>
+
                 <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
                   <p className="mb-2 text-[11px] font-semibold text-white/80">Raised Hand Requests</p>
                   {raisedHandStudents.length === 0 ? (
@@ -3220,6 +3942,28 @@ const LiveClassroom = () => {
                 <p className="text-[11px] text-white/70">
                   Raise your hand to request stage access. Tutor can invite you up for live questions.
                 </p>
+                <div className="rounded-xl border border-amber-300/35 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-50">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold text-amber-100">Ask to Speak</p>
+                      <p className="text-[11px] text-amber-50/85">
+                        Request to join the stage for your question.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={toggleHandRaise}
+                      className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold ${
+                        handRaised
+                          ? 'bg-white/20 text-white'
+                          : 'bg-[#F68C29] text-white hover:bg-[#e67e22]'
+                      }`}
+                    >
+                      <HandRaisedIcon className="h-3.5 w-3.5" />
+                      {handRaised ? 'Lower' : 'Request'}
+                    </button>
+                  </div>
+                </div>
                 <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[11px]">
                   {isSelfOnStage ? (
                     <p className="font-semibold text-emerald-200">You are currently on stage for Q&A.</p>
@@ -3249,249 +3993,476 @@ const LiveClassroom = () => {
           <div className="rounded-2xl border border-white/10 bg-linear-to-r from-[#0f122a] via-[#161b37] to-[#1d1733] px-3 py-2.5">
             <p className="text-[10px] uppercase tracking-[0.18em] text-white/55">Engagement Hub</p>
             <p className="mt-1 text-xs text-white/80">
-              Manage chat, gifting, and room interactions from this panel.
+              Manage chat{giftingEnabled ? ', gifting,' : ''} and room interactions from this panel.
             </p>
           </div>
 
-          <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.05]">
-            <div className="border-b border-white/10 bg-linear-to-r from-[#111429] via-[#1a1f3d] to-[#221735] p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2.5">
-                  <img
-                    src={selfParticipant.avatar || buildFallbackAvatar(selfParticipant.name)}
-                    alt={selfParticipant.name}
-                    className="h-10 w-10 rounded-full border border-white/25 object-cover"
-                    onError={(event) => {
-                      event.currentTarget.onerror = null;
-                      event.currentTarget.src = buildFallbackAvatar(selfParticipant.name);
-                    }}
-                  />
-                  <div className="min-w-0">
-                    <p className="truncate text-[10px] uppercase tracking-wider text-white/60">Gift Rewards</p>
-                    <h3 className="truncate text-sm font-semibold text-white">Send a gift to reactivate your rewards</h3>
-                    <p className="mt-0.5 text-[11px] text-white/70">Level {currentBadge.level} • {currentBadge.name}</p>
-                  </div>
-                </div>
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#0d1025] px-2.5 py-1 text-[11px] font-semibold text-[#ffe4c3]">
-                  <img src={GIFT_COIN_ICON_URL} alt="Coin" className="h-3.5 w-3.5" />
-                  {coinBalance.toLocaleString()}
-                </span>
-              </div>
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/15">
-                <div
-                  className="h-full rounded-full bg-linear-to-r from-[#F68C29] via-[#fb7185] to-[#3D08BA]"
-                  style={{ width: `${Math.round(rewardProgressToNextBadge * 100)}%` }}
-                ></div>
-              </div>
-              <p className="mt-1 text-[10px] text-white/65">
-                Total gifted: {totalGiftedCoins.toLocaleString()} coins
-                {nextBadge
-                  ? ` • ${Math.max(0, nextBadge.minTotalGiftedCoins - totalGiftedCoins).toLocaleString()} coins to ${nextBadge.name}`
-                  : ' • Max badge unlocked'}
-              </p>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="inline-flex items-center gap-2 text-sm font-semibold">
+                <UserGroupIcon className="h-4 w-4" />
+                Question Queue
+              </h3>
+              <span className="text-[11px] text-white/65">
+                {questionQueue.filter((q) => q.status !== 'resolved').length} open
+              </span>
             </div>
 
-            <div className="space-y-3 p-3">
-              <div>
-                <label className="mb-1 block text-[11px] text-white/65">Gift Target</label>
-                <select
-                  value={selectedRecipientId}
-                  onChange={(event) => setSelectedRecipientId(event.target.value)}
-                  className="w-full rounded-lg border border-white/20 bg-[#0f1026] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#F68C29]/60"
-                >
-                  {recipientOptions.map((recipient) => (
-                    <option key={recipient.id} value={recipient.id}>
-                      {recipient.name} ({recipient.targetType === 'teacher' ? 'Teacher' : 'School'})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg bg-black/25 px-3 py-2 text-[11px] text-white/75">
-                <p>Pin gifts you like to the top</p>
-                <button
-                  type="button"
-                  onClick={() => togglePinnedGift(selectedGift.id)}
-                  className="rounded-md border border-[#ff2b7a]/55 bg-[#ff2b7a]/20 px-2 py-0.5 text-[11px] font-semibold text-[#ffc2dc] hover:bg-[#ff2b7a]/30"
-                >
-                  Pin
-                </button>
-              </div>
-
-              {isSendingGift && <p className="text-[11px] text-[#ffd9ba]">Sending gift combo...</p>}
-
-              <div className="max-h-[360px] overflow-y-auto pr-1">
-                {visibleGifts.length === 0 ? (
-                  <p className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[11px] text-white/65">
-                    No gifts available for this tab yet.
+            {isTeacher ? (
+              <div className="space-y-2">
+                <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[11px] text-white/70">
+                  <p className="font-semibold text-white/85">Host guide</p>
+                  <p className="mt-1">
+                    Spotlight to pin a question, Invite to bring the student on stage, Resolve to close it.
                   </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+	                  <button
+	                    type="button"
+	                    onClick={() => startHotQuestion()}
+	                    className="rounded-full bg-sky-500/30 px-3 py-1 text-[11px] font-semibold text-sky-50 hover:bg-sky-500/45"
+	                  >
+                    Start Hot Question (60s)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAutoHotEnabled((previous) => !previous)}
+                    className={`rounded-full px-3 py-1 text-[11px] font-semibold ${
+                      autoHotEnabled
+                        ? 'bg-emerald-500/30 text-emerald-50'
+                        : 'bg-white/10 text-white/70 hover:bg-white/20'
+                    }`}
+                  >
+                    Auto Hot: {autoHotEnabled ? 'On' : 'Off'}
+                  </button>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[11px] text-white/70">
+                    <span className="text-[10px] uppercase tracking-wide text-white/50">Reactions</span>
+                    <select
+                      value={reactionSetKey}
+                      onChange={(event) => setReactionSetKey(event.target.value)}
+                      className="rounded-md border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white"
+                    >
+                      {Object.keys(REACTION_PALETTE_BY_SET).map((key) => (
+                        <option key={key} value={key}>
+                          {key}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[11px] text-white/70">
+                    <span className="text-[10px] uppercase tracking-wide text-white/50">Cooldown</span>
+                    <select
+                      value={hotCooldownMs}
+                      onChange={(event) => setHotCooldownMs(Number(event.target.value))}
+                      className="rounded-md border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white"
+                    >
+                      {HOT_COOLDOWN_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAutoHotEnabled(false);
+                      setHotCooldownMs(HOT_QUESTION_COOLDOWN_MS);
+                      setReactionSetKey('classic');
+                      if (typeof window !== 'undefined') {
+                        window.localStorage.removeItem(classAutoHotKey);
+                        window.localStorage.removeItem(classCooldownKey);
+                        window.localStorage.removeItem(classReactionSetKey);
+                      }
+                      setSettingsToastVisible(true);
+                    }}
+                    className="rounded-full border border-white/20 bg-white/5 px-3 py-1 text-[11px] font-semibold text-white/75 hover:bg-white/15"
+                  >
+                    Reset Class Settings
+                  </button>
+                  {settingsToastVisible && (
+                    <span className="animate-toast rounded-full border border-emerald-300/40 bg-emerald-500/15 px-2.5 py-0.5 text-[10px] text-emerald-100">
+                      Settings reset
+                    </span>
+                  )}
+                  {hotQuestion && (
+                    <span className="rounded-full border border-sky-300/40 bg-sky-500/15 px-2.5 py-0.5 text-[10px] text-sky-100">
+                      Active • {formatCountdown(hotQuestionRemainingMs)}
+                    </span>
+                  )}
+                  {cooldownStudentId && (
+                    <span className="rounded-full border border-amber-300/40 bg-amber-500/15 px-2.5 py-0.5 text-[10px] text-amber-100">
+                      Cooldown active
+                    </span>
+                  )}
+                </div>
+                {questionQueue.filter((q) => q.status !== 'resolved').length === 0 ? (
+                  <p className="text-xs text-white/65">No questions yet. Encourage students to ask.</p>
                 ) : (
-                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                    {visibleGifts.map((gift) => {
-                      const locked = gift.unlockBadgeLevel > currentBadge.level;
-                      const pinned = pinnedGiftIds.includes(gift.id);
-
-                      return (
-                        <article
-                          key={gift.id}
-                          className={`relative overflow-hidden rounded-xl border p-1.5 transition-all ${
-                            selectedGiftId === gift.id
-                              ? 'border-[#F68C29]/80 bg-[#F68C29]/18 shadow-[0_0_0_1px_rgba(246,140,41,0.4)]'
-                              : 'border-white/12 bg-[#0e1026]/85 hover:bg-white/[0.08]'
-                          }`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => queueGiftTap(gift.id)}
-                            className="w-full text-left"
-                          >
-                            <div className="relative">
-                              <img
-                                src={gift.iconUrl}
-                                alt={gift.name}
-                                className="mx-auto h-16 w-16 rounded-2xl object-cover shadow-lg"
-                                onError={(event) => {
-                                  event.currentTarget.onerror = null;
-                                  event.currentTarget.src = '/gifts/coin.svg';
-                                }}
-                              />
-                              {gift.tier === 'advanced' && (
-                                <span className="absolute -top-1 left-0 inline-flex items-center rounded-full bg-[#3D08BA] px-1.5 py-0.5 text-[9px] font-semibold text-white">
-                                  ADV
-                                </span>
-                              )}
-                              {locked && (
-                                <span className="absolute inset-0 grid place-items-center rounded-2xl bg-black/55 text-amber-100">
-                                  <LockClosedIcon className="h-4 w-4" />
+                  questionQueue
+                    .filter((q) => q.status !== 'resolved')
+                    .slice(0, 6)
+                    .map((question) => (
+                      <article key={question.id} className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-[11px] font-semibold text-white/90">{question.studentName}</p>
+                            <p className="mt-1 text-[11px] text-white/70">{question.text}</p>
+                            <div className="mt-2 flex items-center gap-2 text-[10px] text-white/60">
+                              <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5">
+                                {question.votes} votes
+                              </span>
+                              <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5">
+                                {formatClockTime(question.submittedAt)}
+                              </span>
+                              {cooldownStudentId === question.studentId && (
+                                <span className="rounded-full border border-amber-300/40 bg-amber-500/15 px-2 py-0.5 text-amber-100">
+                                  Cooldown
                                 </span>
                               )}
                             </div>
-                            <p className="mt-1 truncate text-[11px] font-semibold">{gift.name}</p>
-                            <p className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-white/75">
-                              <img src={GIFT_COIN_ICON_URL} alt="Coin" className="h-3 w-3" />
-                              {gift.coinCost}
-                            </p>
-                            {selectedGiftId === gift.id && !locked ? (
-                              <span className="mt-1 inline-flex rounded-md bg-[#ff2b7a] px-2 py-0.5 text-[10px] font-semibold text-white">
-                                Send
-                              </span>
-                            ) : (
-                              <span className="mt-1 inline-flex text-[10px] text-white/55">
-                                {locked ? `Badge ${gift.unlockBadgeLevel}` : 'Tap gift'}
-                              </span>
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              togglePinnedGift(gift.id);
-                            }}
-                            className={`absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full border ${
-                              pinned
-                                ? 'border-[#F68C29]/80 bg-[#F68C29]/25 text-[#ffd6a7]'
-                                : 'border-white/20 bg-black/35 text-white/65 hover:bg-black/55'
-                            }`}
-                            aria-label={pinned ? 'Unpin gift' : 'Pin gift'}
-                          >
-                            <BookmarkIcon className="h-3.5 w-3.5" />
-                          </button>
-                        </article>
-                      );
-                    })}
-                  </div>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <button
+                              type="button"
+                              onClick={() => spotlightLiveQuestion(question)}
+                              className="rounded-md bg-[#3D08BA] px-2 py-1 text-[10px] font-semibold text-white hover:bg-[#2b0690]"
+                            >
+                              Spotlight
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void inviteStudentToStage(question.studentId)}
+                              disabled={onStageParticipantIds.includes(question.studentId)}
+                              className="rounded-md border border-amber-300/40 bg-amber-500/15 px-2 py-1 text-[10px] font-semibold text-amber-100 hover:bg-amber-500/25 disabled:bg-white/10 disabled:text-white/50"
+                            >
+                              {onStageParticipantIds.includes(question.studentId) ? 'On Stage' : 'Invite'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => resolveLiveQuestion(question)}
+                              className="rounded-md border border-emerald-300/40 bg-emerald-500/15 px-2 py-1 text-[10px] font-semibold text-emerald-100 hover:bg-emerald-500/25"
+                            >
+                              Resolve
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    ))
                 )}
               </div>
-
-              <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-[#0e1024] p-2">
-                {(['gifts', 'interactive', 'exclusive'] as GiftPanelTab[]).map((tab) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    onClick={() => setGiftPanelTab(tab)}
-                    className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold capitalize transition-colors ${
-                      giftPanelTab === tab
-                        ? 'bg-white text-[#121735]'
-                        : 'bg-white/8 text-white/70 hover:bg-white/15 hover:text-white'
-                    }`}
-                  >
-                    {tab === 'gifts' ? 'Gifts' : tab === 'interactive' ? 'Interactive' : 'Exclusive'}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => setIsRechargeOpen(true)}
-                  className="ml-auto inline-flex items-center gap-1 rounded-lg border border-[#3D08BA]/60 bg-[#3D08BA]/25 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-[#3D08BA]/40"
-                >
-                  <img src={GIFT_COIN_ICON_URL} alt="Coin" className="h-3.5 w-3.5" />
-                  Recharge
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-2.5 py-2">
-                <img
-                  src={selectedGift.iconUrl}
-                  alt={selectedGift.name}
-                  className="h-11 w-11 rounded-xl border border-white/15 object-cover"
-                  onError={(event) => {
-                    event.currentTarget.onerror = null;
-                    event.currentTarget.src = '/gifts/coin.svg';
+            ) : (
+              <div className="space-y-3">
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    submitLiveQuestion(questionDraft);
                   }}
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-semibold text-white/95">{selectedGift.name}</p>
-                  <p className="truncate text-[10px] text-white/65">
-                    To {selectedRecipient?.name || 'Recipient'} • {selectedGift.coinCost} coins
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => queueGiftTap(selectedGift.id)}
-                  disabled={selectedGiftLocked}
-                  className="rounded-lg bg-[#ff2b7a] px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-[#ff0f68] disabled:bg-white/20 disabled:text-white/60"
+                  className="space-y-2"
                 >
-                  {selectedGiftLocked ? `Badge ${selectedGift.unlockBadgeLevel}` : 'Send'}
-                </button>
-              </div>
-
-              {giftComboCount > 0 && giftComboGiftId && (
-                <div className="rounded-xl border border-[#F68C29]/40 bg-[#F68C29]/15 px-3 py-2 text-xs text-[#ffe6cf]">
-                  <p className="font-semibold">
-                    Combo x{giftComboCount} • {GIFT_CATALOG.find((gift) => gift.id === giftComboGiftId)?.name}
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-[#ffd9ba]">Keep tapping to multiply before auto-send.</p>
-                </div>
-              )}
-
-              <p className="text-[11px] text-white/65">
-                Single tap sends once. Rapid continuous taps multiply the same gift automatically.
-              </p>
-
-              <div className="border-t border-white/10 pt-3">
-                <h4 className="mb-2 text-xs font-semibold text-white/80">Top Gifters</h4>
-                {topGifters.length === 0 ? (
-                  <p className="text-xs text-white/55">No gifts yet. Be the first to support the class.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {topGifters.map((gifter, index) => (
-                      <div
-                        key={gifter.senderId}
-                        className="flex items-center justify-between rounded-lg bg-black/25 px-2.5 py-1.5 text-xs"
-                      >
-                        <span className="truncate">
-                          #{index + 1} {gifter.senderName}
-                        </span>
-                        <span className="inline-flex items-center gap-1 font-semibold text-[#ffd7aa]">
-                          <img src={GIFT_COIN_ICON_URL} alt="Coin" className="h-3 w-3" />
-                          {gifter.total}
-                        </span>
-                      </div>
-                    ))}
+                  <textarea
+                    value={questionDraft}
+                    onChange={(event) => setQuestionDraft(event.target.value)}
+                    placeholder="Type your question for the tutor..."
+                    rows={3}
+                    className="w-full resize-none rounded-xl border border-white/15 bg-black/30 px-3 py-2 text-xs text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-amber-400/60"
+                  />
+                  <button
+                    type="submit"
+                    className="inline-flex items-center gap-2 rounded-lg bg-amber-500/30 px-3 py-1.5 text-xs font-semibold text-amber-50 hover:bg-amber-500/45"
+                  >
+                    <PaperAirplaneIcon className="h-4 w-4" />
+                    Send Question
+                  </button>
+                </form>
+                {questionQueue.filter((q) => q.studentId === selfParticipant.id).length > 0 && (
+                  <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-[11px] text-white/70">
+                    Latest status:{' '}
+                    <span className="font-semibold text-white/90">
+                      {questionQueue.find((q) => q.studentId === selfParticipant.id)?.status ?? 'open'}
+                    </span>
                   </div>
                 )}
+
+                {questionQueue.filter((q) => q.status === 'open').length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-white/50">Upvote Questions</p>
+                    {questionQueue
+                      .filter((q) => q.status === 'open')
+                      .slice(0, 4)
+                      .map((question) => {
+                        const hasVoted = question.voterIds.includes(selfParticipant.id);
+                        return (
+                          <article key={question.id} className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="truncate text-[11px] font-semibold text-white/90">{question.studentName}</p>
+                                <p className="mt-1 text-[11px] text-white/70">{question.text}</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => voteForQuestion(question.id)}
+                                disabled={hasVoted}
+                                className="rounded-md border border-sky-300/40 bg-sky-500/15 px-2 py-1 text-[10px] font-semibold text-sky-100 hover:bg-sky-500/25 disabled:bg-white/10 disabled:text-white/50"
+                              >
+                                {hasVoted ? 'Voted' : `Vote (${question.votes})`}
+                              </button>
+                            </div>
+                          </article>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {giftingEnabled ? (
+            <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.05]">
+              <div className="border-b border-white/10 bg-linear-to-r from-[#111429] via-[#1a1f3d] to-[#221735] p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <img
+                      src={selfParticipant.avatar || buildFallbackAvatar(selfParticipant.name)}
+                      alt={selfParticipant.name}
+                      className="h-10 w-10 rounded-full border border-white/25 object-cover"
+                      onError={(event) => {
+                        event.currentTarget.onerror = null;
+                        event.currentTarget.src = buildFallbackAvatar(selfParticipant.name);
+                      }}
+                    />
+                    <div className="min-w-0">
+                      <p className="truncate text-[10px] uppercase tracking-wider text-white/60">Gift Rewards</p>
+                      <h3 className="truncate text-sm font-semibold text-white">Send a gift to reactivate your rewards</h3>
+                      <p className="mt-0.5 text-[11px] text-white/70">Level {currentBadge.level} • {currentBadge.name}</p>
+                    </div>
+                  </div>
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#0d1025] px-2.5 py-1 text-[11px] font-semibold text-[#ffe4c3]">
+                    <img src={GIFT_COIN_ICON_URL} alt="Coin" className="h-3.5 w-3.5" />
+                    {coinBalance.toLocaleString()}
+                  </span>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/15">
+                  <div
+                    className="h-full rounded-full bg-linear-to-r from-[#F68C29] via-[#fb7185] to-[#3D08BA]"
+                    style={{ width: `${Math.round(rewardProgressToNextBadge * 100)}%` }}
+                  ></div>
+                </div>
+                <p className="mt-1 text-[10px] text-white/65">
+                  Total gifted: {totalGiftedCoins.toLocaleString()} coins
+                  {nextBadge
+                    ? ` • ${Math.max(0, nextBadge.minTotalGiftedCoins - totalGiftedCoins).toLocaleString()} coins to ${nextBadge.name}`
+                    : ' • Max badge unlocked'}
+                </p>
+              </div>
+
+              <div className="space-y-3 p-3">
+                <div>
+                  <label className="mb-1 block text-[11px] text-white/65">Gift Target</label>
+                  <select
+                    value={selectedRecipientId}
+                    onChange={(event) => setSelectedRecipientId(event.target.value)}
+                    className="w-full rounded-lg border border-white/20 bg-[#0f1026] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#F68C29]/60"
+                  >
+                    {recipientOptions.map((recipient) => (
+                      <option key={recipient.id} value={recipient.id}>
+                        {recipient.name} ({recipient.targetType === 'teacher' ? 'Teacher' : 'School'})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg bg-black/25 px-3 py-2 text-[11px] text-white/75">
+                  <p>Pin gifts you like to the top</p>
+                  <button
+                    type="button"
+                    onClick={() => togglePinnedGift(selectedGift.id)}
+                    className="rounded-md border border-[#ff2b7a]/55 bg-[#ff2b7a]/20 px-2 py-0.5 text-[11px] font-semibold text-[#ffc2dc] hover:bg-[#ff2b7a]/30"
+                  >
+                    Pin
+                  </button>
+                </div>
+
+                {isSendingGift && <p className="text-[11px] text-[#ffd9ba]">Sending gift combo...</p>}
+
+                <div className="max-h-[360px] overflow-y-auto pr-1">
+                  {visibleGifts.length === 0 ? (
+                    <p className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[11px] text-white/65">
+                      No gifts available for this tab yet.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                      {visibleGifts.map((gift) => {
+                        const locked = gift.unlockBadgeLevel > currentBadge.level;
+                        const pinned = pinnedGiftIds.includes(gift.id);
+
+                        return (
+                          <article
+                            key={gift.id}
+                            className={`relative overflow-hidden rounded-xl border p-1.5 transition-all ${
+                              selectedGiftId === gift.id
+                                ? 'border-[#F68C29]/80 bg-[#F68C29]/18 shadow-[0_0_0_1px_rgba(246,140,41,0.4)]'
+                                : 'border-white/12 bg-[#0e1026]/85 hover:bg-white/[0.08]'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => queueGiftTap(gift.id)}
+                              className="w-full text-left"
+                            >
+                              <div className="relative">
+                                <img
+                                  src={gift.iconUrl}
+                                  alt={gift.name}
+                                  className="mx-auto h-16 w-16 rounded-2xl object-cover shadow-lg"
+                                  onError={(event) => {
+                                    event.currentTarget.onerror = null;
+                                    event.currentTarget.src = '/gifts/coin.svg';
+                                  }}
+                                />
+                                {gift.tier === 'advanced' && (
+                                  <span className="absolute -top-1 left-0 inline-flex items-center rounded-full bg-[#3D08BA] px-1.5 py-0.5 text-[9px] font-semibold text-white">
+                                    ADV
+                                  </span>
+                                )}
+                                {locked && (
+                                  <span className="absolute inset-0 grid place-items-center rounded-2xl bg-black/55 text-amber-100">
+                                    <LockClosedIcon className="h-4 w-4" />
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-1 truncate text-[11px] font-semibold">{gift.name}</p>
+                              <p className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-white/75">
+                                <img src={GIFT_COIN_ICON_URL} alt="Coin" className="h-3 w-3" />
+                                {gift.coinCost}
+                              </p>
+                              {selectedGiftId === gift.id && !locked ? (
+                                <span className="mt-1 inline-flex rounded-md bg-[#ff2b7a] px-2 py-0.5 text-[10px] font-semibold text-white">
+                                  Send
+                                </span>
+                              ) : (
+                                <span className="mt-1 inline-flex text-[10px] text-white/55">
+                                  {locked ? `Badge ${gift.unlockBadgeLevel}` : 'Tap gift'}
+                                </span>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                togglePinnedGift(gift.id);
+                              }}
+                              className={`absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full border ${
+                                pinned
+                                  ? 'border-[#F68C29]/80 bg-[#F68C29]/25 text-[#ffd6a7]'
+                                  : 'border-white/20 bg-black/35 text-white/65 hover:bg-black/55'
+                              }`}
+                              aria-label={pinned ? 'Unpin gift' : 'Pin gift'}
+                            >
+                              <BookmarkIcon className="h-3.5 w-3.5" />
+                            </button>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-[#0e1024] p-2">
+                  {(['gifts', 'interactive', 'exclusive'] as GiftPanelTab[]).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setGiftPanelTab(tab)}
+                      className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold capitalize transition-colors ${
+                        giftPanelTab === tab
+                          ? 'bg-white text-[#121735]'
+                          : 'bg-white/8 text-white/70 hover:bg-white/15 hover:text-white'
+                      }`}
+                    >
+                      {tab === 'gifts' ? 'Gifts' : tab === 'interactive' ? 'Interactive' : 'Exclusive'}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setIsRechargeOpen(true)}
+                    className="ml-auto inline-flex items-center gap-1 rounded-lg border border-[#3D08BA]/60 bg-[#3D08BA]/25 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-[#3D08BA]/40"
+                  >
+                    <img src={GIFT_COIN_ICON_URL} alt="Coin" className="h-3.5 w-3.5" />
+                    Recharge
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 px-2.5 py-2">
+                  <img
+                    src={selectedGift.iconUrl}
+                    alt={selectedGift.name}
+                    className="h-11 w-11 rounded-xl border border-white/15 object-cover"
+                    onError={(event) => {
+                      event.currentTarget.onerror = null;
+                      event.currentTarget.src = '/gifts/coin.svg';
+                    }}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold text-white/95">{selectedGift.name}</p>
+                    <p className="truncate text-[10px] text-white/65">
+                      To {selectedRecipient?.name || 'Recipient'} • {selectedGift.coinCost} coins
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => queueGiftTap(selectedGift.id)}
+                    disabled={selectedGiftLocked}
+                    className="rounded-lg bg-[#ff2b7a] px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-[#ff0f68] disabled:bg-white/20 disabled:text-white/60"
+                  >
+                    {selectedGiftLocked ? `Badge ${selectedGift.unlockBadgeLevel}` : 'Send'}
+                  </button>
+                </div>
+
+                {giftComboCount > 0 && giftComboGiftId && (
+                  <div className="rounded-xl border border-[#F68C29]/40 bg-[#F68C29]/15 px-3 py-2 text-xs text-[#ffe6cf]">
+                    <p className="font-semibold">
+                      Combo x{giftComboCount} • {GIFT_CATALOG.find((gift) => gift.id === giftComboGiftId)?.name}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-[#ffd9ba]">Keep tapping to multiply before auto-send.</p>
+                  </div>
+                )}
+
+                <p className="text-[11px] text-white/65">
+                  Single tap sends once. Rapid continuous taps multiply the same gift automatically.
+                </p>
+
+                <div className="border-t border-white/10 pt-3">
+                  <h4 className="mb-2 text-xs font-semibold text-white/80">Top Gifters</h4>
+                  {topGifters.length === 0 ? (
+                    <p className="text-xs text-white/55">No gifts yet. Be the first to support the class.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {topGifters.map((gifter, index) => (
+                        <div
+                          key={gifter.senderId}
+                          className="flex items-center justify-between rounded-lg bg-black/25 px-2.5 py-1.5 text-xs"
+                        >
+                          <span className="truncate">
+                            #{index + 1} {gifter.senderName}
+                          </span>
+                          <span className="inline-flex items-center gap-1 font-semibold text-[#ffd7aa]">
+                            <img src={GIFT_COIN_ICON_URL} alt="Coin" className="h-3 w-3" />
+                            {gifter.total}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4 text-xs text-white/70">
+              Gifting is disabled for school-hosted classes. Parents and students can still
+              subscribe to class plans outside the live session.
+            </div>
+          )}
 
           <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4">
             <div className="mb-3 flex items-center justify-between">
@@ -3678,31 +4649,33 @@ const LiveClassroom = () => {
             </form>
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4">
-            <h3 className="mb-2 inline-flex items-center gap-2 text-sm font-semibold">
-              <GiftTopIcon className="h-4 w-4" />
-              Recent Gifts
-            </h3>
-            {giftFeed.length === 0 ? (
-              <p className="text-xs text-white/55">Gift activity will appear here in real-time.</p>
-            ) : (
-              <div className="space-y-2">
-                {giftFeed.slice(0, 6).map((gift) => (
-                  <article key={gift.id} className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-xs">
-                    <div className="flex items-start gap-2">
-                      <img src={gift.giftIconUrl} alt={gift.giftName} className="h-8 w-8 rounded-lg object-cover" />
-                      <p className="font-semibold text-white/90">
-                        {gift.senderName} sent {gift.giftName} x{gift.quantity}
+          {giftingEnabled && (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4">
+              <h3 className="mb-2 inline-flex items-center gap-2 text-sm font-semibold">
+                <GiftTopIcon className="h-4 w-4" />
+                Recent Gifts
+              </h3>
+              {giftFeed.length === 0 ? (
+                <p className="text-xs text-white/55">Gift activity will appear here in real-time.</p>
+              ) : (
+                <div className="space-y-2">
+                  {giftFeed.slice(0, 6).map((gift) => (
+                    <article key={gift.id} className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-xs">
+                      <div className="flex items-start gap-2">
+                        <img src={gift.giftIconUrl} alt={gift.giftName} className="h-8 w-8 rounded-lg object-cover" />
+                        <p className="font-semibold text-white/90">
+                          {gift.senderName} sent {gift.giftName} x{gift.quantity}
+                        </p>
+                      </div>
+                      <p className="mt-1 text-[11px] text-white/65">
+                        To {gift.recipientName} • {gift.totalCoins} coins • {formatClockTime(gift.sentAt)}
                       </p>
-                    </div>
-                    <p className="mt-1 text-[11px] text-white/65">
-                      To {gift.recipientName} • {gift.totalCoins} coins • {formatClockTime(gift.sentAt)}
-                    </p>
-                  </article>
-                ))}
-              </div>
-            )}
-          </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4 text-xs text-white/70">
             <p className="inline-flex items-center gap-2 font-semibold text-white/85">
@@ -3711,7 +4684,7 @@ const LiveClassroom = () => {
             </p>
             <p className="mt-2 leading-relaxed">
               This room combines structured live teaching with interactive class engagement. Students can chat, raise
-              hands, react with likes, and send school-themed gifts during the lesson.
+              hands, react with likes{giftingEnabled ? ', and send school-themed gifts during the lesson.' : ' during the lesson.'}
             </p>
           </div>
         </aside>
@@ -4019,6 +4992,30 @@ const LiveClassroom = () => {
 
         .advanced-gift-ping {
           animation: advancedGiftPing 1.3s ease-out infinite;
+        }
+
+        .animate-toast {
+          animation: fadeInUp 240ms ease-out, fadeOut 240ms ease-in 1.9s forwards;
+        }
+
+        @keyframes fadeInUp {
+          0% {
+            opacity: 0;
+            transform: translateY(4px);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        @keyframes fadeOut {
+          0% {
+            opacity: 1;
+          }
+          100% {
+            opacity: 0;
+          }
         }
       `}</style>
     </div>
