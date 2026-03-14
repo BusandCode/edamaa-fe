@@ -59,7 +59,7 @@ export default function TutorDashboard() {
         tutorData={tutorData}
         copied={copied}
         profileImg={profileImg}
-        onCopyId={copyId} tabs={[]} activeTab={"overview"} onTabChange={function (tab: TabId): void {
+        onCopyId={copyId} tabs={[]} activeTab={"overview"} onTabChange={function (_tab: TabId): void {
           throw new Error("Function not implemented.");
         } }      />
 
