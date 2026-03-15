@@ -349,6 +349,7 @@ const SchoolSchedule = () => {
   const [notice, setNotice] = useState<string | null>(null);
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
   const [timetableExportAction, setTimetableExportAction] = useState<'csv' | 'pdf' | null>(null);
+  const [teacherTimetableExportAction, setTeacherTimetableExportAction] = useState<'csv' | 'pdf' | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [sessionDraftMode, setSessionDraftMode] = useState<SessionDraftMode>('create');
@@ -822,6 +823,14 @@ const SchoolSchedule = () => {
 
     return grouped;
   }, [teacherTimetableWeekDays, timetableTeacherSessions]);
+
+  const visibleTeacherWeekSessions = useMemo(
+    () =>
+      teacherTimetableWeekDays.flatMap((day) =>
+        (teacherTimetableWeekSessionsByDay[day.key] || []).map((session) => ({ day, session }))
+      ),
+    [teacherTimetableWeekDays, teacherTimetableWeekSessionsByDay]
+  );
 
   const scheduleConflictPreview = useMemo(() => {
     const startAt = formState.startAt.trim();
@@ -1474,6 +1483,133 @@ const SchoolSchedule = () => {
 
   const shiftTeacherTimetableWeek = (direction: -1 | 1) => {
     setTeacherTimetableWeekStart((current) => addDays(current, direction * 7));
+  };
+
+  const handleExportTeacherTimetableCsv = () => {
+    if (!timetableTeacher || teacherTimetableExportAction || visibleTeacherWeekSessions.length === 0) {
+      return;
+    }
+
+    setTeacherTimetableExportAction('csv');
+    setNotice(null);
+
+    try {
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const lines: string[] = [
+        joinCsvRow(['Section', 'Metric', 'Value']),
+        joinCsvRow(['Teacher Timetable', 'Generated At', new Date().toLocaleString()]),
+        joinCsvRow(['Teacher Timetable', 'Teacher', timetableTeacher.name]),
+        joinCsvRow(['Teacher Timetable', 'Teacher Email', timetableTeacher.email]),
+        joinCsvRow(['Teacher Timetable', 'Week Range', formatWeekRangeLabel(teacherTimetableWeekStart)]),
+        joinCsvRow(['Teacher Timetable', 'Classes Exported', visibleTeacherWeekSessions.length]),
+        '',
+        joinCsvRow(['Day', 'Date', 'Time', 'Class Title', 'Subject', 'Audience', 'Room', 'Status']),
+      ];
+
+      visibleTeacherWeekSessions.forEach(({ day, session }) => {
+        lines.push(
+          joinCsvRow([
+            day.dayLabel,
+            new Date(session.startAt).toLocaleDateString(),
+            `${formatSessionTime(session.startAt)} - ${formatSessionTime(session.endAt)}`,
+            session.title,
+            session.subject,
+            getSessionAudienceLabel(session),
+            session.roomCode,
+            statusLabel(getSessionStatus(session, Date.now())),
+          ])
+        );
+      });
+
+      downloadFile(
+        new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }),
+        `edamaa-teacher-timetable-${dateStamp}.csv`
+      );
+      setNotice('Teacher timetable CSV export started.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Teacher timetable CSV export failed.');
+    } finally {
+      setTeacherTimetableExportAction(null);
+    }
+  };
+
+  const handleExportTeacherTimetablePdf = async () => {
+    if (!timetableTeacher || teacherTimetableExportAction || visibleTeacherWeekSessions.length === 0) {
+      return;
+    }
+
+    setTeacherTimetableExportAction('pdf');
+    setNotice(null);
+
+    try {
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const reportFrame = buildSchoolReportFrame({
+        title: `${timetableTeacher.name} Weekly Timetable`,
+        subtitle: formatWeekRangeLabel(teacherTimetableWeekStart),
+        metaLines: [
+          `Teacher email: ${timetableTeacher.email}`,
+          `Classes shown: ${visibleTeacherWeekSessions.length}`,
+        ],
+        documentLabel: 'Teacher timetable export',
+        documentCode: `TEACHER-TIMETABLE-${dateStamp.replaceAll('-', '')}`,
+        leftSignatoryRole: 'Prepared by',
+        rightSignatoryRole: 'Teacher record',
+      });
+
+      const tableBody: Array<Array<string>> = [
+        ['Day', 'Date', 'Time', 'Class', 'Audience', 'Room', 'Status'],
+        ...visibleTeacherWeekSessions.map(({ day, session }) => [
+          day.dayLabel,
+          new Date(session.startAt).toLocaleDateString(),
+          `${formatSessionTime(session.startAt)} - ${formatSessionTime(session.endAt)}`,
+          `${session.title}\n${session.subject}`,
+          getSessionAudienceLabel(session),
+          session.roomCode,
+          statusLabel(getSessionStatus(session, Date.now())),
+        ]),
+      ];
+
+      const docDefinition = {
+        pageOrientation: 'landscape',
+        pageMargins: [28, 36, 28, 28],
+        header: () => ({
+          margin: [28, 24, 28, 0],
+          stack: reportFrame.headerContent,
+        }),
+        footer: reportFrame.footer,
+        content: [
+          {
+            text: 'This export reflects the teacher timetable currently visible in the school schedule workspace.',
+            style: 'muted',
+            margin: [0, 0, 0, 10],
+          },
+          {
+            table: {
+              headerRows: 1,
+              widths: [42, 58, 72, '*', 100, 62, 58],
+              body: tableBody,
+            },
+            layout: 'lightHorizontalLines',
+          },
+          ...reportFrame.signOffContent,
+        ],
+        styles: {
+          ...schoolReportStyles,
+          header: { fontSize: 17, bold: true, margin: [0, 0, 0, 6] },
+          subheader: { fontSize: 12, bold: true, margin: [0, 0, 0, 4] },
+          sectionHeader: { fontSize: 12, bold: true, margin: [0, 8, 0, 6] },
+          muted: { fontSize: 10, color: '#4b5563', margin: [0, 0, 0, 2] },
+        },
+      } as Record<string, unknown>;
+
+      const pdfBlob = await createPdfBlob(docDefinition);
+      downloadFile(pdfBlob, `edamaa-teacher-timetable-${dateStamp}.pdf`);
+      setNotice('Teacher timetable PDF export started.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Teacher timetable PDF export failed.');
+    } finally {
+      setTeacherTimetableExportAction(null);
+    }
   };
 
   const handleEditSession = (session: SchoolScheduleSession) => {
@@ -2886,23 +3022,47 @@ const SchoolSchedule = () => {
                         Review this teacher&apos;s assigned classes week by week before scheduling more.
                       </p>
                     </div>
-                    <div className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-1 py-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-1 py-1">
+                        <button
+                          onClick={() => shiftTeacherTimetableWeek(-1)}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-600 hover:bg-white"
+                          aria-label="Previous teacher timetable week"
+                        >
+                          <FaChevronLeft size={11} />
+                        </button>
+                        <p className="px-2 text-xs font-semibold text-gray-700">
+                          {formatWeekRangeLabel(teacherTimetableWeekStart)}
+                        </p>
+                        <button
+                          onClick={() => shiftTeacherTimetableWeek(1)}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-600 hover:bg-white"
+                          aria-label="Next teacher timetable week"
+                        >
+                          <FaChevronRight size={11} />
+                        </button>
+                      </div>
                       <button
-                        onClick={() => shiftTeacherTimetableWeek(-1)}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-600 hover:bg-white"
-                        aria-label="Previous teacher timetable week"
+                        onClick={handleExportTeacherTimetableCsv}
+                        disabled={
+                          teacherTimetableExportAction !== null || visibleTeacherWeekSessions.length === 0
+                        }
+                        className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        <FaChevronLeft size={11} />
+                        {teacherTimetableExportAction === 'csv'
+                          ? 'Exporting CSV...'
+                          : 'Export teacher CSV'}
                       </button>
-                      <p className="px-2 text-xs font-semibold text-gray-700">
-                        {formatWeekRangeLabel(teacherTimetableWeekStart)}
-                      </p>
                       <button
-                        onClick={() => shiftTeacherTimetableWeek(1)}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-600 hover:bg-white"
-                        aria-label="Next teacher timetable week"
+                        onClick={() => void handleExportTeacherTimetablePdf()}
+                        disabled={
+                          teacherTimetableExportAction !== null || visibleTeacherWeekSessions.length === 0
+                        }
+                        className="rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        <FaChevronRight size={11} />
+                        {teacherTimetableExportAction === 'pdf'
+                          ? 'Exporting PDF...'
+                          : 'Export teacher PDF'}
                       </button>
                     </div>
                   </div>
