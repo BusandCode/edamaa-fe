@@ -66,6 +66,7 @@ type SessionFormState = {
   startAt: string;
   durationMinutes: string;
   expectedStudents: string;
+  attendanceGracePeriodMinutes: string;
   notes: string;
 };
 
@@ -82,6 +83,31 @@ type AttendanceFormState = {
   participantId: string;
   status: 'present' | 'absent';
   note: string;
+};
+
+type AttendanceFilter = 'all' | 'present' | 'late' | 'pending' | 'absent';
+
+type AttendanceReportSessionItem = {
+  session: SchoolScheduleSession;
+  attendance: SchoolScheduleAttendanceResponse;
+};
+
+type AttendanceReportRow = {
+  sessionId: string;
+  sessionTitle: string;
+  sessionSubject: string;
+  sessionAudience: string;
+  sessionStartAt: string;
+  participantName: string;
+  participantId: string | null;
+  status: Exclude<AttendanceFilter, 'all'>;
+  source: 'live' | 'manual' | 'check_in';
+  checkedInAt: string | null;
+  joinedAt: string | null;
+  lastSeenAt: string | null;
+  leftAt: string | null;
+  durationMinutes: number | null;
+  note: string | null;
 };
 
 type SessionDraftMode = 'create' | 'edit' | 'duplicate' | 'reschedule';
@@ -223,6 +249,14 @@ const formatAttendanceMoment = (value: string | null) => {
   });
 };
 
+const formatDateInputValue = (value: string | Date) => {
+  const date = value instanceof Date ? new Date(value) : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+};
+
 const addDays = (date: Date, amount: number) => {
   const copy = new Date(date);
   copy.setDate(copy.getDate() + amount);
@@ -335,6 +369,59 @@ const inviteActivityTypeClass = (kind: SchoolScheduleNotification['kind']) => {
   return 'bg-gray-100 text-gray-700 border-gray-200';
 };
 
+const premiumShellClass =
+  'rounded-[30px] border border-slate-200/70 bg-white/88 shadow-[0_24px_70px_-38px_rgba(15,23,42,0.34)] backdrop-blur-xl';
+
+const premiumPanelClass =
+  'rounded-[26px] border border-slate-200/75 bg-white/84 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.3)] backdrop-blur-xl';
+
+const premiumInsetClass =
+  'rounded-2xl border border-slate-200/75 bg-slate-50/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]';
+
+const premiumInputClass =
+  'w-full rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 text-sm text-slate-700 placeholder:text-slate-400 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.42)] outline-none transition focus:border-[#3D08BA]/35 focus:ring-4 focus:ring-[#3D08BA]/10';
+
+const premiumSelectClass =
+  'rounded-2xl border border-slate-200 bg-white/95 px-3.5 py-3 text-sm text-slate-700 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.42)] outline-none transition focus:border-[#3D08BA]/35 focus:ring-4 focus:ring-[#3D08BA]/10';
+
+const primaryButtonClass =
+  'inline-flex items-center justify-center gap-2 rounded-2xl bg-[#3D08BA] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_16px_34px_-20px_rgba(61,8,186,0.82)] transition hover:-translate-y-0.5 hover:bg-[#2F078F] hover:shadow-[0_20px_40px_-20px_rgba(61,8,186,0.88)] disabled:cursor-not-allowed disabled:opacity-60';
+
+const secondaryButtonClass =
+  'inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.35)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60';
+
+const tintedButtonClass =
+  'inline-flex items-center justify-center gap-2 rounded-2xl border border-[#3D08BA]/15 bg-[#3D08BA]/6 px-4 py-2.5 text-sm font-semibold text-[#3D08BA] shadow-[0_10px_30px_-24px_rgba(61,8,186,0.42)] transition hover:-translate-y-0.5 hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-60';
+
+const iconButtonClass =
+  'group inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.45)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60';
+
+const getNameInitials = (value: string) =>
+  value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || '')
+    .join('') || 'TR';
+
+const DEFAULT_ATTENDANCE_GRACE_PERIOD_MINUTES = 5;
+
+const attendanceFilterLabel = (value: AttendanceFilter) => {
+  switch (value) {
+    case 'present':
+      return 'Present';
+    case 'late':
+      return 'Late';
+    case 'pending':
+      return 'Pending';
+    case 'absent':
+      return 'Absent';
+    default:
+      return 'All';
+  }
+};
+
 const SchoolSchedule = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -372,6 +459,7 @@ const SchoolSchedule = () => {
     startAt: '',
     durationMinutes: '60',
     expectedStudents: '',
+    attendanceGracePeriodMinutes: String(DEFAULT_ATTENDANCE_GRACE_PERIOD_MINUTES),
     notes: '',
   });
   const [teacherRoster, setTeacherRoster] = useState<SchoolTeacherRosterItem[]>([]);
@@ -399,10 +487,24 @@ const SchoolSchedule = () => {
     'all'
   );
   const [highlightedSessionId, setHighlightedSessionId] = useState<string | null>(null);
+  const [copiedFieldKey, setCopiedFieldKey] = useState<string | null>(null);
   const [attendanceTargetSession, setAttendanceTargetSession] = useState<SchoolScheduleSession | null>(null);
   const [attendancePayload, setAttendancePayload] = useState<SchoolScheduleAttendanceResponse | null>(null);
   const [isAttendanceLoading, setIsAttendanceLoading] = useState(false);
   const [attendanceBusyId, setAttendanceBusyId] = useState<string | null>(null);
+  const [attendanceFilter, setAttendanceFilter] = useState<AttendanceFilter>('all');
+  const [attendanceExportAction, setAttendanceExportAction] = useState<'csv' | 'pdf' | null>(null);
+  const [isAttendanceReportOpen, setIsAttendanceReportOpen] = useState(false);
+  const [attendanceReportStartDate, setAttendanceReportStartDate] = useState(() =>
+    formatDateInputValue(startOfWeek(new Date()))
+  );
+  const [attendanceReportEndDate, setAttendanceReportEndDate] = useState(() =>
+    formatDateInputValue(addDays(startOfWeek(new Date()), 6))
+  );
+  const [attendanceReportFilter, setAttendanceReportFilter] = useState<AttendanceFilter>('all');
+  const [attendanceReportItems, setAttendanceReportItems] = useState<AttendanceReportSessionItem[]>([]);
+  const [isAttendanceReportLoading, setIsAttendanceReportLoading] = useState(false);
+  const [attendanceReportExportAction, setAttendanceReportExportAction] = useState<'csv' | 'pdf' | null>(null);
   const [attendanceForm, setAttendanceForm] = useState<AttendanceFormState>({
     participantName: '',
     participantId: '',
@@ -431,6 +533,7 @@ const SchoolSchedule = () => {
     ],
     []
   );
+  const copiedFieldTimeoutRef = useRef<number | null>(null);
 
   const refreshSessions = useCallback(async () => {
     setIsLoading(true);
@@ -611,6 +714,20 @@ const SchoolSchedule = () => {
     return counts;
   }, [sessions]);
 
+  const nextScheduledSession = useMemo(() => {
+    const now = Date.now();
+    return (
+      sessions
+        .filter((session) => getSessionStatus(session, now) !== 'completed')
+        .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())[0] || null
+    );
+  }, [sessions]);
+
+  const todayScheduleCount = useMemo(() => {
+    const todayKey = getLocalDayKey(new Date());
+    return sessions.filter((session) => getLocalDayKey(session.startAt) === todayKey).length;
+  }, [sessions]);
+
   const filteredSessions = useMemo(() => {
     const now = Date.now();
     const query = searchQuery.trim().toLowerCase();
@@ -635,6 +752,25 @@ const SchoolSchedule = () => {
       })
       .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
   }, [filter, searchQuery, sessions]);
+
+  const attendanceReportCandidateSessions = useMemo(() => {
+    const startBoundary = attendanceReportStartDate ? new Date(`${attendanceReportStartDate}T00:00:00`) : null;
+    const endBoundary = attendanceReportEndDate ? new Date(`${attendanceReportEndDate}T23:59:59.999`) : null;
+
+    return filteredSessions.filter((session) => {
+      const sessionStartMs = new Date(session.startAt).getTime();
+      if (!Number.isFinite(sessionStartMs)) {
+        return false;
+      }
+      if (startBoundary && sessionStartMs < startBoundary.getTime()) {
+        return false;
+      }
+      if (endBoundary && sessionStartMs > endBoundary.getTime()) {
+        return false;
+      }
+      return true;
+    });
+  }, [attendanceReportEndDate, attendanceReportStartDate, filteredSessions]);
 
   const filteredTeachers = useMemo(() => {
     const query = teacherSearch.trim().toLowerCase();
@@ -1120,6 +1256,7 @@ const SchoolSchedule = () => {
       startAt: '',
       durationMinutes: '60',
       expectedStudents: '',
+      attendanceGracePeriodMinutes: String(DEFAULT_ATTENDANCE_GRACE_PERIOD_MINUTES),
       notes: '',
     });
     setEditingSessionId(null);
@@ -1152,6 +1289,37 @@ const SchoolSchedule = () => {
     return false;
   };
 
+  const showCopiedFeedback = useCallback((key: string) => {
+    setCopiedFieldKey(key);
+    if (copiedFieldTimeoutRef.current !== null) {
+      window.clearTimeout(copiedFieldTimeoutRef.current);
+    }
+    copiedFieldTimeoutRef.current = window.setTimeout(() => {
+      setCopiedFieldKey((current) => (current === key ? null : current));
+      copiedFieldTimeoutRef.current = null;
+    }, 1800);
+  }, []);
+
+  const handleCopyField = useCallback(
+    async (key: string, value: string, successMessage: string) => {
+      const copied = await copyTextToClipboard(value);
+      setNotice(copied ? successMessage : 'Clipboard is unavailable right now.');
+      if (copied) {
+        showCopiedFeedback(key);
+      }
+      return copied;
+    },
+    [showCopiedFeedback]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (copiedFieldTimeoutRef.current !== null) {
+        window.clearTimeout(copiedFieldTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const handleSaveSession = async () => {
     if (activeActionId) {
       return;
@@ -1163,6 +1331,7 @@ const SchoolSchedule = () => {
     const startAt = formState.startAt.trim();
     const durationMinutes = Number(formState.durationMinutes);
     const expectedStudents = Number(formState.expectedStudents);
+    const attendanceGracePeriodMinutes = Number(formState.attendanceGracePeriodMinutes);
 
     if (!title || !subject || !instructor || !startAt) {
       setNotice('Please complete title, subject, instructor, and start time before saving.');
@@ -1171,6 +1340,15 @@ const SchoolSchedule = () => {
 
     if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
       setNotice('Class duration should be a valid number of minutes.');
+      return;
+    }
+
+    if (
+      !Number.isFinite(attendanceGracePeriodMinutes) ||
+      attendanceGracePeriodMinutes <= 0 ||
+      attendanceGracePeriodMinutes > 60
+    ) {
+      setNotice('Attendance grace period should be between 1 and 60 minutes.');
       return;
     }
 
@@ -1192,6 +1370,7 @@ const SchoolSchedule = () => {
           Number.isFinite(expectedStudents) && expectedStudents >= 0
             ? Math.round(expectedStudents)
             : 0,
+        attendanceGracePeriodMinutes: Math.round(attendanceGracePeriodMinutes),
         notes: formState.notes.trim() || undefined,
         assignedTutorEmail: formState.assignedTutorEmail.trim() || undefined,
         assignedTutorName: formState.assignedTutorName.trim() || undefined,
@@ -1745,6 +1924,9 @@ const SchoolSchedule = () => {
       startAt: formatDateTimeInputValue(session.startAt),
       durationMinutes: String(session.durationMinutes || 60),
       expectedStudents: String(session.expectedStudents ?? ''),
+      attendanceGracePeriodMinutes: String(
+        session.attendanceWindow?.gracePeriodMinutes || DEFAULT_ATTENDANCE_GRACE_PERIOD_MINUTES
+      ),
       notes: session.notes || '',
     });
     closeTeacherTimetable();
@@ -1771,6 +1953,9 @@ const SchoolSchedule = () => {
       startAt: formatDateTimeInputValue(session.startAt),
       durationMinutes: String(session.durationMinutes || 60),
       expectedStudents: String(session.expectedStudents ?? ''),
+      attendanceGracePeriodMinutes: String(
+        session.attendanceWindow?.gracePeriodMinutes || DEFAULT_ATTENDANCE_GRACE_PERIOD_MINUTES
+      ),
       notes: session.notes || '',
     });
     closeTeacherTimetable();
@@ -1803,6 +1988,9 @@ const SchoolSchedule = () => {
       startAt: duplicateStart,
       durationMinutes: String(session.durationMinutes || 60),
       expectedStudents: String(session.expectedStudents ?? ''),
+      attendanceGracePeriodMinutes: String(
+        session.attendanceWindow?.gracePeriodMinutes || DEFAULT_ATTENDANCE_GRACE_PERIOD_MINUTES
+      ),
       notes: session.notes || '',
     });
     closeTeacherTimetable();
@@ -2040,12 +2228,308 @@ const SchoolSchedule = () => {
     setAttendanceTargetSession(null);
     setAttendancePayload(null);
     setAttendanceBusyId(null);
+    setAttendanceFilter('all');
+    setAttendanceExportAction(null);
     setAttendanceForm({
       participantName: '',
       participantId: '',
       status: 'absent',
       note: '',
     });
+  };
+
+  const attendanceReportRows = useMemo<AttendanceReportRow[]>(() => {
+    const rows = attendanceReportItems.flatMap(({ session, attendance }) =>
+      attendance.records.map((record) => ({
+        sessionId: session.id,
+        sessionTitle: session.title,
+        sessionSubject: session.subject,
+        sessionAudience: getSessionAudienceLabel(session),
+        sessionStartAt: session.startAt,
+        participantName: record.participantName,
+        participantId: record.participantId,
+        status: record.status,
+        source: record.source,
+        checkedInAt: record.checkedInAt,
+        joinedAt: record.joinedAt,
+        lastSeenAt: record.lastSeenAt,
+        leftAt: record.leftAt,
+        durationMinutes: record.durationMinutes,
+        note: record.note,
+      }))
+    );
+
+    if (attendanceReportFilter === 'all') {
+      return rows;
+    }
+
+    return rows.filter((row) => row.status === attendanceReportFilter);
+  }, [attendanceReportFilter, attendanceReportItems]);
+
+  const attendanceReportSummary = useMemo(() => {
+    return attendanceReportItems.reduce(
+      (summary, item) => {
+        summary.sessionCount += 1;
+        summary.expectedStudents += item.attendance.summary.expectedStudents;
+        summary.presentCount += item.attendance.summary.presentCount;
+        summary.lateCount += item.attendance.summary.lateCount;
+        summary.pendingCount += item.attendance.summary.pendingCount;
+        summary.absentCount += item.attendance.summary.absentCount;
+        summary.checkedInCount += item.attendance.summary.checkedInCount;
+        return summary;
+      },
+      {
+        sessionCount: 0,
+        expectedStudents: 0,
+        presentCount: 0,
+        lateCount: 0,
+        pendingCount: 0,
+        absentCount: 0,
+        checkedInCount: 0,
+      }
+    );
+  }, [attendanceReportItems]);
+
+  const attendanceReportCoverage = useMemo(() => {
+    const attendedCount = attendanceReportSummary.presentCount + attendanceReportSummary.lateCount;
+    if (attendanceReportSummary.expectedStudents <= 0) {
+      return attendedCount > 0 ? 100 : 0;
+    }
+    return Math.round((attendedCount / attendanceReportSummary.expectedStudents) * 100);
+  }, [attendanceReportSummary]);
+
+  const openAttendanceReport = () => {
+    const rangeStart =
+      viewMode === 'week' ? weekStartDate : startOfWeek(new Date());
+    const rangeEnd =
+      viewMode === 'week' ? addDays(weekStartDate, 6) : addDays(startOfWeek(new Date()), 6);
+    setAttendanceReportStartDate(formatDateInputValue(rangeStart));
+    setAttendanceReportEndDate(formatDateInputValue(rangeEnd));
+    setAttendanceReportFilter('all');
+    setAttendanceReportItems([]);
+    setAttendanceReportExportAction(null);
+    setIsAttendanceReportOpen(true);
+  };
+
+  const closeAttendanceReport = () => {
+    if (isAttendanceReportLoading || attendanceReportExportAction) {
+      return;
+    }
+    setIsAttendanceReportOpen(false);
+    setAttendanceReportFilter('all');
+    setAttendanceReportItems([]);
+    setAttendanceReportExportAction(null);
+  };
+
+  const handleGenerateAttendanceReport = async () => {
+    if (isAttendanceReportLoading) {
+      return;
+    }
+
+    if (!attendanceReportStartDate || !attendanceReportEndDate) {
+      setNotice('Choose a valid attendance report date range.');
+      return;
+    }
+
+    if (attendanceReportCandidateSessions.length === 0) {
+      setNotice('No classes match the current date range and schedule filters.');
+      setAttendanceReportItems([]);
+      return;
+    }
+
+    setIsAttendanceReportLoading(true);
+    setNotice(null);
+
+    try {
+      const payloads = await Promise.all(
+        attendanceReportCandidateSessions.map(async (session) => ({
+          session,
+          attendance: await fetchSchoolScheduleAttendance(session.id),
+        }))
+      );
+      setAttendanceReportItems(payloads);
+      setAttendanceReportFilter('all');
+      setNotice(`Attendance report generated for ${payloads.length} class${payloads.length === 1 ? '' : 'es'}.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not generate attendance report right now.');
+    } finally {
+      setIsAttendanceReportLoading(false);
+    }
+  };
+
+  const handleExportAttendanceRangeCsv = () => {
+    if (attendanceReportRows.length === 0 || attendanceReportExportAction) {
+      return;
+    }
+
+    setAttendanceReportExportAction('csv');
+    setNotice(null);
+
+    try {
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const lines: string[] = [
+        joinCsvRow(['Section', 'Metric', 'Value']),
+        joinCsvRow(['Attendance Range Report', 'Generated At', new Date().toLocaleString()]),
+        joinCsvRow(['Attendance Range Report', 'Date From', attendanceReportStartDate || 'N/A']),
+        joinCsvRow(['Attendance Range Report', 'Date To', attendanceReportEndDate || 'N/A']),
+        joinCsvRow(['Attendance Range Report', 'Status Filter', attendanceFilterLabel(attendanceReportFilter)]),
+        joinCsvRow(['Attendance Range Report', 'Classes Included', attendanceReportSummary.sessionCount]),
+        joinCsvRow(['Attendance Range Report', 'Expected Students', attendanceReportSummary.expectedStudents]),
+        joinCsvRow(['Attendance Range Report', 'Present', attendanceReportSummary.presentCount]),
+        joinCsvRow(['Attendance Range Report', 'Late', attendanceReportSummary.lateCount]),
+        joinCsvRow(['Attendance Range Report', 'Pending', attendanceReportSummary.pendingCount]),
+        joinCsvRow(['Attendance Range Report', 'Absent', attendanceReportSummary.absentCount]),
+        joinCsvRow(['Attendance Range Report', 'Coverage', `${attendanceReportCoverage}%`]),
+        '',
+        joinCsvRow([
+          'Class',
+          'Subject',
+          'Audience',
+          'Class Time',
+          'Student',
+          'Student ID',
+          'Status',
+          'Source',
+          'Checked In',
+          'Duration',
+          'Note',
+        ]),
+      ];
+
+      attendanceReportRows.forEach((row) => {
+        lines.push(
+          joinCsvRow([
+            row.sessionTitle,
+            row.sessionSubject,
+            row.sessionAudience,
+            formatDateTime(row.sessionStartAt),
+            row.participantName,
+            row.participantId || 'N/A',
+            attendanceFilterLabel(row.status),
+            row.source === 'check_in' ? 'Student check-in' : row.source === 'live' ? 'Live presence' : 'Manual',
+            formatAttendanceMoment(row.checkedInAt),
+            row.durationMinutes !== null ? `${row.durationMinutes} min` : 'Not recorded',
+            row.note || '',
+          ])
+        );
+      });
+
+      downloadFile(
+        new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }),
+        `edamaa-attendance-range-${dateStamp}.csv`
+      );
+      setNotice('Attendance range CSV export started.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Attendance range CSV export failed.');
+    } finally {
+      setAttendanceReportExportAction(null);
+    }
+  };
+
+  const handleExportAttendanceRangePdf = async () => {
+    if (attendanceReportRows.length === 0 || attendanceReportExportAction) {
+      return;
+    }
+
+    setAttendanceReportExportAction('pdf');
+    setNotice(null);
+
+    try {
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const reportFrame = buildSchoolReportFrame({
+        title: 'Attendance Range Report',
+        subtitle: `${attendanceReportStartDate || 'N/A'} to ${attendanceReportEndDate || 'N/A'}`,
+        metaLines: [
+          `Status filter: ${attendanceFilterLabel(attendanceReportFilter)}`,
+          `Classes included: ${attendanceReportSummary.sessionCount}`,
+          `Coverage: ${attendanceReportCoverage}%`,
+          `Rows exported: ${attendanceReportRows.length}`,
+        ],
+        documentLabel: 'Attendance analytics export',
+        documentCode: `ATT-RANGE-${dateStamp.replaceAll('-', '')}`,
+      });
+
+      const summaryBody = [
+        [
+          { text: 'Expected', style: 'tableHeader' },
+          { text: 'Present', style: 'tableHeader' },
+          { text: 'Late', style: 'tableHeader' },
+          { text: 'Pending', style: 'tableHeader' },
+          { text: 'Absent', style: 'tableHeader' },
+          { text: 'Coverage', style: 'tableHeader' },
+        ],
+        [
+          String(attendanceReportSummary.expectedStudents),
+          String(attendanceReportSummary.presentCount),
+          String(attendanceReportSummary.lateCount),
+          String(attendanceReportSummary.pendingCount),
+          String(attendanceReportSummary.absentCount),
+          `${attendanceReportCoverage}%`,
+        ],
+      ];
+
+      const rowBody = [
+        [
+          { text: 'Class', style: 'tableHeader' },
+          { text: 'Student', style: 'tableHeader' },
+          { text: 'Status', style: 'tableHeader' },
+          { text: 'Checked In', style: 'tableHeader' },
+          { text: 'Duration', style: 'tableHeader' },
+        ],
+        ...attendanceReportRows.map((row) => [
+          `${row.sessionTitle}\n${row.sessionSubject}`,
+          row.participantName,
+          attendanceFilterLabel(row.status),
+          formatAttendanceMoment(row.checkedInAt),
+          row.durationMinutes !== null ? `${row.durationMinutes} min` : 'Not recorded',
+        ]),
+      ];
+
+      const docDefinition = {
+        pageSize: 'A4',
+        pageMargins: [32, 36, 32, 44],
+        content: [
+          ...reportFrame.headerContent,
+          { text: 'Attendance Summary', style: 'sectionHeader' },
+          {
+            table: {
+              headerRows: 1,
+              widths: ['*', '*', '*', '*', '*', '*'],
+              body: summaryBody,
+            },
+            layout: 'lightHorizontalLines',
+            margin: [0, 0, 0, 16],
+          },
+          { text: 'Attendance Rows', style: 'sectionHeader' },
+          {
+            table: {
+              headerRows: 1,
+              widths: ['*', '*', 'auto', 'auto', 'auto'],
+              body: rowBody,
+            },
+            layout: 'lightHorizontalLines',
+          },
+          ...reportFrame.signOffContent,
+        ],
+        styles: {
+          ...schoolReportStyles,
+          header: { fontSize: 18, bold: true, color: '#0f172a' },
+          subheader: { fontSize: 11, color: '#475569', margin: [0, 2, 0, 0] },
+          muted: { fontSize: 9, color: '#64748b', margin: [0, 2, 0, 0] },
+          sectionHeader: { fontSize: 12, bold: true, color: '#0f172a', margin: [0, 0, 0, 8] },
+          tableHeader: { bold: true, color: '#0f172a', fillColor: '#eef2ff' },
+        },
+        footer: reportFrame.footer,
+      };
+
+      const pdfBlob = await createPdfBlob(docDefinition);
+      downloadFile(pdfBlob, `edamaa-attendance-range-${dateStamp}.pdf`);
+      setNotice('Attendance range PDF export started.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Attendance range PDF export failed.');
+    } finally {
+      setAttendanceReportExportAction(null);
+    }
   };
 
   const jumpToSessionFromActivity = (sessionId: string) => {
@@ -2132,6 +2616,196 @@ const SchoolSchedule = () => {
       setNotice(error instanceof Error ? error.message : 'Weekly timetable CSV export failed.');
     } finally {
       setTimetableExportAction(null);
+    }
+  };
+
+  const filteredAttendanceRecords = useMemo(() => {
+    if (!attendancePayload) {
+      return [];
+    }
+
+    if (attendanceFilter === 'all') {
+      return attendancePayload.records;
+    }
+
+    return attendancePayload.records.filter((record) => record.status === attendanceFilter);
+  }, [attendanceFilter, attendancePayload]);
+
+  const handleExportAttendanceCsv = () => {
+    if (!attendanceTargetSession || !attendancePayload || filteredAttendanceRecords.length === 0 || attendanceExportAction) {
+      return;
+    }
+
+    setAttendanceExportAction('csv');
+    setNotice(null);
+
+    try {
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const lines: string[] = [
+        joinCsvRow(['Section', 'Metric', 'Value']),
+        joinCsvRow(['Attendance Report', 'Generated At', new Date().toLocaleString()]),
+        joinCsvRow(['Attendance Report', 'Class', attendanceTargetSession.title]),
+        joinCsvRow(['Attendance Report', 'Subject', attendanceTargetSession.subject]),
+        joinCsvRow(['Attendance Report', 'Session ID', attendanceTargetSession.id]),
+        joinCsvRow(['Attendance Report', 'Class Time', formatDateTime(attendanceTargetSession.startAt)]),
+        joinCsvRow(['Attendance Report', 'Filter', attendanceFilterLabel(attendanceFilter)]),
+        joinCsvRow(['Attendance Report', 'Window Status', attendancePayload.window.isOpen ? 'Open' : 'Closed']),
+        joinCsvRow(['Attendance Report', 'Grace Period', `${attendancePayload.window.gracePeriodMinutes} minutes`]),
+        joinCsvRow(['Attendance Report', 'Expected Students', attendancePayload.summary.expectedStudents]),
+        joinCsvRow(['Attendance Report', 'Present', attendancePayload.summary.presentCount]),
+        joinCsvRow(['Attendance Report', 'Late', attendancePayload.summary.lateCount]),
+        joinCsvRow(['Attendance Report', 'Pending', attendancePayload.summary.pendingCount]),
+        joinCsvRow(['Attendance Report', 'Absent', attendancePayload.summary.absentCount]),
+        joinCsvRow(['Attendance Report', 'Coverage', `${attendancePayload.summary.attendanceRate}%`]),
+        '',
+        joinCsvRow([
+          'Student',
+          'Student ID',
+          'Status',
+          'Source',
+          'Joined',
+          'Checked In',
+          'Last Seen',
+          'Left',
+          'Duration',
+          'Note',
+        ]),
+      ];
+
+      filteredAttendanceRecords.forEach((record) => {
+        lines.push(
+          joinCsvRow([
+            record.participantName,
+            record.participantId || 'N/A',
+            attendanceFilterLabel(record.status as AttendanceFilter),
+            record.source === 'check_in' ? 'Student check-in' : record.source === 'live' ? 'Live presence' : 'Manual',
+            formatAttendanceMoment(record.joinedAt),
+            formatAttendanceMoment(record.checkedInAt),
+            formatAttendanceMoment(record.lastSeenAt),
+            formatAttendanceMoment(record.leftAt),
+            record.durationMinutes !== null ? `${record.durationMinutes} min` : 'Not recorded',
+            record.note || '',
+          ])
+        );
+      });
+
+      downloadFile(
+        new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }),
+        `edamaa-attendance-${attendanceTargetSession.id}-${dateStamp}.csv`
+      );
+      setNotice('Attendance CSV export started.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Attendance CSV export failed.');
+    } finally {
+      setAttendanceExportAction(null);
+    }
+  };
+
+  const handleExportAttendancePdf = async () => {
+    if (!attendanceTargetSession || !attendancePayload || filteredAttendanceRecords.length === 0 || attendanceExportAction) {
+      return;
+    }
+
+    setAttendanceExportAction('pdf');
+    setNotice(null);
+
+    try {
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const reportFrame = buildSchoolReportFrame({
+        title: 'Class Attendance Report',
+        subtitle: attendanceTargetSession.title,
+        metaLines: [
+          `Subject: ${attendanceTargetSession.subject}`,
+          `Session ID: ${attendanceTargetSession.id}`,
+          `Class time: ${formatDateTime(attendanceTargetSession.startAt)}`,
+          `Filter: ${attendanceFilterLabel(attendanceFilter)}`,
+          `Grace period: ${attendancePayload.window.gracePeriodMinutes} minutes`,
+          `Records exported: ${filteredAttendanceRecords.length}`,
+        ],
+        documentLabel: 'Attendance export',
+        documentCode: `ATTENDANCE-${attendanceTargetSession.id}`,
+      });
+
+      const summaryTableBody = [
+        [
+          { text: 'Expected', style: 'tableHeader' },
+          { text: 'Present', style: 'tableHeader' },
+          { text: 'Late', style: 'tableHeader' },
+          { text: 'Pending', style: 'tableHeader' },
+          { text: 'Absent', style: 'tableHeader' },
+          { text: 'Coverage', style: 'tableHeader' },
+        ],
+        [
+          String(attendancePayload.summary.expectedStudents),
+          String(attendancePayload.summary.presentCount),
+          String(attendancePayload.summary.lateCount),
+          String(attendancePayload.summary.pendingCount),
+          String(attendancePayload.summary.absentCount),
+          `${attendancePayload.summary.attendanceRate}%`,
+        ],
+      ];
+
+      const recordTableBody = [
+        [
+          { text: 'Student', style: 'tableHeader' },
+          { text: 'Status', style: 'tableHeader' },
+          { text: 'Source', style: 'tableHeader' },
+          { text: 'Checked In', style: 'tableHeader' },
+          { text: 'Duration', style: 'tableHeader' },
+        ],
+        ...filteredAttendanceRecords.map((record) => [
+          record.participantName,
+          attendanceFilterLabel(record.status as AttendanceFilter),
+          record.source === 'check_in' ? 'Student check-in' : record.source === 'live' ? 'Live presence' : 'Manual',
+          formatAttendanceMoment(record.checkedInAt),
+          record.durationMinutes !== null ? `${record.durationMinutes} min` : 'Not recorded',
+        ]),
+      ];
+
+      const docDefinition = {
+        pageSize: 'A4',
+        pageMargins: [32, 36, 32, 44],
+        content: [
+          ...reportFrame.headerContent,
+          { text: 'Attendance Summary', style: 'sectionHeader' },
+          {
+            table: {
+              headerRows: 1,
+              widths: ['*', '*', '*', '*', '*', '*'],
+              body: summaryTableBody,
+            },
+            layout: 'lightHorizontalLines',
+            margin: [0, 0, 0, 16],
+          },
+          { text: 'Attendance Register', style: 'sectionHeader' },
+          {
+            table: {
+              headerRows: 1,
+              widths: ['*', 'auto', 'auto', 'auto', 'auto'],
+              body: recordTableBody,
+            },
+            layout: 'lightHorizontalLines',
+          },
+          ...reportFrame.signOffContent,
+        ],
+        styles: {
+          ...schoolReportStyles,
+          header: { fontSize: 18, bold: true, color: '#0f172a' },
+          subheader: { fontSize: 11, color: '#475569', margin: [0, 2, 0, 0] },
+          muted: { fontSize: 9, color: '#64748b', margin: [0, 2, 0, 0] },
+          sectionHeader: { fontSize: 12, bold: true, color: '#0f172a', margin: [0, 0, 0, 8] },
+          tableHeader: { bold: true, color: '#0f172a', fillColor: '#eef2ff' },
+        },
+        footer: reportFrame.footer,
+      };
+
+      const pdfBlob = await createPdfBlob(docDefinition);
+      downloadFile(pdfBlob, `edamaa-attendance-${attendanceTargetSession.id}-${dateStamp}.pdf`);
+      setNotice('Attendance PDF export started.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Attendance PDF export failed.');
+    } finally {
+      setAttendanceExportAction(null);
     }
   };
 
@@ -2297,297 +2971,414 @@ const SchoolSchedule = () => {
   };
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-gray-50 to-gray-100 pb-24">
-      <div className="rounded-lg border border-white/20 bg-white/10 backdrop-blur-sm">
-        <div className="mx-auto max-w-7xl px-4 py-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => navigate('/school-dashboard')}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#3D08BA]/20 bg-white text-[#3D08BA] hover:bg-[#3D08BA]/5"
-                aria-label="Back to school dashboard"
-                title="Back to school dashboard"
-              >
-                <FaArrowLeft size={13} />
-              </button>
-              <div>
-                <h1 className="text-2xl font-bold text-[#3D08BA]">Class Schedule Workspace</h1>
-                <p className="mt-1 text-sm text-gray-600">
-                  Plan live and offline classes with clear timing and teacher ownership.
-                </p>
+    <div className="min-h-screen bg-linear-to-b from-[#eef1ff] via-[#f8fafc] to-[#f8fafc] pb-24 text-slate-900">
+      <div className="mx-auto max-w-7xl px-4 pt-6 lg:px-6">
+        <section className={`${premiumShellClass} relative overflow-hidden`}>
+          <div className="pointer-events-none absolute -left-24 bottom-0 h-56 w-56 rounded-full bg-sky-200/30 blur-3xl" />
+          <div className="pointer-events-none absolute -right-20 top-0 h-64 w-64 rounded-full bg-[#3D08BA]/10 blur-3xl" />
+
+          <div className="relative grid gap-6 px-5 py-6 lg:grid-cols-[1.45fr_0.95fr] lg:px-8 lg:py-8">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-[#3D08BA]/15 bg-[#3D08BA]/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#3D08BA]">
+                <FaCalendarAlt size={10} />
+                School schedule
+              </div>
+
+              <div className="mt-5 flex items-start gap-4">
+                <button
+                  onClick={() => navigate('/school-dashboard')}
+                  className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-[#3D08BA]/15 bg-white text-[#3D08BA] shadow-[0_14px_32px_-22px_rgba(61,8,186,0.55)] transition hover:-translate-y-0.5 hover:bg-[#3D08BA]/5"
+                  aria-label="Back to school dashboard"
+                  title="Back to school dashboard"
+                >
+                  <FaArrowLeft size={14} />
+                </button>
+                <div className="max-w-2xl">
+                  <h1 className="text-3xl font-semibold tracking-[-0.03em] text-slate-950 sm:text-[2.35rem]">
+                    Class Schedule Workspace
+                  </h1>
+                  <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600 sm:text-[15px]">
+                    Plan live and offline classes, assign the right teachers, and keep weekly operations clear for every department.
+                  </p>
+                  <div className="mt-5 flex flex-wrap gap-2.5">
+                    <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.35)]">
+                      <FaClock size={11} className="text-[#3D08BA]" />
+                      Week of {formatWeekRangeLabel(weekStartDate)}
+                    </span>
+                    <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.35)]">
+                      <FaUsers size={11} className="text-[#3D08BA]" />
+                      {teacherRosterStats.total} teachers on roster
+                    </span>
+                    <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.35)]">
+                      <FaTable size={11} className="text-[#3D08BA]" />
+                      {viewMode === 'week' ? `${visibleWeekSessions.length} classes in visible week` : `${filteredSessions.length} filtered classes`}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
-            <button
-              onClick={() => {
-                resetForm();
-                setIsCreateOpen(true);
-              }}
-              className="inline-flex items-center gap-2 rounded-lg bg-[#3D08BA] px-3 py-2 text-sm font-semibold text-white hover:bg-[#2D0690]"
-            >
-              <FaPlus size={12} />
-              Add Class
-            </button>
+            <div className="rounded-[28px] border border-slate-900/10 bg-slate-950 px-5 py-5 text-white shadow-[0_28px_60px_-36px_rgba(15,23,42,0.9)]">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/65">
+                    Operations snapshot
+                  </p>
+                  <h2 className="mt-2 text-lg font-semibold tracking-[-0.02em] text-white">
+                    Keep the school week under control
+                  </h2>
+                </div>
+                <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-semibold text-white/80">
+                  {scheduleStats.live} live now
+                </span>
+              </div>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-white/10 bg-white/6 p-3">
+                  <p className="text-[11px] font-medium text-white/60">Today</p>
+                  <p className="mt-2 text-2xl font-semibold text-white">{todayScheduleCount}</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/6 p-3">
+                  <p className="text-[11px] font-medium text-white/60">Visible week</p>
+                  <p className="mt-2 text-2xl font-semibold text-white">{visibleWeekSessions.length}</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/6 p-3">
+                  <p className="text-[11px] font-medium text-white/60">Teachers busy</p>
+                  <p className="mt-2 text-2xl font-semibold text-white">{teacherRosterStats.weekLoadCount}</p>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-white/10 bg-white/6 px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">
+                  Next class in queue
+                </p>
+                <p className="mt-2 text-sm font-semibold text-white">
+                  {nextScheduledSession ? nextScheduledSession.title : 'No live or upcoming class yet'}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-white/65">
+                  {nextScheduledSession
+                    ? `${formatDateTime(nextScheduledSession.startAt)} • ${nextScheduledSession.subject} • ${nextScheduledSession.instructor}`
+                    : 'Create the next class session to start filling this schedule.'}
+                </p>
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-2.5">
+                <button
+                  onClick={() => {
+                    resetForm();
+                    setIsCreateOpen(true);
+                  }}
+                  className={primaryButtonClass}
+                >
+                  <FaPlus size={12} />
+                  Add class
+                </button>
+                <button
+                  onClick={() => navigate('/tutor-list-school')}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/12 bg-white/8 px-4 py-2.5 text-sm font-semibold text-white/88 transition hover:bg-white/12"
+                >
+                  <FaUsers size={12} />
+                  Find teachers
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
+        </section>
       </div>
 
       {notice && (
-        <div className="mx-auto mt-4 max-w-7xl px-4">
-          <div className="rounded-xl border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-4 py-3 text-sm text-[#3D08BA]">
+        <div className="mx-auto mt-5 max-w-7xl px-4 lg:px-6">
+          <div className="rounded-[22px] border border-[#3D08BA]/15 bg-white/80 px-4 py-3 text-sm text-[#3D08BA] shadow-[0_18px_40px_-32px_rgba(61,8,186,0.45)] backdrop-blur-xl">
             {notice}
           </div>
         </div>
       )}
 
-      <main className="mx-auto max-w-7xl px-4 py-6">
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-            <p className="text-xs text-gray-500">All classes</p>
-            <p className="mt-1 text-2xl font-bold text-gray-900">{scheduleStats.all}</p>
+      <main className="mx-auto max-w-7xl px-4 py-6 lg:px-6">
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className={`${premiumPanelClass} p-5`}>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">All classes</p>
+            <p className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">{scheduleStats.all}</p>
+            <p className="mt-2 text-sm text-slate-500">Full timetable volume across live, upcoming, and completed sessions.</p>
           </div>
-          <div className="rounded-xl border border-red-100 bg-white p-4 shadow-sm">
-            <p className="text-xs text-gray-500">Live now</p>
-            <p className="mt-1 text-2xl font-bold text-red-600">{scheduleStats.live}</p>
+          <div className={`${premiumPanelClass} border-red-100/80 p-5`}>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-red-600">Live now</p>
+            <p className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-red-600">{scheduleStats.live}</p>
+            <p className="mt-2 text-sm text-slate-500">Classes currently in progress and ready for immediate oversight.</p>
           </div>
-          <div className="rounded-xl border border-[#3D08BA]/15 bg-white p-4 shadow-sm">
-            <p className="text-xs text-gray-500">Upcoming</p>
-            <p className="mt-1 text-2xl font-bold text-[#3D08BA]">{scheduleStats.upcoming}</p>
+          <div className={`${premiumPanelClass} border-[#3D08BA]/15 p-5`}>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]">Upcoming</p>
+            <p className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-[#3D08BA]">{scheduleStats.upcoming}</p>
+            <p className="mt-2 text-sm text-slate-500">Classes ahead of schedule that still need teacher and student readiness.</p>
           </div>
-          <div className="rounded-xl border border-emerald-100 bg-white p-4 shadow-sm">
-            <p className="text-xs text-gray-500">Completed</p>
-            <p className="mt-1 text-2xl font-bold text-emerald-600">{scheduleStats.completed}</p>
+          <div className={`${premiumPanelClass} border-emerald-100/80 p-5`}>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-600">Completed</p>
+            <p className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-emerald-600">{scheduleStats.completed}</p>
+            <p className="mt-2 text-sm text-slate-500">Historical sessions already delivered and available for review.</p>
           </div>
         </section>
 
-        <section className="mt-5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative min-w-[220px] grow">
-              <input
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search by class, subject, teacher, or room code..."
-                className="w-full rounded-lg border border-gray-300 py-2.5 pl-10 pr-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
-              />
-              <FaSearch className="absolute left-3 top-3.5 text-gray-400" size={13} />
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-xs font-semibold text-gray-600">
+        <section className={`${premiumShellClass} mt-6 p-5 lg:p-6`}>
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] xl:items-end">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                 <FaFilter size={10} />
-                Filter
-              </span>
-              {(['all', 'live', 'upcoming', 'completed'] as const).map((value) => (
+                Schedule controls
+              </div>
+              <h2 className="mt-4 text-xl font-semibold tracking-[-0.03em] text-slate-950">
+                Search, filter, and move through the timetable faster
+              </h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                Narrow the schedule by status, switch between list and weekly views, and export or shift the exact week you are working on.
+              </p>
+            </div>
+
+            <div className={`${premiumInsetClass} flex flex-wrap items-center justify-between gap-3 px-4 py-3`}>
+              <div>
+                <p className="text-xs font-semibold text-slate-700">
+                  Showing {filteredSessions.length} of {sessions.length} classes
+                </p>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {viewMode === 'week'
+                    ? `Weekly view focused on ${formatWeekRangeLabel(weekStartDate)}`
+                    : 'List view focused on individual class actions'}
+                </p>
+              </div>
+              <div className="inline-flex rounded-2xl border border-slate-200 bg-white p-1 shadow-[0_10px_24px_-22px_rgba(15,23,42,0.45)]">
                 <button
-                  key={value}
-                  onClick={() => setFilter(value)}
-                  className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold ${
-                    filter === value
-                      ? 'bg-[#3D08BA] text-white'
-                      : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                  onClick={() => setViewMode('list')}
+                  className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition ${
+                    viewMode === 'list' ? 'bg-[#3D08BA] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  {value === 'all' ? 'All' : statusLabel(value)}
+                  <FaListUl size={11} />
+                  List
                 </button>
-              ))}
+                <button
+                  onClick={() => setViewMode('week')}
+                  className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition ${
+                    viewMode === 'week' ? 'bg-[#3D08BA] text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <FaTable size={11} />
+                  Week grid
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-3">
-            <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1">
-              <button
-                onClick={() => setViewMode('list')}
-                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-semibold ${
-                  viewMode === 'list'
-                    ? 'bg-[#3D08BA] text-white'
-                    : 'text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                <FaListUl size={11} />
-                List
-              </button>
-              <button
-                onClick={() => setViewMode('week')}
-                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-semibold ${
-                  viewMode === 'week'
-                    ? 'bg-[#3D08BA] text-white'
-                    : 'text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                <FaTable size={11} />
-                Week Grid
-              </button>
+          <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+            <div className="space-y-3">
+              <div className="relative">
+                <input
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search by class title, subject, teacher, or room code"
+                  className={`${premiumInputClass} pl-11`}
+                />
+                <FaSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(['all', 'live', 'upcoming', 'completed'] as const).map((value) => (
+                  <button
+                    key={value}
+                    onClick={() => setFilter(value)}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                      filter === value
+                        ? 'border-[#3D08BA] bg-[#3D08BA] text-white shadow-[0_12px_24px_-18px_rgba(61,8,186,0.85)]'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    {value === 'all' ? 'All classes' : statusLabel(value)}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {viewMode === 'week' && (
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-1 py-1">
+            <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+              <button
+                onClick={openAttendanceReport}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#3D08BA]/20 bg-[#3D08BA]/6 px-4 py-2.5 text-sm font-semibold text-[#3D08BA] transition hover:-translate-y-0.5 hover:bg-[#3D08BA]/10"
+              >
+                <FaUsers size={12} />
+                Attendance report
+              </button>
+              {viewMode === 'week' && (
+                <>
+                  <div className="inline-flex items-center gap-1 rounded-2xl border border-slate-200 bg-white px-1 py-1 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.42)]">
+                    <button
+                      onClick={() => shiftWeek(-1)}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-50"
+                      aria-label="Previous week"
+                    >
+                      <FaChevronLeft size={11} />
+                    </button>
+                    <p className="px-2 text-xs font-semibold text-slate-700">{formatWeekRangeLabel(weekStartDate)}</p>
+                    <button
+                      onClick={() => shiftWeek(1)}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-50"
+                      aria-label="Next week"
+                    >
+                      <FaChevronRight size={11} />
+                    </button>
+                  </div>
                   <button
-                    onClick={() => shiftWeek(-1)}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-600 hover:bg-white"
-                    aria-label="Previous week"
+                    onClick={openBulkReschedule}
+                    disabled={activeActionId !== null || bulkRescheduleCandidates.length === 0}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 transition hover:-translate-y-0.5 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    <FaChevronLeft size={11} />
+                    Shift visible week
                   </button>
-                  <p className="px-2 text-xs font-semibold text-gray-700">
-                    {formatWeekRangeLabel(weekStartDate)}
-                  </p>
                   <button
-                    onClick={() => shiftWeek(1)}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-600 hover:bg-white"
-                    aria-label="Next week"
+                    onClick={handleExportWeeklyTimetableCsv}
+                    disabled={timetableExportAction !== null || visibleWeekSessions.length === 0}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700 transition hover:-translate-y-0.5 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    <FaChevronRight size={11} />
+                    {timetableExportAction === 'csv' ? 'Exporting CSV...' : 'Export week CSV'}
                   </button>
-                </div>
-                <button
-                  onClick={openBulkReschedule}
-                  disabled={activeActionId !== null || bulkRescheduleCandidates.length === 0}
-                  className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Shift visible week
-                </button>
-                <button
-                  onClick={handleExportWeeklyTimetableCsv}
-                  disabled={timetableExportAction !== null || visibleWeekSessions.length === 0}
-                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {timetableExportAction === 'csv' ? 'Exporting CSV...' : 'Export week CSV'}
-                </button>
-                <button
-                  onClick={() => void handleExportWeeklyTimetablePdf()}
-                  disabled={timetableExportAction !== null || visibleWeekSessions.length === 0}
-                  className="rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {timetableExportAction === 'pdf' ? 'Exporting PDF...' : 'Export week PDF'}
-                </button>
-              </div>
-            )}
+                  <button
+                    onClick={() => void handleExportWeeklyTimetablePdf()}
+                    disabled={timetableExportAction !== null || visibleWeekSessions.length === 0}
+                    className={tintedButtonClass}
+                  >
+                    {timetableExportAction === 'pdf' ? 'Exporting PDF...' : 'Export week PDF'}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </section>
 
-        <section className="mt-5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+        <section id="teacher-roster-section" className={`${premiumShellClass} mt-6 p-5 lg:p-6`}>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
             <div>
-              <h2 className="text-base font-semibold text-gray-900">Teacher roster</h2>
-              <p className="mt-1 text-xs text-gray-600">
-                Keep a trusted list of teachers to assign quickly when scheduling classes.
+              <div className="inline-flex items-center gap-2 rounded-full border border-[#3D08BA]/15 bg-[#3D08BA]/6 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]">
+                <FaUsers size={10} />
+                Teacher roster
+              </div>
+              <h2 className="mt-4 text-xl font-semibold tracking-[-0.03em] text-slate-950">
+                Manage your internal teachers without breaking the class flow
+              </h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                Keep a trusted internal roster, monitor invite status, and assign teachers quickly when classes need to go live.
               </p>
-              <p className="mt-1 text-[11px] text-gray-500">
-                This roster is for your internal school teachers. Need external teachers? Use Tutor Directory.
+              <p className="mt-2 text-xs text-slate-500">
+                This roster is for school teachers. External tutors should still come through the tutor directory flow.
               </p>
             </div>
-            <div className="min-w-[220px]">
+
+            <div className="flex flex-wrap gap-2 xl:justify-end">
+              <button
+                onClick={() => void handleResendPendingInvites()}
+                disabled={Boolean(activeTeacherActionId)}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 transition hover:-translate-y-0.5 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {activeTeacherActionId === 'bulk-invite' ? 'Resending...' : 'Resend pending invites'}
+              </button>
+              <button onClick={handleExportInvitedTeachersCsv} className={secondaryButtonClass}>
+                Export invited CSV
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
+            <div className="relative">
               <input
                 value={teacherSearch}
                 onChange={(event) => setTeacherSearch(event.target.value)}
-                placeholder="Search teachers..."
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                placeholder="Search teachers by name, email, department, class, or subject focus"
+                className={`${premiumInputClass} pl-11`}
               />
+              <FaSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
             </div>
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-semibold text-gray-500">Status:</label>
-              <select
-                value={teacherInviteFilter}
-                onChange={(event) =>
-                  setTeacherInviteFilter(
-                    event.target.value as 'all' | 'invited' | 'accepted' | 'inactive'
-                  )
-                }
-                className="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs text-gray-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
-              >
-                <option value="all">All</option>
-                <option value="invited">Invited</option>
-                <option value="accepted">Accepted</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </div>
-            <button
-              onClick={() => void handleResendPendingInvites()}
-              disabled={Boolean(activeTeacherActionId)}
-              className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            <select
+              value={teacherInviteFilter}
+              onChange={(event) =>
+                setTeacherInviteFilter(
+                  event.target.value as 'all' | 'invited' | 'accepted' | 'inactive'
+                )
+              }
+              className={premiumSelectClass}
             >
-              {activeTeacherActionId === 'bulk-invite' ? 'Resending...' : 'Resend pending invites'}
-            </button>
-            <button
-              onClick={handleExportInvitedTeachersCsv}
-              className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-            >
-              Export invited CSV
-            </button>
+              <option value="all">All statuses</option>
+              <option value="invited">Invited</option>
+              <option value="accepted">Accepted</option>
+              <option value="inactive">Inactive</option>
+            </select>
           </div>
 
           {teacherNotice && (
-            <div className="mt-3 rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs text-[#3D08BA]">
+            <div className="mt-4 rounded-[20px] border border-[#3D08BA]/15 bg-[#3D08BA]/6 px-4 py-3 text-sm text-[#3D08BA] shadow-[0_18px_40px_-32px_rgba(61,8,186,0.45)]">
               {teacherNotice}
             </div>
           )}
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">Total teachers</p>
-              <p className="mt-1 text-xl font-semibold text-gray-900">{teacherRosterStats.total}</p>
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className={`${premiumPanelClass} p-4`}>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Total teachers</p>
+              <p className="mt-3 text-2xl font-semibold tracking-[-0.03em] text-slate-950">{teacherRosterStats.total}</p>
+              <p className="mt-2 text-xs text-slate-500">Everyone currently available in the school roster.</p>
             </div>
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Active</p>
-              <p className="mt-1 text-xl font-semibold text-emerald-700">{teacherRosterStats.activeCount}</p>
+            <div className={`${premiumPanelClass} border-emerald-200/80 p-4`}>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">Active</p>
+              <p className="mt-3 text-2xl font-semibold tracking-[-0.03em] text-emerald-700">{teacherRosterStats.activeCount}</p>
+              <p className="mt-2 text-xs text-slate-500">Teachers still available for assignment right now.</p>
             </div>
-            <div className="rounded-xl border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-3">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]">Accepted</p>
-              <p className="mt-1 text-xl font-semibold text-[#3D08BA]">{teacherRosterStats.acceptedCount}</p>
+            <div className={`${premiumPanelClass} border-[#3D08BA]/15 p-4`}>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">Accepted</p>
+              <p className="mt-3 text-2xl font-semibold tracking-[-0.03em] text-[#3D08BA]">{teacherRosterStats.acceptedCount}</p>
+              <p className="mt-2 text-xs text-slate-500">Teachers who already accepted access and can take classes.</p>
             </div>
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">Busy this week</p>
-              <p className="mt-1 text-xl font-semibold text-amber-700">{teacherRosterStats.weekLoadCount}</p>
+            <div className={`${premiumPanelClass} border-amber-200/80 p-4`}>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700">Busy this week</p>
+              <p className="mt-3 text-2xl font-semibold tracking-[-0.03em] text-amber-700">{teacherRosterStats.weekLoadCount}</p>
+              <p className="mt-2 text-xs text-slate-500">Teachers already carrying at least one class this week.</p>
             </div>
           </div>
 
-          <div className="mt-4 grid gap-3 lg:grid-cols-[1.1fr_1.1fr_1.8fr]">
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-              <p className="text-xs font-semibold text-gray-700">
+          <div className="mt-5 grid gap-4 lg:grid-cols-[1.08fr_1.08fr_1.84fr]">
+            <div className={`${premiumPanelClass} p-4`}>
+              <p className="text-sm font-semibold text-slate-900">
                 {editingTeacherId ? 'Edit teacher profile' : 'Add teacher'}
               </p>
-              <p className="mt-1 text-[11px] text-gray-500">
+              <p className="mt-2 text-xs leading-5 text-slate-500">
                 {editingTeacherId
                   ? 'Update the teacher profile, class ownership, and subject coverage without removing the teacher from your roster.'
-                  : 'Add the same email the teacher uses to sign in. They will access classes via generated teacher link + code.'}
+                  : 'Add the same email the teacher uses to sign in. They will access assigned classes with the generated teacher link and access code.'}
               </p>
-              <div className="mt-3 space-y-2">
+              <div className="mt-4 space-y-3">
                 <input
                   value={teacherForm.name}
                   onChange={(event) => setTeacherForm((prev) => ({ ...prev, name: event.target.value }))}
                   placeholder="Full name"
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                  className={premiumInputClass}
                 />
                 <input
                   value={teacherForm.email}
                   onChange={(event) => setTeacherForm((prev) => ({ ...prev, email: event.target.value }))}
                   placeholder="Email"
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                  className={premiumInputClass}
                 />
                 <input
                   value={teacherForm.department}
                   onChange={(event) => setTeacherForm((prev) => ({ ...prev, department: event.target.value }))}
                   placeholder="Department (optional)"
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                  className={premiumInputClass}
                 />
                 <input
                   value={teacherForm.classGroup}
                   onChange={(event) => setTeacherForm((prev) => ({ ...prev, classGroup: event.target.value }))}
                   placeholder="Class group (optional)"
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                  className={premiumInputClass}
                 />
                 <input
                   value={teacherForm.subjectFocus}
                   onChange={(event) => setTeacherForm((prev) => ({ ...prev, subjectFocus: event.target.value }))}
                   placeholder="Subject focus (optional)"
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                  className={premiumInputClass}
                 />
               </div>
-              <button
-                onClick={handleCreateTeacher}
-                disabled={isTeacherSubmitting}
-                className="mt-3 w-full rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2D0690] disabled:cursor-not-allowed disabled:opacity-60"
-              >
+              <button onClick={handleCreateTeacher} disabled={isTeacherSubmitting} className={`${primaryButtonClass} mt-4 w-full`}>
                 {isTeacherSubmitting
                   ? 'Saving...'
                   : editingTeacherId
@@ -2595,109 +3386,88 @@ const SchoolSchedule = () => {
                     : 'Add teacher'}
               </button>
               {editingTeacherId && (
-                <button
-                  onClick={resetTeacherForm}
-                  className="mt-2 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-                >
+                <button onClick={resetTeacherForm} className={`${secondaryButtonClass} mt-2 w-full`}>
                   Cancel edit
                 </button>
               )}
-              <button
-                onClick={() => navigate('/tutor-list-school')}
-                className="mt-2 w-full rounded-lg border border-[#3D08BA]/20 bg-white px-3 py-2 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5"
-              >
+              <button onClick={() => navigate('/tutor-list-school')} className={`${tintedButtonClass} mt-2 w-full`}>
                 Need to hire? Browse tutor directory
               </button>
             </div>
 
-            <div className="rounded-xl border border-gray-200 bg-white p-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-semibold text-gray-700">Invite activity</p>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setInviteActivityFilter('all')}
-                    className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${
-                      inviteActivityFilter === 'all'
-                        ? 'border-[#3D08BA]/30 bg-[#3D08BA]/10 text-[#3D08BA]'
-                        : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    All
-                  </button>
-                  <button
-                    onClick={() => setInviteActivityFilter('accepted')}
-                    className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${
-                      inviteActivityFilter === 'accepted'
-                        ? 'border-emerald-300 bg-emerald-100 text-emerald-700'
-                        : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    Accepted
-                  </button>
-                  <button
-                    onClick={() => setInviteActivityFilter('pending')}
-                    className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${
-                      inviteActivityFilter === 'pending'
-                        ? 'border-amber-300 bg-amber-100 text-amber-700'
-                        : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    Pending
-                  </button>
-                  <button
-                    onClick={() => void refreshInviteActivity()}
-                    className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
-                  >
-                    Refresh
-                  </button>
+            <div className={`${premiumPanelClass} p-4`}>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Invite activity</p>
+                  <p className="mt-1 text-xs text-slate-500">Track invites, class assignments, and accepted access.</p>
                 </div>
+                <button onClick={() => void refreshInviteActivity()} className={secondaryButtonClass}>
+                  Refresh
+                </button>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                {(['all', 'accepted', 'pending'] as const).map((value) => (
+                  <button
+                    key={value}
+                    onClick={() => setInviteActivityFilter(value)}
+                    className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+                      inviteActivityFilter === value
+                        ? value === 'accepted'
+                          ? 'border-emerald-300 bg-emerald-100 text-emerald-700'
+                          : value === 'pending'
+                            ? 'border-amber-300 bg-amber-100 text-amber-700'
+                            : 'border-[#3D08BA]/30 bg-[#3D08BA]/10 text-[#3D08BA]'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    {value === 'all' ? 'All activity' : value === 'accepted' ? 'Accepted' : 'Pending'}
+                  </button>
+                ))}
               </div>
 
               {isInviteActivityLoading && (
-                <p className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-2 py-2 text-[11px] text-gray-500">
+                <p className={`${premiumInsetClass} mt-4 px-3 py-3 text-xs text-slate-500`}>
                   Loading invite activity...
                 </p>
               )}
 
               {!isInviteActivityLoading && filteredInviteActivity.length === 0 && (
-                <p className="mt-2 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-2 py-4 text-center text-[11px] text-gray-500">
+                <p className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-3 py-6 text-center text-xs text-slate-500">
                   No invite activity for this filter yet.
                 </p>
               )}
 
-              <div className="mt-2 space-y-2">
+              <div className="mt-4 space-y-3">
                 {filteredInviteActivity.map((event) => (
                   <div
                     key={event.id}
-                    className={`rounded-lg border px-2.5 py-2 ${
+                    className={`rounded-2xl border px-3.5 py-3 shadow-[0_12px_30px_-24px_rgba(15,23,42,0.34)] ${
                       event.kind === 'teacher_access_accepted'
-                        ? 'border-emerald-200 bg-emerald-50'
-                        : 'border-gray-200 bg-gray-50'
+                        ? 'border-emerald-200 bg-emerald-50/85'
+                        : 'border-slate-200 bg-slate-50/85'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-2">
                         {event.kind === 'teacher_access_accepted' && (
                           <FaCheckCircle className="text-[11px] text-emerald-600" />
                         )}
-                        <p className="text-[11px] font-semibold text-gray-800">{event.title}</p>
+                        <p className="text-xs font-semibold text-slate-800">{event.title}</p>
                       </div>
-                      <span className="text-[10px] text-gray-500">{event.createdAtLabel}</span>
+                      <span className="text-[10px] text-slate-500">{event.createdAtLabel}</span>
                     </div>
-                    <div className="mt-1">
+                    <div className="mt-2">
                       <span
-                        className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${inviteActivityTypeClass(
+                        className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-semibold ${inviteActivityTypeClass(
                           event.kind
                         )}`}
                       >
                         {inviteActivityTypeLabel(event.kind)}
                       </span>
                     </div>
-                    <p className="mt-1 text-[11px] text-gray-600">{event.message}</p>
-                    <button
-                      onClick={() => jumpToSessionFromActivity(event.sessionId)}
-                      className="mt-1.5 rounded-md border border-gray-200 bg-white px-2 py-1 text-[10px] font-semibold text-gray-700 hover:bg-gray-50"
-                    >
+                    <p className="mt-2 text-[11px] leading-5 text-slate-600">{event.message}</p>
+                    <button onClick={() => jumpToSessionFromActivity(event.sessionId)} className={`${secondaryButtonClass} mt-3 !px-3 !py-2 !text-xs`}>
                       Open class
                     </button>
                   </div>
@@ -2705,129 +3475,145 @@ const SchoolSchedule = () => {
               </div>
             </div>
 
-            <div className="rounded-xl border border-gray-200 bg-white p-3">
+            <div className={`${premiumPanelClass} p-4`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Teacher list</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {filteredTeachers.length} teacher{filteredTeachers.length === 1 ? '' : 's'} visible with live workload and invite state.
+                  </p>
+                </div>
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-500">
+                  {teacherRosterStats.liveCount} teaching live
+                </span>
+              </div>
+
               {isTeacherLoading && (
-                <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                <p className={`${premiumInsetClass} mt-4 px-4 py-3 text-sm text-slate-600`}>
                   Loading teacher roster...
                 </p>
               )}
 
               {!isTeacherLoading && filteredTeachers.length === 0 && (
-                <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-6 text-center text-xs text-gray-500">
+                <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
                   No teachers match this search yet.
                 </div>
               )}
 
-              <div className="space-y-2">
+              <div className="mt-4 space-y-3">
                 {filteredTeachers.map((teacher) => (
                   <div
                     key={teacher.id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3"
+                    className="rounded-[24px] border border-slate-200/80 bg-white px-4 py-4 shadow-[0_18px_45px_-34px_rgba(15,23,42,0.34)] transition hover:-translate-y-0.5 hover:border-[#3D08BA]/15"
                   >
-                    <div className="min-w-[240px]">
-                      <div className="flex items-center gap-2">
-                        <p className="text-xs font-semibold text-gray-900">{teacher.name}</p>
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${teacherInviteStatusClass(
-                            teacher
-                          )}`}
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div className="flex min-w-[240px] flex-1 gap-3">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#3D08BA]/10 text-sm font-semibold text-[#3D08BA]">
+                          {getNameInitials(teacher.name)}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-semibold text-slate-950">{teacher.name}</p>
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${teacherInviteStatusClass(
+                                teacher
+                              )}`}
+                            >
+                              {teacherInviteStatusLabel(teacher)}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-slate-600">{teacher.email}</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {[teacher.department, teacher.classGroup, teacher.subjectFocus]
+                              .filter(Boolean)
+                              .join(' • ') || 'No profile tags yet'}
+                          </p>
+                          <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold">
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-600">
+                              Live now: {teacherInsights.get(teacher.email)?.liveCount || 0}
+                            </span>
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-600">
+                              Upcoming: {teacherInsights.get(teacher.email)?.upcomingCount || 0}
+                            </span>
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-600">
+                              This week: {teacherInsights.get(teacher.email)?.weekCount || 0}
+                            </span>
+                          </div>
+                          {teacherInsights.get(teacher.email)?.nextSession && (
+                            <p className="mt-3 text-[11px] text-slate-500">
+                              Next class:{' '}
+                              {teacherInsights.get(teacher.email)?.nextSession?.title} •{' '}
+                              {formatDateTime(teacherInsights.get(teacher.email)?.nextSession?.startAt || '')}
+                            </p>
+                          )}
+                          {teacher.lastInviteSentAt && (
+                            <p className="mt-1 text-[11px] text-slate-500">
+                              Invite sent: {new Date(teacher.lastInviteSentAt).toLocaleString()}
+                            </p>
+                          )}
+                          {teacher.lastInviteChannel && (
+                            <p className="mt-1 text-[11px] text-slate-500">
+                              Channel:{' '}
+                              {teacher.lastInviteChannel === 'in_app'
+                                ? 'In-app'
+                                : teacher.lastInviteChannel === 'email'
+                                  ? 'Email'
+                                  : 'In-app + Email'}
+                            </p>
+                          )}
+                          {teacher.lastInviteDeliveryNote && (
+                            <p className="mt-1 text-[11px] text-slate-500">{teacher.lastInviteDeliveryNote}</p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          onClick={() => openTeacherTimetable(teacher)}
+                          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-sky-200 bg-sky-50 px-3.5 py-2 text-xs font-semibold text-sky-700 transition hover:-translate-y-0.5 hover:bg-sky-100"
                         >
-                          {teacherInviteStatusLabel(teacher)}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-gray-600">{teacher.email}</p>
-                      <p className="text-[11px] text-gray-500">
-                        {[teacher.department, teacher.classGroup, teacher.subjectFocus]
-                          .filter(Boolean)
-                          .join(' • ') || 'No tags yet'}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-semibold">
-                        <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-600">
-                          Live now: {teacherInsights.get(teacher.email)?.liveCount || 0}
-                        </span>
-                        <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-600">
-                          Upcoming: {teacherInsights.get(teacher.email)?.upcomingCount || 0}
-                        </span>
-                        <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-600">
-                          This week: {teacherInsights.get(teacher.email)?.weekCount || 0}
-                        </span>
-                      </div>
-                      {teacherInsights.get(teacher.email)?.nextSession && (
-                        <p className="mt-2 text-[10px] text-gray-500">
-                          Next class:{' '}
-                          {teacherInsights.get(teacher.email)?.nextSession?.title} •{' '}
-                          {formatDateTime(teacherInsights.get(teacher.email)?.nextSession?.startAt || '')}
-                        </p>
-                      )}
-                      {teacher.lastInviteSentAt && (
-                        <p className="text-[10px] text-gray-500">
-                          Invite sent: {new Date(teacher.lastInviteSentAt).toLocaleString()}
-                        </p>
-                      )}
-                      {teacher.lastInviteChannel && (
-                        <p className="text-[10px] text-gray-500">
-                          Channel:{' '}
-                          {teacher.lastInviteChannel === 'in_app'
-                            ? 'In-app'
-                            : teacher.lastInviteChannel === 'email'
-                              ? 'Email'
-                              : 'In-app + Email'}
-                        </p>
-                      )}
-                      {teacher.lastInviteDeliveryNote && (
-                        <p className="text-[10px] text-gray-500">{teacher.lastInviteDeliveryNote}</p>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        onClick={() => openTeacherTimetable(teacher)}
-                        className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700 hover:bg-sky-100"
-                      >
-                        Timetable
-                      </button>
-                      <button
-                        onClick={() => handleEditTeacher(teacher)}
-                        disabled={Boolean(activeTeacherActionId)}
-                        className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <span className="inline-flex items-center gap-1">
+                          Timetable
+                        </button>
+                        <button
+                          onClick={() => handleEditTeacher(teacher)}
+                          disabled={Boolean(activeTeacherActionId)}
+                          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
                           <FaEdit size={10} />
                           Edit
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => handleAssignTeacherToClass(teacher)}
-                        className="rounded-lg border border-[#3D08BA]/20 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10"
-                      >
-                        Assign to class
-                      </button>
-                      <button
-                        onClick={() => handleResendTeacherInvite(teacher)}
-                        disabled={Boolean(activeTeacherActionId) || !teacher.isActive}
-                        className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {activeTeacherActionId === `invite-${teacher.id}`
-                          ? 'Sending...'
-                          : 'Resend invite'}
-                      </button>
-                      <button
-                        onClick={() => handleToggleTeacher(teacher)}
-                        disabled={Boolean(activeTeacherActionId)}
-                        className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {activeTeacherActionId === `toggle-${teacher.id}`
-                          ? 'Updating...'
-                          : teacher.isActive
-                            ? 'Set inactive'
-                            : 'Activate'}
-                      </button>
-                      <button
-                        onClick={() => handleRemoveTeacher(teacher)}
-                        disabled={Boolean(activeTeacherActionId)}
-                        className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {activeTeacherActionId === `remove-${teacher.id}` ? 'Removing...' : 'Remove'}
-                      </button>
+                        </button>
+                        <button
+                          onClick={() => handleAssignTeacherToClass(teacher)}
+                          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#3D08BA]/15 bg-[#3D08BA]/6 px-3.5 py-2 text-xs font-semibold text-[#3D08BA] transition hover:-translate-y-0.5 hover:bg-[#3D08BA]/10"
+                        >
+                          Assign to class
+                        </button>
+                        <button
+                          onClick={() => handleResendTeacherInvite(teacher)}
+                          disabled={Boolean(activeTeacherActionId) || !teacher.isActive}
+                          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-2 text-xs font-semibold text-amber-700 transition hover:-translate-y-0.5 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {activeTeacherActionId === `invite-${teacher.id}` ? 'Sending...' : 'Resend invite'}
+                        </button>
+                        <button
+                          onClick={() => handleToggleTeacher(teacher)}
+                          disabled={Boolean(activeTeacherActionId)}
+                          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {activeTeacherActionId === `toggle-${teacher.id}`
+                            ? 'Updating...'
+                            : teacher.isActive
+                              ? 'Set inactive'
+                              : 'Activate'}
+                        </button>
+                        <button
+                          onClick={() => handleRemoveTeacher(teacher)}
+                          disabled={Boolean(activeTeacherActionId)}
+                          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-3.5 py-2 text-xs font-semibold text-red-700 transition hover:-translate-y-0.5 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {activeTeacherActionId === `remove-${teacher.id}` ? 'Removing...' : 'Remove'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -2836,210 +3622,297 @@ const SchoolSchedule = () => {
           </div>
         </section>
 
-        <section className="mt-5">
+        <section className="mt-6">
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.35)]">
+                <FaCalendarAlt size={10} />
+                Scheduled classes
+              </div>
+              <h2 className="mt-3 text-xl font-semibold tracking-[-0.03em] text-slate-950">
+                Work from a cleaner class timeline
+              </h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                Review each class in detail, jump straight into live sessions, or switch to the weekly grid when you need the broader operating picture.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-[0_12px_32px_-24px_rgba(15,23,42,0.38)]">
+              <p className="text-xs font-semibold text-slate-700">
+                {filteredSessions.length} visible class{filteredSessions.length === 1 ? '' : 'es'}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-500">
+                {viewMode === 'week'
+                  ? `Weekly grid for ${formatWeekRangeLabel(weekStartDate)}`
+                  : 'Expanded list with live actions, attendance, and teacher access'}
+              </p>
+            </div>
+          </div>
+
           {viewMode === 'list' ? (
             <div className="space-y-3">
               {isLoading && (
-                <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-600 shadow-sm">
+                <div className={`${premiumPanelClass} px-5 py-4 text-sm text-slate-600`}>
                   Loading school schedule sessions...
                 </div>
               )}
 
               {!isLoading && filteredSessions.length === 0 && (
-                <div className="rounded-xl border border-gray-200 bg-white p-10 text-center shadow-sm">
-                  <FaCalendarAlt className="mx-auto mb-3 text-4xl text-gray-300" />
-                  <h3 className="text-base font-semibold text-gray-900">No classes match your filters</h3>
-                  <p className="mt-1 text-sm text-gray-600">Try another search or add a new class to this schedule.</p>
+                <div className={`${premiumShellClass} p-10 text-center`}>
+                  <FaCalendarAlt className="mx-auto mb-4 text-4xl text-slate-300" />
+                  <h3 className="text-lg font-semibold tracking-[-0.02em] text-slate-950">
+                    No classes match your filters
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    Try another search term, switch the status filter, or add a new class to this schedule.
+                  </p>
                 </div>
               )}
 
               {filteredSessions.map((session) => {
                 const status = getSessionStatus(session, Date.now());
                 const acceptedEvent = acceptedInviteBySessionId.get(session.id);
+                const sessionIdCopyKey = `session-id-${session.id}`;
+                const teacherCodeCopyKey = `teacher-code-${session.id}`;
                 return (
                   <article
                     key={session.id}
                     ref={(element) => {
                       sessionCardRefs.current[session.id] = element;
                     }}
-                    className={`rounded-xl border bg-white p-4 shadow-sm transition-colors ${
+                    className={`overflow-hidden rounded-[28px] border bg-white/92 shadow-[0_18px_50px_-34px_rgba(15,23,42,0.34)] transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_24px_56px_-34px_rgba(15,23,42,0.38)] ${
                       highlightedSessionId === session.id
-                        ? 'border-emerald-300 ring-2 ring-emerald-200'
-                        : 'border-gray-200'
+                        ? 'border-emerald-300 ring-4 ring-emerald-100'
+                        : 'border-slate-200/80'
                     }`}
                   >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-[220px]">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-semibold text-gray-900">{session.title}</h3>
-                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusPillClass(status)}`}>
-                        {statusLabel(status)}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-xs text-gray-600">
-                      {session.subject} • {session.instructor}
-                    </p>
-                    <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-gray-700">
-                      Session ID: {session.id}
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const copied = await copyTextToClipboard(session.id);
-                          setNotice(copied ? 'Session ID copied.' : 'Clipboard is unavailable right now.');
-                        }}
-                        className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-500 hover:bg-gray-50"
-                        aria-label="Copy session ID"
-                        title="Copy session ID"
-                      >
-                        <FaCopy size={10} />
-                      </button>
-                    </p>
-                    <p className="mt-1 text-xs text-gray-500">Room: {session.roomCode}</p>
-                    {session.assignedTutorEmail && (
-                      <p className="mt-1 text-xs text-gray-500">
-                        Assigned teacher: {session.assignedTutorName || 'Teacher'} ({session.assignedTutorEmail})
-                      </p>
-                    )}
-                    {session.tutorAccessCode && (
-                      <p className="mt-1 flex items-center gap-1 text-xs text-gray-500">
-                        Teacher access code:{' '}
-                        <span className="font-semibold tracking-widest">{session.tutorAccessCode}</span>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            const copied = await copyTextToClipboard(session.tutorAccessCode || '');
-                            setNotice(copied ? 'Teacher access code copied.' : 'Clipboard is unavailable right now.');
-                          }}
-                          className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-500 hover:bg-gray-50"
-                          aria-label="Copy teacher access code"
-                          title="Copy teacher access code"
-                        >
-                          <FaCopy size={10} />
-                        </button>
-                      </p>
-                    )}
-                    {(session.department || session.classGroup || session.audienceTag) && (
-                      <p className="mt-1 text-xs text-gray-500">
-                        Audience:{' '}
-                        {session.audienceTag ||
-                          [session.department, session.classGroup].filter(Boolean).join(' • ')}
-                          </p>
-                        )}
+                    <div className="grid gap-5 px-5 py-5 lg:grid-cols-[minmax(0,1.55fr)_minmax(260px,0.95fr)]">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusPillClass(status)}`}>
+                            {statusLabel(status)}
+                          </span>
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                            {session.subject}
+                          </span>
+                        </div>
+                        <h3 className="mt-3 text-lg font-semibold tracking-[-0.03em] text-slate-950">
+                          {session.title}
+                        </h3>
+                        <p className="mt-2 text-sm text-slate-600">
+                          {session.subject} • {session.instructor}
+                        </p>
+
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          <div className={`${premiumInsetClass} px-3.5 py-3`}>
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                              Session identity
+                            </p>
+                            <p className="mt-2 flex items-center gap-2 text-xs font-semibold text-slate-700">
+                              Session ID: {session.id}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleCopyField(sessionIdCopyKey, session.id, 'Session ID copied.')
+                                }
+                                className={`inline-flex h-6 w-6 items-center justify-center rounded-xl border transition ${
+                                  copiedFieldKey === sessionIdCopyKey
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                                    : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                                }`}
+                                aria-label={
+                                  copiedFieldKey === sessionIdCopyKey ? 'Session ID copied' : 'Copy session ID'
+                                }
+                                title={copiedFieldKey === sessionIdCopyKey ? 'Copied' : 'Copy session ID'}
+                              >
+                                {copiedFieldKey === sessionIdCopyKey ? (
+                                  <FaCheckCircle size={10} />
+                                ) : (
+                                  <FaCopy size={10} />
+                                )}
+                              </button>
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">Room: {session.roomCode}</p>
+                            {(session.department || session.classGroup || session.audienceTag) && (
+                              <p className="mt-1 text-xs text-slate-500">
+                                Audience:{' '}
+                                {session.audienceTag ||
+                                  [session.department, session.classGroup].filter(Boolean).join(' • ')}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className={`${premiumInsetClass} px-3.5 py-3`}>
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                              Teacher access
+                            </p>
+                            {session.assignedTutorEmail ? (
+                              <p className="mt-2 text-xs text-slate-600">
+                                {session.assignedTutorName || 'Teacher'} ({session.assignedTutorEmail})
+                              </p>
+                            ) : (
+                              <p className="mt-2 text-xs text-slate-500">No teacher assigned yet.</p>
+                            )}
+                            {session.tutorAccessCode && (
+                              <p className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                                Code: <span className="font-semibold tracking-[0.2em] text-slate-700">{session.tutorAccessCode}</span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleCopyField(
+                                      teacherCodeCopyKey,
+                                      session.tutorAccessCode || '',
+                                      'Teacher access code copied.'
+                                    )
+                                  }
+                                  className={`inline-flex h-6 w-6 items-center justify-center rounded-xl border transition ${
+                                    copiedFieldKey === teacherCodeCopyKey
+                                      ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
+                                      : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                                  }`}
+                                  aria-label={
+                                    copiedFieldKey === teacherCodeCopyKey
+                                      ? 'Teacher access code copied'
+                                      : 'Copy teacher access code'
+                                  }
+                                  title={
+                                    copiedFieldKey === teacherCodeCopyKey ? 'Copied' : 'Copy teacher access code'
+                                  }
+                                >
+                                  {copiedFieldKey === teacherCodeCopyKey ? (
+                                    <FaCheckCircle size={10} />
+                                  ) : (
+                                    <FaCopy size={10} />
+                                  )}
+                                </button>
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
                         {acceptedEvent && (
-                          <p className="mt-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
+                          <p className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
                             Accepted: {acceptedEvent.message}
                           </p>
                         )}
-                        {session.notes && <p className="mt-2 text-xs text-gray-600">{session.notes}</p>}
+                        {session.notes && (
+                          <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-600">{session.notes}</p>
+                        )}
                       </div>
 
-                      <div className="grid min-w-[220px] grid-cols-2 gap-2 text-xs text-gray-600">
-                        <p className="inline-flex items-center gap-1 rounded-lg bg-gray-50 px-2 py-1.5">
-                          <FaClock size={11} />
-                          {formatDateTime(session.startAt)}
-                        </p>
-                        <p className="inline-flex items-center gap-1 rounded-lg bg-gray-50 px-2 py-1.5">
-                          <FaCheckCircle size={11} />
-                          {session.durationMinutes} mins
-                        </p>
-                        <p className="inline-flex items-center gap-1 rounded-lg bg-gray-50 px-2 py-1.5">
-                          <FaUsers size={11} />
-                          {session.expectedStudents} students
-                        </p>
-                        <p className="inline-flex items-center gap-1 rounded-lg bg-gray-50 px-2 py-1.5">
-                          <FaCalendarAlt size={11} />
-                          {new Date(session.startAt).toLocaleDateString()}
-                        </p>
+                      <div className={`${premiumInsetClass} grid gap-3 p-3`}>
+                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+                          <p className="inline-flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-[0_8px_24px_-22px_rgba(15,23,42,0.45)]">
+                            <FaClock size={11} className="text-[#3D08BA]" />
+                            {formatDateTime(session.startAt)}
+                          </p>
+                          <p className="inline-flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-[0_8px_24px_-22px_rgba(15,23,42,0.45)]">
+                            <FaCheckCircle size={11} className="text-[#3D08BA]" />
+                            {session.durationMinutes} mins
+                          </p>
+                          <p className="inline-flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-[0_8px_24px_-22px_rgba(15,23,42,0.45)]">
+                            <FaUsers size={11} className="text-[#3D08BA]" />
+                            {session.expectedStudents} students
+                          </p>
+                          <p className="inline-flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-[0_8px_24px_-22px_rgba(15,23,42,0.45)]">
+                            <FaCalendarAlt size={11} className="text-[#3D08BA]" />
+                            {new Date(session.startAt).toLocaleDateString()}
+                          </p>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-                      <button
-                        onClick={() => handleDuplicateSession(session)}
-                        disabled={Boolean(activeActionId)}
-                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        Duplicate
-                      </button>
-                      <button
-                        onClick={() => handleRescheduleSession(session)}
-                        disabled={Boolean(activeActionId)}
-                        className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        Reschedule
-                      </button>
-                      <button
-                        onClick={() => handleEditSession(session)}
-                        disabled={Boolean(activeActionId)}
-                        className="group inline-flex h-9 w-9 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-sky-700 shadow-sm hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        aria-label="Edit class"
-                        title="Edit"
-                      >
-                        <FaEdit size={11} />
-                      </button>
-                      <button
-                        onClick={() => void loadAttendance(session)}
-                        className="group inline-flex h-9 w-9 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm hover:bg-emerald-100"
-                        aria-label="Open attendance"
-                        title="Attendance"
-                      >
-                        <FaUsers size={11} />
-                      </button>
-                      <button
-                        onClick={() => void handleCopyTeacherAccess(session.id)}
-                        disabled={Boolean(activeActionId)}
-                        className="group inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                        aria-label="Copy teacher link and access code"
-                        title="Copy teacher link + code"
-                      >
-                        <FaCopy size={12} />
-                      </button>
-                      <button
-                        onClick={() => void handleRegenerateTeacherAccess(session.id)}
-                        disabled={Boolean(activeActionId)}
-                        className="group inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#3D08BA]/20 bg-[#3D08BA]/5 text-[#3D08BA] shadow-sm hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-60"
-                        aria-label="Regenerate teacher access"
-                        title="Regenerate access"
-                      >
-                        <FaSyncAlt size={12} />
-                      </button>
-                      <button
-                        onClick={() => void handleShareTeacherAccess(session)}
-                        disabled={Boolean(activeActionId)}
-                        className="group inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#3D08BA]/20 bg-[#3D08BA]/5 text-[#3D08BA] shadow-sm hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-60"
-                        aria-label="Share class access"
-                        title="Share"
-                      >
-                        <FaShareAlt size={12} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteSession(session.id)}
-                        disabled={Boolean(activeActionId)}
-                        className="group inline-flex h-9 w-9 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-700 shadow-sm hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        aria-label="Remove class"
-                        title="Remove"
-                      >
-                        <FaTrash size={10} />
-                      </button>
-                      <button
-                        onClick={() => handleStartLiveClass(session)}
-                        className="group relative inline-flex h-9 w-9 items-center justify-center rounded-full bg-red-600 text-white shadow-sm hover:bg-red-700"
-                        aria-label={status === 'live' ? 'Rejoin live room' : 'Go live'}
-                        title={status === 'live' ? 'Rejoin live room' : 'Go live'}
-                      >
-                        <FaVideo size={11} />
-                        <span className="absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white shadow">
-                          <span className="h-2 w-2 rounded-full bg-red-600 animate-pulse" />
-                        </span>
-                      </button>
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/70 bg-slate-50/80 px-5 py-4">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => handleDuplicateSession(session)}
+                          disabled={Boolean(activeActionId)}
+                          className="rounded-2xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Duplicate
+                        </button>
+                        <button
+                          onClick={() => handleRescheduleSession(session)}
+                          disabled={Boolean(activeActionId)}
+                          className="rounded-2xl border border-sky-200 bg-sky-50 px-3.5 py-2 text-xs font-semibold text-sky-700 transition hover:-translate-y-0.5 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Reschedule
+                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <button
+                          onClick={() => handleEditSession(session)}
+                          disabled={Boolean(activeActionId)}
+                          className={`${iconButtonClass} border-sky-200 bg-sky-50 text-sky-700 hover:border-sky-300 hover:bg-sky-100`}
+                          aria-label="Edit class"
+                          title="Edit"
+                        >
+                          <FaEdit size={11} />
+                        </button>
+                        <button
+                          onClick={() => void loadAttendance(session)}
+                          className={`${iconButtonClass} border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100`}
+                          aria-label="Open attendance"
+                          title="Attendance"
+                        >
+                          <FaUsers size={11} />
+                        </button>
+                        <button
+                          onClick={() => void handleCopyTeacherAccess(session.id)}
+                          disabled={Boolean(activeActionId)}
+                          className={iconButtonClass}
+                          aria-label="Copy teacher link and access code"
+                          title="Copy teacher link + code"
+                        >
+                          <FaCopy size={12} />
+                        </button>
+                        <button
+                          onClick={() => void handleRegenerateTeacherAccess(session.id)}
+                          disabled={Boolean(activeActionId)}
+                          className={`${iconButtonClass} border-[#3D08BA]/20 bg-[#3D08BA]/6 text-[#3D08BA] hover:border-[#3D08BA]/30 hover:bg-[#3D08BA]/10`}
+                          aria-label="Regenerate teacher access"
+                          title="Regenerate access"
+                        >
+                          <FaSyncAlt size={12} />
+                        </button>
+                        <button
+                          onClick={() => void handleShareTeacherAccess(session)}
+                          disabled={Boolean(activeActionId)}
+                          className={`${iconButtonClass} border-[#3D08BA]/20 bg-[#3D08BA]/6 text-[#3D08BA] hover:border-[#3D08BA]/30 hover:bg-[#3D08BA]/10`}
+                          aria-label="Share class access"
+                          title="Share"
+                        >
+                          <FaShareAlt size={12} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSession(session.id)}
+                          disabled={Boolean(activeActionId)}
+                          className={`${iconButtonClass} border-red-200 bg-red-50 text-red-700 hover:border-red-300 hover:bg-red-100`}
+                          aria-label="Remove class"
+                          title="Remove"
+                        >
+                          <FaTrash size={10} />
+                        </button>
+                        <button
+                          onClick={() => handleStartLiveClass(session)}
+                          className="group relative inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-red-600 text-white shadow-[0_16px_30px_-22px_rgba(220,38,38,0.85)] transition hover:-translate-y-0.5 hover:bg-red-700"
+                          aria-label={status === 'live' ? 'Rejoin live room' : 'Go live'}
+                          title={status === 'live' ? 'Rejoin live room' : 'Go live'}
+                        >
+                          <FaVideo size={11} />
+                          <span className="absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white shadow">
+                            <span className="h-2 w-2 rounded-full bg-red-600 animate-pulse" />
+                          </span>
+                        </button>
+                      </div>
                     </div>
                   </article>
                 );
               })}
             </div>
           ) : (
-            <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-              <p className="mb-3 text-xs text-gray-600">
+            <div className={`${premiumShellClass} p-4`}>
+              <p className="mb-4 text-sm text-slate-600">
                 Weekly timetable view for {formatWeekRangeLabel(weekStartDate)}.
               </p>
 
@@ -3050,20 +3923,20 @@ const SchoolSchedule = () => {
                   return (
                     <div
                       key={day.key}
-                      className={`min-h-[300px] rounded-xl border p-2 ${
-                        isToday ? 'border-[#3D08BA]/40 bg-[#3D08BA]/5' : 'border-gray-200 bg-gray-50'
+                      className={`min-h-[320px] rounded-[24px] border p-3 shadow-[0_16px_34px_-30px_rgba(15,23,42,0.35)] ${
+                        isToday ? 'border-[#3D08BA]/35 bg-[#3D08BA]/6' : 'border-slate-200 bg-slate-50/80'
                       }`}
                     >
-                      <div className="mb-2 border-b border-gray-200 pb-2">
-                        <p className="text-xs font-semibold text-gray-700">{day.dayLabel}</p>
-                        <p className="text-xs text-gray-500">
+                      <div className="mb-3 border-b border-slate-200 pb-3">
+                        <p className="text-sm font-semibold text-slate-800">{day.dayLabel}</p>
+                        <p className="text-xs text-slate-500">
                           {day.monthLabel} {day.dayNumber}
                         </p>
                       </div>
 
                       <div className="space-y-2">
                         {daySessions.length === 0 && (
-                          <p className="rounded-lg border border-dashed border-gray-200 bg-white px-2 py-3 text-center text-[11px] text-gray-400">
+                          <p className="rounded-2xl border border-dashed border-slate-200 bg-white px-2 py-4 text-center text-[11px] text-slate-400">
                             No classes
                           </p>
                         )}
@@ -3074,16 +3947,16 @@ const SchoolSchedule = () => {
                             <button
                               key={session.id}
                               onClick={() => handleStartLiveClass(session)}
-                              className="w-full rounded-lg border border-gray-200 bg-white p-2 text-left hover:border-[#3D08BA]/30"
+                              className="w-full rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-[0_12px_30px_-24px_rgba(15,23,42,0.4)] transition hover:-translate-y-0.5 hover:border-[#3D08BA]/20 hover:bg-[#faf8ff]"
                             >
                               <div className="flex items-start justify-between gap-1">
-                                <p className="line-clamp-2 text-[11px] font-semibold text-gray-900">{session.title}</p>
+                                <p className="line-clamp-2 text-[11px] font-semibold text-slate-900">{session.title}</p>
                                 <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${statusPillClass(status)}`}>
                                   {status === 'live' ? 'Live' : status === 'completed' ? 'Done' : 'Soon'}
                                 </span>
                               </div>
-                              <p className="mt-1 text-[10px] text-gray-600">{session.subject}</p>
-                              <p className="mt-1 text-[10px] text-gray-500">
+                              <p className="mt-2 text-[10px] text-slate-600">{session.subject}</p>
+                              <p className="mt-1 text-[10px] text-slate-500">
                                 {formatSessionTime(session.startAt)} • {session.durationMinutes}m
                               </p>
                             </button>
@@ -3100,37 +3973,37 @@ const SchoolSchedule = () => {
                   const daySessions = weekSessionsByDay[day.key] || [];
                   const isToday = getLocalDayKey(new Date()) === day.key;
                   return (
-                    <div key={day.key} className="rounded-xl border border-gray-200 p-3">
+                    <div key={day.key} className={`${premiumPanelClass} p-4`}>
                       <div className="mb-2 flex items-center justify-between">
-                        <p className={`text-sm font-semibold ${isToday ? 'text-[#3D08BA]' : 'text-gray-800'}`}>
+                        <p className={`text-sm font-semibold ${isToday ? 'text-[#3D08BA]' : 'text-slate-800'}`}>
                           {day.dayLabel}, {day.monthLabel} {day.dayNumber}
                         </p>
-                        <span className="text-xs text-gray-500">{daySessions.length} classes</span>
+                        <span className="text-xs text-slate-500">{daySessions.length} classes</span>
                       </div>
                       <div className="space-y-2">
                         {daySessions.length === 0 && (
-                          <p className="rounded-lg bg-gray-50 px-2 py-2 text-xs text-gray-500">No classes scheduled.</p>
+                          <p className="rounded-2xl bg-slate-50 px-3 py-3 text-xs text-slate-500">No classes scheduled.</p>
                         )}
                         {daySessions.map((session) => {
                           const status = getSessionStatus(session, Date.now());
                           return (
-                            <div key={session.id} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                            <div key={session.id} className="rounded-2xl border border-slate-200 bg-slate-50/85 px-3 py-3">
                               <div className="flex items-center justify-between gap-2">
-                                <p className="text-xs font-semibold text-gray-900">{session.title}</p>
+                                <p className="text-xs font-semibold text-slate-900">{session.title}</p>
                                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusPillClass(status)}`}>
                                   {statusLabel(status)}
                                 </span>
                               </div>
-                              <p className="mt-1 text-[11px] text-gray-600">
+                              <p className="mt-1 text-[11px] text-slate-600">
                                 {formatSessionTime(session.startAt)} • {session.subject} • {session.instructor}
                               </p>
                               <button
                                 onClick={() => handleStartLiveClass(session)}
-                                className="mt-2 inline-flex items-center gap-2 rounded-md bg-[#3D08BA] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#2D0690]"
+                                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#3D08BA] px-3 py-2 text-[11px] font-semibold text-white shadow-[0_12px_24px_-18px_rgba(61,8,186,0.8)] transition hover:-translate-y-0.5 hover:bg-[#2D0690]"
                               >
                                 <span className="relative inline-flex">
                                   <FaVideo size={9} />
-                                <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                                  <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-red-500 animate-pulse" />
                                 </span>
                                 Open class
                               </button>
@@ -3899,7 +4772,30 @@ const SchoolSchedule = () => {
                 />
               </div>
 
-              <div className="sm:col-span-2">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-gray-600">
+                  Attendance grace period (minutes)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={60}
+                  step={1}
+                  value={formState.attendanceGracePeriodMinutes}
+                  onChange={(event) =>
+                    setFormState((prev) => ({
+                      ...prev,
+                      attendanceGracePeriodMinutes: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                />
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Students who check in after this window are marked late.
+                </p>
+              </div>
+
+              <div>
                 <label className="mb-1 block text-xs font-semibold text-gray-600">Expected students</label>
                 <input
                   type="number"
@@ -4005,6 +4901,254 @@ const SchoolSchedule = () => {
         </div>
       )}
 
+      {isAttendanceReportOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/55 px-4 py-6">
+          <div className="mx-auto flex min-h-full w-full max-w-6xl items-start justify-center">
+            <div className="my-auto flex w-full max-h-[92vh] flex-col overflow-hidden rounded-[28px] border border-white/60 bg-white shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b border-[#3D08BA]/10 bg-linear-to-r from-[#f4efff] via-white to-white px-6 py-5">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-[#3D08BA]/15 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]">
+                    <FaUsers size={10} />
+                    Attendance range report
+                  </div>
+                  <h2 className="mt-3 text-xl font-semibold text-slate-900">Attendance across classes</h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Generate a report from the current schedule filters, then narrow it by date range and attendance status.
+                  </p>
+                </div>
+                <button
+                  onClick={closeAttendanceReport}
+                  disabled={isAttendanceReportLoading || attendanceReportExportAction !== null}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label="Close attendance report"
+                  title="Close attendance report"
+                >
+                  <FaTimes size={12} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto bg-slate-50/70 px-6 py-5">
+                <div className="space-y-5">
+                  <section className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
+                      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                        <div>
+                          <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                            Date from
+                          </label>
+                          <input
+                            type="date"
+                            value={attendanceReportStartDate}
+                            onChange={(event) => setAttendanceReportStartDate(event.target.value)}
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                            Date to
+                          </label>
+                          <input
+                            type="date"
+                            value={attendanceReportEndDate}
+                            onChange={(event) => setAttendanceReportEndDate(event.target.value)}
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                          />
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                            Candidate classes
+                          </p>
+                          <p className="mt-1 text-lg font-semibold text-slate-900">
+                            {attendanceReportCandidateSessions.length}
+                          </p>
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            Based on the current search and status filter
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                            Generated rows
+                          </p>
+                          <p className="mt-1 text-lg font-semibold text-slate-900">{attendanceReportRows.length}</p>
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            {attendanceReportItems.length === 0 ? 'Generate the report first' : 'Rows after status filter'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+                        <button
+                          type="button"
+                          onClick={() => void handleGenerateAttendanceReport()}
+                          disabled={isAttendanceReportLoading}
+                          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#3D08BA] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_16px_34px_-20px_rgba(61,8,186,0.82)] transition hover:-translate-y-0.5 hover:bg-[#2F078F] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isAttendanceReportLoading ? 'Generating...' : 'Generate report'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleExportAttendanceRangeCsv}
+                          disabled={attendanceReportExportAction !== null || attendanceReportRows.length === 0}
+                          className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700 transition hover:-translate-y-0.5 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {attendanceReportExportAction === 'csv' ? 'Exporting CSV...' : 'Export CSV'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleExportAttendanceRangePdf()}
+                          disabled={attendanceReportExportAction !== null || attendanceReportRows.length === 0}
+                          className="rounded-2xl border border-[#3D08BA]/20 bg-[#3D08BA]/6 px-4 py-2.5 text-sm font-semibold text-[#3D08BA] transition hover:-translate-y-0.5 hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {attendanceReportExportAction === 'pdf' ? 'Exporting PDF...' : 'Export PDF'}
+                        </button>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Classes</p>
+                      <p className="mt-2 text-2xl font-semibold text-slate-900">{attendanceReportSummary.sessionCount}</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Expected</p>
+                      <p className="mt-2 text-2xl font-semibold text-slate-900">{attendanceReportSummary.expectedStudents}</p>
+                    </div>
+                    <div className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Present</p>
+                      <p className="mt-2 text-2xl font-semibold text-emerald-700">{attendanceReportSummary.presentCount}</p>
+                    </div>
+                    <div className="rounded-2xl border border-orange-200 bg-white p-4 shadow-sm">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-orange-700">Late</p>
+                      <p className="mt-2 text-2xl font-semibold text-orange-700">{attendanceReportSummary.lateCount}</p>
+                    </div>
+                    <div className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">Pending</p>
+                      <p className="mt-2 text-2xl font-semibold text-amber-700">{attendanceReportSummary.pendingCount}</p>
+                    </div>
+                    <div className="rounded-2xl border border-[#3D08BA]/15 bg-white p-4 shadow-sm">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]">Coverage</p>
+                      <p className="mt-2 text-2xl font-semibold text-[#3D08BA]">{attendanceReportCoverage}%</p>
+                    </div>
+                  </section>
+
+                  <section className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-900">Attendance rows</h3>
+                        <p className="mt-1 text-xs leading-5 text-slate-500">
+                          Filter the generated report by attendance status, then export the exact view you need.
+                        </p>
+                      </div>
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                        {attendanceReportRows.length} row{attendanceReportRows.length === 1 ? '' : 's'}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {(['all', 'present', 'late', 'pending', 'absent'] as const).map((value) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setAttendanceReportFilter(value)}
+                          className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+                            attendanceReportFilter === value
+                              ? value === 'present'
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                : value === 'late'
+                                  ? 'border-orange-200 bg-orange-50 text-orange-700'
+                                  : value === 'pending'
+                                    ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                    : value === 'absent'
+                                      ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                      : 'border-[#3D08BA]/20 bg-[#3D08BA]/6 text-[#3D08BA]'
+                              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          {attendanceFilterLabel(value)}
+                        </button>
+                      ))}
+                    </div>
+
+                    {attendanceReportItems.length === 0 ? (
+                      <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                        Generate a report to see class attendance across the selected date range.
+                      </div>
+                    ) : attendanceReportRows.length === 0 ? (
+                      <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                        No {attendanceFilterLabel(attendanceReportFilter).toLowerCase()} rows in this attendance report.
+                      </div>
+                    ) : (
+                      <div className="mt-4 space-y-3">
+                        {attendanceReportRows.map((row, index) => (
+                          <article
+                            key={`${row.sessionId}-${row.participantId || row.participantName}-${index}`}
+                            className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="text-sm font-semibold text-slate-900">{row.participantName}</p>
+                                  <span
+                                    className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                                      row.status === 'present'
+                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                        : row.status === 'late'
+                                          ? 'border-orange-200 bg-orange-50 text-orange-700'
+                                          : row.status === 'pending'
+                                            ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                            : 'border-rose-200 bg-rose-50 text-rose-700'
+                                    }`}
+                                  >
+                                    {attendanceFilterLabel(row.status)}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {row.participantId ? `ID: ${row.participantId}` : 'No student ID attached'}
+                                </p>
+                                <p className="mt-2 text-xs font-medium text-slate-700">
+                                  {row.sessionTitle} • {row.sessionSubject} • {row.sessionAudience}
+                                </p>
+                                <p className="mt-1 text-[11px] text-slate-500">
+                                  {formatDateTime(row.sessionStartAt)}
+                                </p>
+                              </div>
+                              <div className="grid gap-2 sm:grid-cols-3">
+                                <div className="rounded-xl border border-white bg-white px-3 py-2">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Checked in</p>
+                                  <p className="mt-1 text-xs font-medium text-slate-700">{formatAttendanceMoment(row.checkedInAt)}</p>
+                                </div>
+                                <div className="rounded-xl border border-white bg-white px-3 py-2">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Duration</p>
+                                  <p className="mt-1 text-xs font-medium text-slate-700">
+                                    {row.durationMinutes !== null ? `${row.durationMinutes} min` : 'Not recorded'}
+                                  </p>
+                                </div>
+                                <div className="rounded-xl border border-white bg-white px-3 py-2">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Source</p>
+                                  <p className="mt-1 text-xs font-medium text-slate-700">
+                                    {row.source === 'check_in' ? 'Student check-in' : row.source === 'live' ? 'Live presence' : 'Manual'}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                            {row.note && (
+                              <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                                {row.note}
+                              </div>
+                            )}
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {attendanceTargetSession && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/55 px-4 py-6">
           <div className="mx-auto flex min-h-full w-full max-w-5xl items-start justify-center">
@@ -4043,7 +5187,69 @@ const SchoolSchedule = () => {
 
                 {!isAttendanceLoading && attendancePayload && (
                   <div className="space-y-5">
-                    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                    <section className="rounded-[24px] border border-emerald-100 bg-white p-5 shadow-sm">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+                                attendancePayload.window.isOpen
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                  : 'border-slate-200 bg-slate-50 text-slate-600'
+                              }`}
+                            >
+                              <span
+                                className={`h-2 w-2 rounded-full ${
+                                  attendancePayload.window.isOpen ? 'bg-emerald-500' : 'bg-slate-400'
+                                }`}
+                              />
+                              {attendancePayload.window.isOpen ? 'Attendance window open' : 'Attendance window closed'}
+                            </span>
+                            <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">
+                              {attendancePayload.summary.checkedInCount} checked in
+                            </span>
+                            {attendancePayload.summary.lateCount > 0 && (
+                              <span className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-orange-700">
+                                {attendancePayload.summary.lateCount} late
+                              </span>
+                            )}
+                            {attendancePayload.summary.pendingCount > 0 && (
+                              <span className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-700">
+                                {attendancePayload.summary.pendingCount} waiting to confirm
+                              </span>
+                            )}
+                          </div>
+                          <h3 className="mt-3 text-sm font-semibold text-slate-900">
+                            Live attendance confirmation
+                          </h3>
+                          <p className="mt-1 text-xs leading-5 text-slate-500">
+                            Students first appear as connected. They become fully present after tapping the attendance
+                            button inside the live classroom while the window is open. Check-ins after{' '}
+                            {attendancePayload.window.gracePeriodMinutes} minutes are recorded as late.
+                          </p>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                              Last opened
+                            </p>
+                            <p className="mt-1 text-xs font-medium text-slate-700">
+                              {formatAttendanceMoment(attendancePayload.window.openedAt)}
+                            </p>
+                          </div>
+                          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                              Opened by
+                            </p>
+                            <p className="mt-1 text-xs font-medium text-slate-700">
+                              {attendancePayload.window.openedByName || 'Teacher'}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-8">
                       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
                           Expected
@@ -4060,12 +5266,36 @@ const SchoolSchedule = () => {
                           {attendancePayload.summary.presentCount}
                         </p>
                       </div>
-                      <div className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+                      <div className="rounded-2xl border border-rose-200 bg-white p-4 shadow-sm">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-rose-700">
                           Absent
                         </p>
-                        <p className="mt-2 text-2xl font-semibold text-amber-700">
+                        <p className="mt-2 text-2xl font-semibold text-rose-700">
                           {attendancePayload.summary.absentCount}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-[#3D08BA]/15 bg-white p-4 shadow-sm">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]">
+                          Checked in
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold text-[#3D08BA]">
+                          {attendancePayload.summary.checkedInCount}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-orange-200 bg-white p-4 shadow-sm">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-orange-700">
+                          Late
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold text-orange-700">
+                          {attendancePayload.summary.lateCount}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+                          Pending
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold text-amber-700">
+                          {attendancePayload.summary.pendingCount}
                         </p>
                       </div>
                       <div className="rounded-2xl border border-sky-200 bg-white p-4 shadow-sm">
@@ -4198,28 +5428,93 @@ const SchoolSchedule = () => {
                               Live learners are captured automatically. You can still correct any record below.
                             </p>
                           </div>
-                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                            {attendancePayload.records.length} record
-                            {attendancePayload.records.length === 1 ? '' : 's'}
-                          </span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                              {filteredAttendanceRecords.length} record
+                              {filteredAttendanceRecords.length === 1 ? '' : 's'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={handleExportAttendanceCsv}
+                              disabled={attendanceExportAction !== null || filteredAttendanceRecords.length === 0}
+                              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {attendanceExportAction === 'csv' ? 'Exporting CSV...' : 'Export CSV'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleExportAttendancePdf()}
+                              disabled={attendanceExportAction !== null || filteredAttendanceRecords.length === 0}
+                              className="rounded-xl border border-[#3D08BA]/20 bg-[#3D08BA]/6 px-3 py-2 text-[11px] font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {attendanceExportAction === 'pdf' ? 'Exporting PDF...' : 'Export PDF'}
+                            </button>
+                          </div>
                         </div>
 
-                        {attendancePayload.records.length === 0 ? (
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {(['all', 'present', 'late', 'pending', 'absent'] as const).map((value) => (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => setAttendanceFilter(value)}
+                              className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+                                attendanceFilter === value
+                                  ? value === 'present'
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                    : value === 'late'
+                                      ? 'border-orange-200 bg-orange-50 text-orange-700'
+                                      : value === 'pending'
+                                        ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                        : value === 'absent'
+                                          ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                          : 'border-[#3D08BA]/20 bg-[#3D08BA]/6 text-[#3D08BA]'
+                                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                              }`}
+                            >
+                              {attendanceFilterLabel(value)}
+                            </button>
+                          ))}
+                        </div>
+
+                        {filteredAttendanceRecords.length === 0 ? (
                           <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-                            No attendance record yet. Live join events or manual entries will appear here.
+                            {attendancePayload.records.length === 0
+                              ? 'No attendance record yet. Live join events or manual entries will appear here.'
+                              : `No ${attendanceFilterLabel(attendanceFilter).toLowerCase()} attendance record in this view yet.`}
                           </div>
                         ) : (
                           <div className="mt-4 space-y-3">
-                            {attendancePayload.records.map((record) => {
+                            {filteredAttendanceRecords.map((record) => {
                               const isUpdating = attendanceBusyId === record.id;
                               const statusClass =
                                 record.status === 'present'
                                   ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                  : 'border-amber-200 bg-amber-50 text-amber-700';
+                                  : record.status === 'late'
+                                    ? 'border-orange-200 bg-orange-50 text-orange-700'
+                                  : record.status === 'pending'
+                                    ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                    : 'border-rose-200 bg-rose-50 text-rose-700';
                               const sourceClass =
                                 record.source === 'live'
                                   ? 'border-sky-200 bg-sky-50 text-sky-700'
+                                  : record.source === 'check_in'
+                                    ? 'border-[#3D08BA]/15 bg-[#3D08BA]/5 text-[#3D08BA]'
                                   : 'border-slate-200 bg-slate-50 text-slate-600';
+                              const statusLabel =
+                                record.status === 'present'
+                                  ? 'Present'
+                                  : record.status === 'late'
+                                    ? 'Late'
+                                  : record.status === 'pending'
+                                    ? 'Pending'
+                                    : 'Absent';
+                              const sourceLabel =
+                                record.source === 'live'
+                                  ? 'Live presence'
+                                  : record.source === 'check_in'
+                                    ? 'Student check-in'
+                                    : 'Manual';
 
                               return (
                                 <div
@@ -4235,12 +5530,12 @@ const SchoolSchedule = () => {
                                         <span
                                           className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${statusClass}`}
                                         >
-                                          {record.status}
+                                          {statusLabel}
                                         </span>
                                         <span
                                           className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${sourceClass}`}
                                         >
-                                          {record.source === 'live' ? 'Live capture' : 'Manual'}
+                                          {sourceLabel}
                                         </span>
                                         {record.isLive && (
                                           <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-red-700">
@@ -4253,6 +5548,16 @@ const SchoolSchedule = () => {
                                           ? `ID: ${record.participantId}`
                                           : 'No student ID attached'}
                                       </p>
+                                      {record.status === 'pending' && (
+                                        <p className="mt-2 text-xs text-amber-700">
+                                          Connected to class but has not tapped the live attendance button yet.
+                                        </p>
+                                      )}
+                                      {record.status === 'late' && (
+                                        <p className="mt-2 text-xs text-orange-700">
+                                          Attendance was confirmed after the {attendancePayload.window.gracePeriodMinutes}-minute grace period.
+                                        </p>
+                                      )}
                                     </div>
                                     <div className="flex items-center gap-2">
                                       <button
@@ -4276,7 +5581,7 @@ const SchoolSchedule = () => {
                                     </div>
                                   </div>
 
-                                  <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                                  <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
                                     <div className="rounded-xl border border-white bg-white px-3 py-2">
                                       <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
                                         Joined
@@ -4299,6 +5604,14 @@ const SchoolSchedule = () => {
                                       </p>
                                       <p className="mt-1 text-xs font-medium text-slate-700">
                                         {formatAttendanceMoment(record.leftAt)}
+                                      </p>
+                                    </div>
+                                    <div className="rounded-xl border border-white bg-white px-3 py-2">
+                                      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                        Checked in
+                                      </p>
+                                      <p className="mt-1 text-xs font-medium text-slate-700">
+                                        {formatAttendanceMoment(record.checkedInAt)}
                                       </p>
                                     </div>
                                     <div className="rounded-xl border border-white bg-white px-3 py-2">

@@ -21,6 +21,7 @@ type CreateSchoolSessionBody = {
   startAt?: string;
   durationMinutes?: number;
   expectedStudents?: number;
+  attendanceGracePeriodMinutes?: number;
   roomCode?: string;
   notes?: string;
   schoolEmail?: string;
@@ -38,6 +39,7 @@ type UpdateSchoolSessionBody = {
   startAt?: string;
   durationMinutes?: number;
   expectedStudents?: number;
+  attendanceGracePeriodMinutes?: number;
   roomCode?: string;
   notes?: string | null;
   schoolEmail?: string;
@@ -98,6 +100,12 @@ type RecordSessionAttendanceBody = {
   participantId?: string | number;
   participantName?: string;
   note?: string;
+};
+
+type SetSessionAttendanceWindowBody = {
+  sessionId?: string;
+  action?: string;
+  schoolEmail?: string;
 };
 
 @UseGuards(SupabaseAuthGuard)
@@ -250,6 +258,7 @@ export class SchoolScheduleController {
       startAt: body.startAt,
       durationMinutes: body.durationMinutes,
       expectedStudents: body.expectedStudents,
+      attendanceGracePeriodMinutes: body.attendanceGracePeriodMinutes,
       roomCode: body.roomCode,
       notes: body.notes,
       schoolEmail: body.schoolEmail,
@@ -338,6 +347,14 @@ export class SchoolScheduleController {
     );
   }
 
+  @Get('attendance/session/:sessionId')
+  getLiveSessionAttendance(@Req() request: Request, @Param('sessionId') sessionId: string) {
+    return this.schoolScheduleService.getLiveAttendanceForAuthUser(
+      this.getAuthUser(request),
+      sessionId
+    );
+  }
+
   @Post('attendance/record')
   recordSessionAttendance(@Req() request: Request, @Body() body: RecordSessionAttendanceBody) {
     return this.schoolScheduleService.recordAttendanceForAuthUser(this.getAuthUser(request), {
@@ -346,6 +363,15 @@ export class SchoolScheduleController {
       participantId: body.participantId,
       participantName: body.participantName,
       note: body.note,
+    });
+  }
+
+  @Post('attendance/window')
+  setSessionAttendanceWindow(@Req() request: Request, @Body() body: SetSessionAttendanceWindowBody) {
+    return this.schoolScheduleService.setAttendanceWindowForAuthUser(this.getAuthUser(request), {
+      sessionId: body.sessionId,
+      action: body.action,
+      schoolEmail: body.schoolEmail,
     });
   }
 
@@ -374,6 +400,7 @@ export class SchoolScheduleController {
         startAt: body.startAt,
         durationMinutes: body.durationMinutes,
         expectedStudents: body.expectedStudents,
+        attendanceGracePeriodMinutes: body.attendanceGracePeriodMinutes,
         roomCode: body.roomCode,
         notes: body.notes,
         schoolEmail: body.schoolEmail,

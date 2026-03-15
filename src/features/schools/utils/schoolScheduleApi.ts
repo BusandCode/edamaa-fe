@@ -21,9 +21,18 @@ export type SchoolScheduleSession = {
   audienceTag?: string | null;
   tutorJoinLink?: string | null;
   tutorAccessCode?: string | null;
+  attendanceWindow?: SchoolScheduleAttendanceWindow | null;
   status: 'upcoming' | 'live' | 'completed';
   createdAt: string;
   updatedAt: string;
+};
+
+export type SchoolScheduleAttendanceWindow = {
+  isOpen: boolean;
+  openedAt: string | null;
+  openedByName: string | null;
+  closedAt: string | null;
+  gracePeriodMinutes: number;
 };
 
 export type SchoolScheduleListResponse = {
@@ -153,6 +162,7 @@ export type CreateSchoolScheduleSessionInput = {
   startAt: string;
   durationMinutes: number;
   expectedStudents?: number;
+  attendanceGracePeriodMinutes?: number;
   roomCode?: string;
   notes?: string;
   assignedTutorEmail?: string;
@@ -175,6 +185,7 @@ export type UpdateSchoolScheduleSessionInput = {
   startAt?: string;
   durationMinutes?: number;
   expectedStudents?: number;
+  attendanceGracePeriodMinutes?: number;
   roomCode?: string;
   notes?: string | null;
   assignedTutorEmail?: string | null;
@@ -262,11 +273,12 @@ export type SchoolScheduleAttendanceRecord = {
   participantId: string | null;
   participantName: string;
   participantRole: 'student' | 'tutor' | 'school';
-  status: 'present' | 'absent';
-  source: 'live' | 'manual';
+  status: 'present' | 'absent' | 'pending' | 'late';
+  source: 'live' | 'manual' | 'check_in';
   joinedAt: string | null;
   lastSeenAt: string | null;
   leftAt: string | null;
+  checkedInAt: string | null;
   manualMarkedAt: string | null;
   note: string | null;
   durationMinutes: number | null;
@@ -278,7 +290,10 @@ export type SchoolScheduleAttendanceRecord = {
 export type SchoolScheduleAttendanceSummary = {
   expectedStudents: number;
   presentCount: number;
+  lateCount: number;
   absentCount: number;
+  pendingCount: number;
+  checkedInCount: number;
   liveCount: number;
   completedCount: number;
   missingCount: number;
@@ -288,6 +303,7 @@ export type SchoolScheduleAttendanceSummary = {
 export type SchoolScheduleAttendanceResponse = {
   generatedAt: string;
   session: SchoolScheduleSession;
+  window: SchoolScheduleAttendanceWindow;
   summary: SchoolScheduleAttendanceSummary;
   records: SchoolScheduleAttendanceRecord[];
 };
@@ -308,10 +324,16 @@ export type UpdateSchoolScheduleAttendanceInput = {
 
 export type RecordSchoolScheduleAttendanceInput = {
   sessionId: string;
-  action: 'join' | 'leave';
+  action: 'join' | 'leave' | 'check_in';
   participantId?: string | number;
   participantName?: string;
   note?: string;
+};
+
+export type SetSchoolScheduleAttendanceWindowInput = {
+  sessionId: string;
+  action: 'open' | 'close';
+  schoolEmail?: string;
 };
 
 export type VerifySchoolTeacherAccessInput = {
@@ -671,6 +693,16 @@ export const fetchSchoolScheduleAttendance = async (
   return (await response.json()) as SchoolScheduleAttendanceResponse;
 };
 
+export const fetchSchoolScheduleLiveAttendance = async (sessionId: string) => {
+  const response = await requestWithAuth(
+    `/school-schedule/attendance/session/${encodeURIComponent(sessionId)}`,
+    {
+      method: 'GET',
+    }
+  );
+  return (await response.json()) as SchoolScheduleAttendanceResponse;
+};
+
 export const upsertSchoolScheduleAttendance = async (
   sessionId: string,
   input: UpsertSchoolScheduleAttendanceInput
@@ -716,8 +748,23 @@ export const recordSchoolScheduleAttendance = async (input: RecordSchoolSchedule
   return (await response.json()) as {
     recorded: boolean;
     ignored?: boolean;
-    action?: 'join' | 'leave';
+    action?: 'join' | 'leave' | 'check_in';
     record?: SchoolScheduleAttendanceRecord;
+    attendance?: SchoolScheduleAttendanceResponse;
+  };
+};
+
+export const setSchoolScheduleAttendanceWindow = async (
+  input: SetSchoolScheduleAttendanceWindowInput
+) => {
+  const response = await requestWithAuth('/school-schedule/attendance/window', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return (await response.json()) as {
+    message: string;
+    attendance: SchoolScheduleAttendanceResponse;
+    window: SchoolScheduleAttendanceWindow;
   };
 };
 

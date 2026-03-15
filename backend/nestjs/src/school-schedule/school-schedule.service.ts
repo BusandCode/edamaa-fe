@@ -44,6 +44,7 @@ type CreateSchoolSessionInput = {
   startAt?: string;
   durationMinutes?: number;
   expectedStudents?: number;
+  attendanceGracePeriodMinutes?: number;
   roomCode?: string;
   notes?: string;
   schoolEmail?: string;
@@ -61,6 +62,7 @@ type UpdateSchoolSessionInput = {
   startAt?: string;
   durationMinutes?: number;
   expectedStudents?: number;
+  attendanceGracePeriodMinutes?: number;
   roomCode?: string;
   notes?: string | null;
   schoolEmail?: string;
@@ -229,8 +231,18 @@ type FallbackSchoolScheduleSessionRecord = {
   updatedAt: Date;
 };
 
-type SessionAttendanceStatus = 'present' | 'absent';
-type SessionAttendanceSource = 'live' | 'manual';
+const ATTENDANCE_LATE_GRACE_PERIOD_MINUTES = 5;
+
+type SessionAttendanceStatus = 'present' | 'absent' | 'pending' | 'late';
+type SessionAttendanceSource = 'live' | 'manual' | 'check_in';
+
+type SessionAttendanceWindowState = {
+  isOpen: boolean;
+  openedAt: string | null;
+  openedByName: string | null;
+  closedAt: string | null;
+  gracePeriodMinutes: number;
+};
 
 type SessionAttendanceRecord = {
   id: string;
@@ -247,6 +259,7 @@ type SessionAttendanceRecord = {
   joinedAt: Date | null;
   lastSeenAt: Date | null;
   leftAt: Date | null;
+  checkedInAt: Date | null;
   manualMarkedAt: Date | null;
   note: string | null;
   createdAt: Date;
@@ -259,6 +272,12 @@ type RecordSessionAttendanceInput = {
   participantId?: string | number;
   participantName?: string;
   note?: string;
+};
+
+type SetSessionAttendanceWindowInput = {
+  sessionId?: string;
+  action?: string;
+  schoolEmail?: string;
 };
 
 type UpsertManualSessionAttendanceInput = {
@@ -791,6 +810,84 @@ export class SchoolScheduleService {
     return this.buildSessionAttendanceResponse(session);
   }
 
+  async getLiveAttendanceForAuthUser(authUser: AuthUserContext, sessionId: string) {
+    const authUserRecord = await this.resolveAuthUserRecord(authUser);
+    const viewerRole = this.resolvePrimaryViewerRole(authUserRecord.activeRoles);
+    const normalizedSessionId = this.normalizeRequiredText(sessionId, 'Session ID');
+    const session = await this.findSessionByPublicId(normalizedSessionId);
+
+    if (!session) {
+      throw new NotFoundException('This class session does not exist or may have been removed.');
+    }
+
+    if (
+      !this.canAuthUserViewFeedSession({
+        authUser,
+        authUserRecord,
+        viewerRole,
+        session,
+      })
+    ) {
+      throw new ForbiddenException('You do not have access to this class session.');
+    }
+
+    return this.buildSessionAttendanceResponse(session);
+  }
+
+  async setAttendanceWindowForAuthUser(
+    authUser: AuthUserContext,
+    input: SetSessionAttendanceWindowInput
+  ) {
+    const authUserRecord = await this.resolveAuthUserRecord(authUser);
+    const viewerRole = this.resolvePrimaryViewerRole(authUserRecord.activeRoles);
+    const normalizedSessionId = this.normalizeRequiredText(input.sessionId, 'Session ID');
+    const normalizedAction = this.normalizeAttendanceWindowAction(input.action);
+    const session = await this.findSessionByPublicId(normalizedSessionId);
+
+    if (!session) {
+      throw new NotFoundException('This class session does not exist or may have been removed.');
+    }
+
+    if (
+      !this.canAuthUserManageSessionAttendance({
+        authUserRecord,
+        viewerRole,
+        session,
+      })
+    ) {
+      throw new ForbiddenException('Only the school or assigned teacher can manage attendance.');
+    }
+
+    const currentWindow = this.parseAttendanceWindowMetadata(session.metadata);
+    const nextWindow =
+      normalizedAction === 'open'
+        ? {
+            isOpen: true,
+            openedAt: new Date().toISOString(),
+            openedByName: authUserRecord.name || authUserRecord.email,
+            closedAt: null,
+            gracePeriodMinutes: ATTENDANCE_LATE_GRACE_PERIOD_MINUTES,
+          }
+        : {
+            isOpen: false,
+            openedAt: currentWindow.openedAt,
+            openedByName: currentWindow.openedByName,
+            closedAt: new Date().toISOString(),
+            gracePeriodMinutes: currentWindow.gracePeriodMinutes,
+          };
+
+    const updatedSession = await this.persistAttendanceWindowForSession(session, nextWindow);
+
+    return {
+      message:
+        normalizedAction === 'open'
+          ? 'Attendance is now open for this class.'
+          : 'Attendance has been closed for this class.',
+      attendance: this.buildSessionAttendanceResponse(updatedSession),
+      window: nextWindow,
+    };
+  }
+
   async upsertManualAttendanceForAuthUser(
     authUser: AuthUserContext,
     sessionId: string,
@@ -826,6 +923,7 @@ export class SchoolScheduleService {
       joinedAt: null,
       lastSeenAt: null,
       leftAt: null,
+      checkedInAt: null,
       manualMarkedAt: new Date(),
       note,
     });
@@ -867,6 +965,11 @@ export class SchoolScheduleService {
 
     existing.status = this.normalizeAttendanceStatus(input.status);
     existing.note = this.normalizeOptionalText(input.note);
+    existing.checkedInAt =
+      existing.source === 'check_in' &&
+      (existing.status === 'present' || existing.status === 'late')
+        ? existing.checkedInAt
+        : null;
     existing.manualMarkedAt = new Date();
     existing.updatedAt = new Date();
     this.persistAttendanceRecordsToDisk();
@@ -925,16 +1028,39 @@ export class SchoolScheduleService {
       participantName
     );
 
+    const attendanceWindow = this.parseAttendanceWindowMetadata(session.metadata);
+    if (normalizedAction === 'check_in') {
+      if (!attendanceWindow.isOpen) {
+        throw new BadRequestException('Attendance is not open for this class right now.');
+      }
+    }
+    const checkedInStatus =
+      normalizedAction === 'check_in'
+        ? this.resolveCheckedInAttendanceStatus(attendanceWindow, now)
+        : null;
+
     const record = existing
       ? this.updateExistingAttendanceRecord(existing, {
           participantId,
           participantName,
           participantRole: 'student',
-          status: 'present',
-          source: 'live',
-          joinedAt: normalizedAction === 'join' ? now : existing.joinedAt || now,
+          status:
+            checkedInStatus ||
+            (existing.status === 'present' || existing.status === 'late'
+              ? existing.status
+                : existing.status === 'absent'
+                  ? 'absent'
+                  : 'pending'),
+          source:
+            normalizedAction === 'check_in'
+              ? 'check_in'
+              : existing.source === 'manual' || existing.source === 'check_in'
+                ? existing.source
+                : 'live',
+          joinedAt: normalizedAction === 'join' ? existing.joinedAt || now : existing.joinedAt || now,
           lastSeenAt: now,
           leftAt: normalizedAction === 'leave' ? now : null,
+          checkedInAt: normalizedAction === 'check_in' ? now : existing.checkedInAt,
           manualMarkedAt: existing.manualMarkedAt,
           note: this.normalizeOptionalText(input.note) || existing.note,
           sessionTitle: session.title,
@@ -949,11 +1075,12 @@ export class SchoolScheduleService {
           participantId,
           participantName,
           participantRole: 'student',
-          status: 'present',
-          source: 'live',
+          status: checkedInStatus || 'pending',
+          source: normalizedAction === 'check_in' ? 'check_in' : 'live',
           joinedAt: now,
           lastSeenAt: now,
           leftAt: normalizedAction === 'leave' ? now : null,
+          checkedInAt: normalizedAction === 'check_in' ? now : null,
           manualMarkedAt: null,
           note: this.normalizeOptionalText(input.note),
         });
@@ -962,6 +1089,7 @@ export class SchoolScheduleService {
       recorded: true,
       action: normalizedAction,
       record: this.mapAttendanceRecord(record),
+      attendance: this.buildSessionAttendanceResponse(session),
     };
   }
 
@@ -1097,6 +1225,13 @@ export class SchoolScheduleService {
     const durationMinutes = this.resolveDurationMinutes(input.durationMinutes);
     const endAt = new Date(startAt.getTime() + durationMinutes * 60 * 1000);
     const expectedStudents = this.resolveExpectedStudents(input.expectedStudents);
+    const attendanceWindow: SessionAttendanceWindowState = {
+      isOpen: false,
+      openedAt: null,
+      openedByName: null,
+      closedAt: null,
+      gracePeriodMinutes: this.resolveAttendanceGracePeriodMinutes(input.attendanceGracePeriodMinutes),
+    };
 
     const roomCode =
       this.normalizeOptionalText(input.roomCode)?.toUpperCase() ||
@@ -1137,7 +1272,10 @@ export class SchoolScheduleService {
           expectedStudents,
           roomCode,
           notes,
-          metadata: this.withTeacherAccessMetadata(null, teacherAccess),
+          metadata: this.withAttendanceWindowMetadata(
+            this.withTeacherAccessMetadata(null, teacherAccess),
+            attendanceWindow
+          ),
         },
       })
       .catch((error) => {
@@ -1160,7 +1298,10 @@ export class SchoolScheduleService {
           expectedStudents,
           roomCode,
           notes,
-          metadata: this.withTeacherAccessMetadata(null, teacherAccess) as Prisma.JsonValue,
+          metadata: this.withAttendanceWindowMetadata(
+            this.withTeacherAccessMetadata(null, teacherAccess),
+            attendanceWindow
+          ) as Prisma.JsonValue,
           createdAt: now,
           updatedAt: now,
         });
@@ -1509,6 +1650,14 @@ export class SchoolScheduleService {
     const expectedStudents = this.resolveExpectedStudents(
       typeof input.expectedStudents === 'number' ? input.expectedStudents : existing.expectedStudents
     );
+    const existingAttendanceWindow = this.parseAttendanceWindowMetadata(existing.metadata);
+    const attendanceWindow: SessionAttendanceWindowState = {
+      ...existingAttendanceWindow,
+      gracePeriodMinutes:
+        typeof input.attendanceGracePeriodMinutes === 'number'
+          ? this.resolveAttendanceGracePeriodMinutes(input.attendanceGracePeriodMinutes)
+          : existingAttendanceWindow.gracePeriodMinutes,
+    };
 
     const roomCode =
       typeof input.roomCode === 'string'
@@ -1560,7 +1709,10 @@ export class SchoolScheduleService {
         expectedStudents,
         roomCode,
         notes,
-        metadata: this.withTeacherAccessMetadata(existing.metadata, teacherAccess),
+        metadata: this.withAttendanceWindowMetadata(
+          this.withTeacherAccessMetadata(existing.metadata, teacherAccess),
+          attendanceWindow
+        ),
       },
     });
 
@@ -2018,6 +2170,7 @@ export class SchoolScheduleService {
     joinedAt: Date | null;
     lastSeenAt: Date | null;
     leftAt: Date | null;
+    checkedInAt: Date | null;
     manualMarkedAt: Date | null;
     note: string | null;
   }) {
@@ -2048,6 +2201,7 @@ export class SchoolScheduleService {
       joinedAt: input.joinedAt,
       lastSeenAt: input.lastSeenAt,
       leftAt: input.leftAt,
+      checkedInAt: input.checkedInAt,
       manualMarkedAt: input.manualMarkedAt,
       note: input.note,
       createdAt: now,
@@ -2071,6 +2225,7 @@ export class SchoolScheduleService {
       joinedAt?: Date | null;
       lastSeenAt?: Date | null;
       leftAt?: Date | null;
+      checkedInAt?: Date | null;
       manualMarkedAt?: Date | null;
       note?: string | null;
       sessionTitle?: string;
@@ -2085,6 +2240,7 @@ export class SchoolScheduleService {
     existing.joinedAt = patch.joinedAt === undefined ? existing.joinedAt : patch.joinedAt;
     existing.lastSeenAt = patch.lastSeenAt === undefined ? existing.lastSeenAt : patch.lastSeenAt;
     existing.leftAt = patch.leftAt === undefined ? existing.leftAt : patch.leftAt;
+    existing.checkedInAt = patch.checkedInAt === undefined ? existing.checkedInAt : patch.checkedInAt;
     existing.manualMarkedAt =
       patch.manualMarkedAt === undefined ? existing.manualMarkedAt : patch.manualMarkedAt;
     existing.note = patch.note === undefined ? existing.note : patch.note;
@@ -2108,27 +2264,36 @@ export class SchoolScheduleService {
       });
 
     const presentCount = records.filter((record) => record.status === 'present').length;
+    const lateCount = records.filter((record) => record.status === 'late').length;
     const absentCount = records.filter((record) => record.status === 'absent').length;
-    const liveCount = records.filter(
-      (record) => record.status === 'present' && record.source === 'live' && !record.leftAt
-    ).length;
+    const pendingCount = records.filter((record) => record.status === 'pending').length;
+    const liveCount = records.filter((record) => Boolean(record.joinedAt) && !record.leftAt).length;
+    const checkedInCount = records.filter((record) => Boolean(record.checkedInAt)).length;
+    const attendedCount = presentCount + lateCount;
     const attendanceRate =
       session.expectedStudents > 0
-        ? Math.round((presentCount / session.expectedStudents) * 100)
-        : presentCount > 0
+        ? Math.round((attendedCount / session.expectedStudents) * 100)
+        : attendedCount > 0
           ? 100
           : 0;
 
     return {
       generatedAt: new Date().toISOString(),
       session: this.mapSession(session, Date.now(), { includeTeacherAccess: true }),
+      window: this.parseAttendanceWindowMetadata(session.metadata),
       summary: {
         expectedStudents: session.expectedStudents,
         presentCount,
+        lateCount,
         absentCount,
+        pendingCount,
+        checkedInCount,
         liveCount,
-        completedCount: records.filter((record) => record.status === 'present' && Boolean(record.leftAt)).length,
-        missingCount: Math.max(session.expectedStudents - presentCount - absentCount, 0),
+        completedCount: records.filter(
+          (record) =>
+            (record.status === 'present' || record.status === 'late') && Boolean(record.leftAt)
+        ).length,
+        missingCount: Math.max(session.expectedStudents - attendedCount - absentCount, 0),
         attendanceRate,
       },
       records: mappedRecords,
@@ -2158,10 +2323,11 @@ export class SchoolScheduleService {
       joinedAt: record.joinedAt ? record.joinedAt.toISOString() : null,
       lastSeenAt: record.lastSeenAt ? record.lastSeenAt.toISOString() : null,
       leftAt: record.leftAt ? record.leftAt.toISOString() : null,
+      checkedInAt: record.checkedInAt ? record.checkedInAt.toISOString() : null,
       manualMarkedAt: record.manualMarkedAt ? record.manualMarkedAt.toISOString() : null,
       note: record.note,
       durationMinutes,
-      isLive: record.status === 'present' && record.source === 'live' && !record.leftAt,
+      isLive: Boolean(record.joinedAt) && !record.leftAt,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     };
@@ -2203,6 +2369,33 @@ export class SchoolScheduleService {
     return ((existing || fallback || null) as SessionLookupRecord | null);
   }
 
+  private async persistAttendanceWindowForSession(
+    session: SessionLookupRecord,
+    attendanceWindow: SessionAttendanceWindowState
+  ) {
+    const nextMetadata = this.withAttendanceWindowMetadata(session.metadata, attendanceWindow);
+
+    const updated = await this.prisma.schoolScheduleSession
+      .update({
+        where: {
+          publicId: session.publicId,
+        },
+        data: {
+          metadata: nextMetadata,
+        },
+      })
+      .catch((error) => {
+        if (this.isPrismaUnavailableError(error)) {
+          return this.updateFallbackSession(session.schoolUserId, session.publicId, {
+            metadata: nextMetadata,
+          });
+        }
+        throw error;
+      });
+
+    return (updated || session) as SessionLookupRecord;
+  }
+
   private loadAttendanceRecordsFromDisk() {
     try {
       if (!existsSync(this.fallbackAttendancePath)) {
@@ -2223,6 +2416,7 @@ export class SchoolScheduleService {
           joinedAt: record.joinedAt ? new Date(record.joinedAt) : null,
           lastSeenAt: record.lastSeenAt ? new Date(record.lastSeenAt) : null,
           leftAt: record.leftAt ? new Date(record.leftAt) : null,
+          checkedInAt: record.checkedInAt ? new Date(record.checkedInAt) : null,
           manualMarkedAt: record.manualMarkedAt ? new Date(record.manualMarkedAt) : null,
           createdAt: new Date(record.createdAt),
           updatedAt: new Date(record.updatedAt),
@@ -2329,6 +2523,29 @@ export class SchoolScheduleService {
     }
 
     return this.isStudentAudienceMatch(input.authUser, teacherAccess);
+  }
+
+  private canAuthUserManageSessionAttendance(input: {
+    authUserRecord: AuthUserRecord;
+    viewerRole: 'student' | 'tutor' | 'school' | 'admin';
+    session: {
+      schoolUserId: number;
+      metadata?: Prisma.JsonValue | null;
+    };
+  }) {
+    if (input.viewerRole === 'admin' || input.viewerRole === 'school') {
+      return true;
+    }
+
+    if (input.viewerRole !== 'tutor') {
+      return false;
+    }
+
+    const teacherAccess = this.parseTeacherAccessMetadata(input.session.metadata);
+    return Boolean(
+      teacherAccess.assignedTutorEmail &&
+        teacherAccess.assignedTutorEmail === input.authUserRecord.email
+    );
   }
 
   private canAuthUserViewNotification(input: {
@@ -2605,6 +2822,28 @@ export class SchoolScheduleService {
     };
   }
 
+  private parseAttendanceWindowMetadata(
+    metadata: Prisma.JsonValue | null | undefined
+  ): SessionAttendanceWindowState {
+    const metadataObject = this.readJsonObject(metadata);
+    const attendanceWindowRaw = this.readJsonObject(metadataObject?.attendanceWindow);
+    const openedAt = this.parseOptionalDate(attendanceWindowRaw?.openedAt);
+    const closedAt = this.parseOptionalDate(attendanceWindowRaw?.closedAt);
+    const gracePeriodRaw = Number(attendanceWindowRaw?.gracePeriodMinutes);
+    const gracePeriodMinutes =
+      Number.isFinite(gracePeriodRaw) && gracePeriodRaw > 0
+        ? Math.round(gracePeriodRaw)
+        : ATTENDANCE_LATE_GRACE_PERIOD_MINUTES;
+
+    return {
+      isOpen: attendanceWindowRaw?.isOpen === true,
+      openedAt: openedAt ? openedAt.toISOString() : null,
+      openedByName: this.normalizeOptionalText(attendanceWindowRaw?.openedByName),
+      closedAt: closedAt ? closedAt.toISOString() : null,
+      gracePeriodMinutes,
+    };
+  }
+
   private withTeacherAccessMetadata(
     metadata: Prisma.JsonValue | null | undefined,
     teacherAccess: SessionTeacherAccess
@@ -2613,6 +2852,17 @@ export class SchoolScheduleService {
     return {
       ...metadataObject,
       teacherAccess,
+    } as Prisma.InputJsonValue;
+  }
+
+  private withAttendanceWindowMetadata(
+    metadata: Prisma.JsonValue | null | undefined,
+    attendanceWindow: SessionAttendanceWindowState
+  ): Prisma.InputJsonValue {
+    const metadataObject = this.readJsonObject(metadata) || {};
+    return {
+      ...metadataObject,
+      attendanceWindow,
     } as Prisma.InputJsonValue;
   }
 
@@ -3574,6 +3824,18 @@ export class SchoolScheduleService {
     return Math.round(parsed);
   }
 
+  private resolveAttendanceGracePeriodMinutes(value: unknown) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return ATTENDANCE_LATE_GRACE_PERIOD_MINUTES;
+    }
+    const rounded = Math.round(parsed);
+    if (rounded > 60) {
+      throw new BadRequestException('Attendance grace period should be 60 minutes or less.');
+    }
+    return rounded;
+  }
+
   private async assertNoScheduleCollision(input: {
     schoolUserId: number;
     startAt: Date;
@@ -3752,6 +4014,7 @@ export class SchoolScheduleService {
     options?: { includeTeacherAccess?: boolean }
   ) {
     const teacherAccess = this.parseTeacherAccessMetadata(session.metadata);
+    const attendanceWindow = this.parseAttendanceWindowMetadata(session.metadata);
     const includeTeacherAccess = options?.includeTeacherAccess === true;
 
     return {
@@ -3778,6 +4041,7 @@ export class SchoolScheduleService {
           )
         : null,
       tutorAccessCode: includeTeacherAccess ? teacherAccess.tutorJoinCode : null,
+      attendanceWindow,
       status: this.resolveSessionStatus(session.startAt, session.endAt, nowMs),
       createdAt: session.createdAt.toISOString(),
       updatedAt: session.updatedAt.toISOString(),
@@ -3814,8 +4078,14 @@ export class SchoolScheduleService {
     const normalized = String(value || '')
       .trim()
       .toLowerCase();
+    if (normalized === 'late') {
+      return 'late';
+    }
     if (normalized === 'absent') {
       return 'absent';
+    }
+    if (normalized === 'pending') {
+      return 'pending';
     }
     return 'present';
   }
@@ -3827,7 +4097,39 @@ export class SchoolScheduleService {
     if (normalized === 'leave') {
       return 'leave' as const;
     }
+    if (normalized === 'check_in') {
+      return 'check_in' as const;
+    }
     return 'join' as const;
+  }
+
+  private resolveCheckedInAttendanceStatus(
+    attendanceWindow: SessionAttendanceWindowState,
+    checkedInAt: Date
+  ): SessionAttendanceStatus {
+    if (!attendanceWindow.openedAt) {
+      return 'present';
+    }
+
+    const openedAtMs = new Date(attendanceWindow.openedAt).getTime();
+    if (!Number.isFinite(openedAtMs)) {
+      return 'present';
+    }
+
+    return checkedInAt.getTime() >
+      openedAtMs + attendanceWindow.gracePeriodMinutes * 60 * 1000
+      ? 'late'
+      : 'present';
+  }
+
+  private normalizeAttendanceWindowAction(value: unknown) {
+    const normalized = String(value || '')
+      .trim()
+      .toLowerCase();
+    if (normalized === 'close') {
+      return 'close' as const;
+    }
+    return 'open' as const;
   }
 
   private normalizeRequiredText(value: unknown, label: string) {
@@ -3969,7 +4271,9 @@ export class SchoolScheduleService {
       const eventDate =
         record.source === 'live'
           ? record.joinedAt || record.updatedAt
-          : record.manualMarkedAt || record.updatedAt;
+          : record.source === 'check_in'
+            ? record.checkedInAt || record.updatedAt
+            : record.manualMarkedAt || record.updatedAt;
       const timestampMs = eventDate.getTime();
       if (!Number.isFinite(timestampMs) || now - timestampMs > 1000 * 60 * 60 * 24 * 7) {
         return activities;
@@ -3980,7 +4284,11 @@ export class SchoolScheduleService {
         type: 'attendance_recorded',
         title:
           record.source === 'live'
-            ? `Student joined: ${record.participantName}`
+            ? `Student entered class: ${record.participantName}`
+            : record.source === 'check_in'
+              ? record.status === 'late'
+                ? `Attendance confirmed late: ${record.participantName}`
+                : `Attendance confirmed: ${record.participantName}`
             : record.status === 'absent'
               ? `Attendance marked absent: ${record.participantName}`
               : `Attendance marked present: ${record.participantName}`,

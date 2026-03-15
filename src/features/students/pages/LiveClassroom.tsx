@@ -26,7 +26,12 @@ import {
 } from '@heroicons/react/24/outline';
 import { buildRtcConfiguration } from '../../../utils/rtc';
 import { loadSchoolBrandingNames, loadSchoolProfileImage } from '../../../utils/schoolBranding';
-import { recordSchoolScheduleAttendance } from '../../schools/utils/schoolScheduleApi';
+import {
+  fetchSchoolScheduleLiveAttendance,
+  recordSchoolScheduleAttendance,
+  setSchoolScheduleAttendanceWindow,
+  type SchoolScheduleAttendanceResponse,
+} from '../../schools/utils/schoolScheduleApi';
 import {
   fetchTeachingSubscriptionState,
   type TeachingActor,
@@ -588,6 +593,10 @@ const LiveClassroom = () => {
     type: 'info',
     text: 'Connecting to live classroom...',
   });
+  const [schoolAttendanceState, setSchoolAttendanceState] = useState<SchoolScheduleAttendanceResponse | null>(null);
+  const [isSchoolAttendanceLoading, setIsSchoolAttendanceLoading] = useState(false);
+  const [attendanceActionState, setAttendanceActionState] = useState<'open' | 'close' | 'check_in' | null>(null);
+  const isSchoolAttendanceClass = teacherActor === 'school' && Boolean(liveClass.id);
 
   useEffect(() => {
     if (isTeacher || !liveClass.id) {
@@ -603,9 +612,15 @@ const LiveClassroom = () => {
     void recordSchoolScheduleAttendance({
       ...attendanceBase,
       action: 'join',
-    }).catch(() => {
-      // Ignore attendance sync failures in local/dev flows that are not tied to school schedule.
-    });
+    })
+      .then((payload) => {
+        if (payload.attendance) {
+          setSchoolAttendanceState(payload.attendance);
+        }
+      })
+      .catch(() => {
+        // Ignore attendance sync failures in local/dev flows that are not tied to school schedule.
+      });
 
     return () => {
       void recordSchoolScheduleAttendance({
@@ -737,12 +752,136 @@ const LiveClassroom = () => {
     setNoticeState(null);
   }, []);
 
+  const refreshSchoolAttendanceState = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!isSchoolAttendanceClass) {
+        return;
+      }
+
+      if (!options?.silent) {
+        setIsSchoolAttendanceLoading(true);
+      }
+
+      try {
+        const payload = await fetchSchoolScheduleLiveAttendance(liveClass.id);
+        setSchoolAttendanceState(payload);
+      } catch {
+        // Ignore attendance status fetch failures in flows not tied to school schedule.
+      } finally {
+        if (!options?.silent) {
+          setIsSchoolAttendanceLoading(false);
+        }
+      }
+    },
+    [isSchoolAttendanceClass, liveClass.id]
+  );
+
+  const handleAttendanceWindowAction = useCallback(
+    async (action: 'open' | 'close') => {
+      if (!isTeacher || !isSchoolAttendanceClass) {
+        return;
+      }
+
+      setAttendanceActionState(action);
+      try {
+        const payload = await setSchoolScheduleAttendanceWindow({
+          sessionId: liveClass.id,
+          action,
+        });
+        setSchoolAttendanceState(payload.attendance);
+        pushNotice(payload.message, 'success');
+      } catch (error) {
+        pushNotice(
+          error instanceof Error ? error.message : 'Could not update attendance right now.',
+          'error'
+        );
+      } finally {
+        setAttendanceActionState(null);
+      }
+    },
+    [isSchoolAttendanceClass, isTeacher, liveClass.id, pushNotice]
+  );
+
+  const handleStudentAttendanceCheckIn = useCallback(async () => {
+    if (isTeacher || !isSchoolAttendanceClass) {
+      return;
+    }
+
+    setAttendanceActionState('check_in');
+    try {
+      const payload = await recordSchoolScheduleAttendance({
+        sessionId: liveClass.id,
+        action: 'check_in',
+        participantId: attendanceParticipantId,
+        participantName: attendanceParticipantName,
+      });
+      if (payload.attendance) {
+        setSchoolAttendanceState(payload.attendance);
+      }
+      pushNotice('Attendance recorded for this class.', 'success');
+    } catch (error) {
+      pushNotice(
+        error instanceof Error ? error.message : 'Could not record attendance right now.',
+        'error'
+      );
+    } finally {
+      setAttendanceActionState(null);
+    }
+  }, [
+    attendanceParticipantId,
+    attendanceParticipantName,
+    isSchoolAttendanceClass,
+    isTeacher,
+    liveClass.id,
+    pushNotice,
+  ]);
+
   const activeParticipants = useMemo(
     () => participants.filter((participant) => participant.online),
     [participants]
   );
 
   const viewerCount = activeParticipants.length;
+
+  useEffect(() => {
+    if (!isSchoolAttendanceClass) {
+      return;
+    }
+
+    void refreshSchoolAttendanceState();
+    const interval = window.setInterval(() => {
+      void refreshSchoolAttendanceState({ silent: true });
+    }, 12000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [isSchoolAttendanceClass, refreshSchoolAttendanceState]);
+
+  const selfAttendanceRecord = useMemo(() => {
+    if (!schoolAttendanceState) {
+      return null;
+    }
+
+    return (
+      schoolAttendanceState.records.find((record) => record.participantId === attendanceParticipantId) ||
+      schoolAttendanceState.records.find(
+        (record) =>
+          record.participantName.trim().toLowerCase() ===
+          attendanceParticipantName.trim().toLowerCase()
+      ) ||
+      null
+    );
+  }, [attendanceParticipantId, attendanceParticipantName, schoolAttendanceState]);
+
+  const isAttendanceWindowOpen = schoolAttendanceState?.window.isOpen === true;
+  const hasAttendanceCheckIn = Boolean(selfAttendanceRecord?.checkedInAt);
+  const isLateAttendance = selfAttendanceRecord?.status === 'late';
+  const shouldShowStudentAttendanceCard =
+    isSchoolAttendanceClass &&
+    !isTeacher &&
+    (isAttendanceWindowOpen || hasAttendanceCheckIn || selfAttendanceRecord?.status === 'pending');
+  const shouldShowTeacherAttendanceCard = isSchoolAttendanceClass && isTeacher;
 
   const currentBadge = useMemo(() => getBadgeForTotalGiftedCoins(totalGiftedCoins), [totalGiftedCoins]);
   const nextBadge = useMemo(
@@ -3669,6 +3808,92 @@ const LiveClassroom = () => {
             </div>
           )}
 
+          {shouldShowStudentAttendanceCard && schoolAttendanceState && (
+            <div
+              className={`rounded-2xl border p-4 ${
+                hasAttendanceCheckIn
+                  ? isLateAttendance
+                    ? 'border-amber-300/35 bg-amber-500/10'
+                    : 'border-emerald-300/35 bg-emerald-500/10'
+                  : isAttendanceWindowOpen
+                    ? 'border-[#F68C29]/35 bg-[#F68C29]/10'
+                    : 'border-amber-300/30 bg-amber-500/10'
+              }`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-white/55">Class attendance</p>
+                  <h2 className="mt-2 text-sm font-semibold text-white">
+                    {hasAttendanceCheckIn
+                      ? isLateAttendance
+                        ? 'Attendance recorded as late'
+                        : 'Attendance recorded'
+                      : isAttendanceWindowOpen
+                        ? 'Attendance is open'
+                        : 'Attendance is closed'}
+                  </h2>
+                  <p className="mt-1 text-xs leading-5 text-white/75">
+                    {hasAttendanceCheckIn
+                      ? isLateAttendance
+                        ? `You checked in at ${formatClockTime(selfAttendanceRecord?.checkedInAt || new Date().toISOString())} after the ${schoolAttendanceState.window.gracePeriodMinutes}-minute grace period.`
+                        : `You checked in at ${formatClockTime(selfAttendanceRecord?.checkedInAt || new Date().toISOString())}.`
+                      : isAttendanceWindowOpen
+                        ? `Tap once to confirm you are present in this live class. Check-ins after ${schoolAttendanceState.window.gracePeriodMinutes} minutes are marked late.`
+                        : 'The attendance window has closed. Reach out to your teacher if you were missed.'}
+                  </p>
+                </div>
+                <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-[11px] font-semibold text-white/75">
+                  {schoolAttendanceState.summary.checkedInCount} checked in
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                <article className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wide text-white/50">Checked in</p>
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {schoolAttendanceState.summary.checkedInCount}
+                  </p>
+                </article>
+                <article className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wide text-white/50">Late</p>
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {schoolAttendanceState.summary.lateCount}
+                  </p>
+                </article>
+                <article className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wide text-white/50">Pending</p>
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {schoolAttendanceState.summary.pendingCount}
+                  </p>
+                </article>
+                <article className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wide text-white/50">Connected</p>
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {schoolAttendanceState.summary.liveCount}
+                  </p>
+                </article>
+                <article className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wide text-white/50">Coverage</p>
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {schoolAttendanceState.summary.attendanceRate}%
+                  </p>
+                </article>
+              </div>
+
+              {!hasAttendanceCheckIn && isAttendanceWindowOpen && (
+                <button
+                  type="button"
+                  onClick={() => void handleStudentAttendanceCheckIn()}
+                  disabled={attendanceActionState === 'check_in'}
+                  className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#F68C29] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#e67e22] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <BookmarkIcon className="h-4 w-4" />
+                  {attendanceActionState === 'check_in' ? 'Recording attendance...' : 'Mark present'}
+                </button>
+              )}
+            </div>
+          )}
+
           {!isTeacher && activeLiveClasswork && (
             <div className="rounded-2xl border border-cyan-300/35 bg-cyan-500/10 p-3 sm:p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3996,6 +4221,102 @@ const LiveClassroom = () => {
               Manage chat{giftingEnabled ? ', gifting,' : ''} and room interactions from this panel.
             </p>
           </div>
+
+          {shouldShowTeacherAttendanceCard && (
+            <div className="rounded-2xl border border-emerald-300/20 bg-emerald-500/10 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-emerald-100/70">
+                    Live attendance
+                  </p>
+                  <h3 className="mt-2 text-sm font-semibold text-white">
+                    {schoolAttendanceState?.window.isOpen ? 'Attendance is open' : 'Attendance is closed'}
+                  </h3>
+                  <p className="mt-1 text-[11px] leading-5 text-white/75">
+                    Open attendance when you want students to confirm presence from inside the live room.
+                    Students who confirm after {schoolAttendanceState?.window.gracePeriodMinutes || 5} minutes are
+                    marked late automatically.
+                  </p>
+                </div>
+                <span
+                  className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${
+                    schoolAttendanceState?.window.isOpen
+                      ? 'bg-emerald-400/20 text-emerald-100'
+                      : 'bg-white/10 text-white/70'
+                  }`}
+                >
+                  {schoolAttendanceState?.window.isOpen ? 'Open' : 'Closed'}
+                </span>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                <article className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wide text-white/50">Checked in</p>
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {schoolAttendanceState?.summary.checkedInCount || 0}
+                  </p>
+                </article>
+                <article className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wide text-white/50">Late</p>
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {schoolAttendanceState?.summary.lateCount || 0}
+                  </p>
+                </article>
+                <article className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wide text-white/50">Pending</p>
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {schoolAttendanceState?.summary.pendingCount || 0}
+                  </p>
+                </article>
+                <article className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wide text-white/50">Connected</p>
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {schoolAttendanceState?.summary.liveCount || 0}
+                  </p>
+                </article>
+                <article className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wide text-white/50">Missing</p>
+                  <p className="mt-1 text-sm font-semibold text-white">
+                    {schoolAttendanceState?.summary.missingCount || 0}
+                  </p>
+                </article>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleAttendanceWindowAction('open')}
+                  disabled={attendanceActionState !== null || schoolAttendanceState?.window.isOpen}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#3D08BA] px-3 py-2 text-[11px] font-semibold text-white transition hover:bg-[#2c0691] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {attendanceActionState === 'open' ? 'Opening...' : 'Open attendance'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleAttendanceWindowAction('close')}
+                  disabled={attendanceActionState !== null || !schoolAttendanceState?.window.isOpen}
+                  className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-[11px] font-semibold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {attendanceActionState === 'close' ? 'Closing...' : 'Close attendance'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void refreshSchoolAttendanceState()}
+                  disabled={isSchoolAttendanceLoading}
+                  className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-black/20 px-3 py-2 text-[11px] font-semibold text-white/80 transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isSchoolAttendanceLoading ? 'Refreshing...' : 'Refresh'}
+                </button>
+              </div>
+
+              {schoolAttendanceState?.window.openedAt && (
+                <p className="mt-3 text-[11px] text-white/60">
+                  Last opened {formatClockTime(schoolAttendanceState.window.openedAt)} by{' '}
+                  {schoolAttendanceState.window.openedByName || 'teacher'}.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4">
             <div className="mb-3 flex items-center justify-between">
