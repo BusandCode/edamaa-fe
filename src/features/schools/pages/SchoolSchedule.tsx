@@ -23,6 +23,13 @@ import {
 } from 'react-icons/fa';
 import NavBar from '../../../components/layout/school-layout/NavBar';
 import {
+  buildSchoolReportFrame,
+  createPdfBlob,
+  downloadFile,
+  joinCsvRow,
+  schoolReportStyles,
+} from '../../../utils/exportFiles';
+import {
   createSchoolScheduleSession,
   createSchoolTeacher,
   deleteSchoolScheduleSession,
@@ -341,6 +348,7 @@ const SchoolSchedule = () => {
   const [weekStartDate, setWeekStartDate] = useState<Date>(() => startOfWeek(new Date()));
   const [notice, setNotice] = useState<string | null>(null);
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
+  const [timetableExportAction, setTimetableExportAction] = useState<'csv' | 'pdf' | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [sessionDraftMode, setSessionDraftMode] = useState<SessionDraftMode>('create');
@@ -970,6 +978,12 @@ const SchoolSchedule = () => {
 
     return grouped;
   }, [filteredSessions, weekDays]);
+
+  const visibleWeekSessions = useMemo(
+    () =>
+      weekDays.flatMap((day) => (weekSessionsByDay[day.key] || []).map((session) => ({ day, session }))),
+    [weekDays, weekSessionsByDay]
+  );
 
   const resetForm = () => {
     setFormState({
@@ -1798,6 +1812,150 @@ const SchoolSchedule = () => {
     setWeekStartDate((current) => addDays(current, direction * 7));
   };
 
+  const handleExportWeeklyTimetableCsv = () => {
+    if (timetableExportAction || visibleWeekSessions.length === 0) {
+      return;
+    }
+
+    setTimetableExportAction('csv');
+    setNotice(null);
+
+    try {
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const lines: string[] = [
+        joinCsvRow(['Section', 'Metric', 'Value']),
+        joinCsvRow(['Weekly Timetable', 'Generated At', new Date().toLocaleString()]),
+        joinCsvRow(['Weekly Timetable', 'Week Range', formatWeekRangeLabel(weekStartDate)]),
+        joinCsvRow(['Weekly Timetable', 'View Filter', filter === 'all' ? 'All' : statusLabel(filter)]),
+        joinCsvRow(['Weekly Timetable', 'Search Query', searchQuery.trim() || 'None']),
+        joinCsvRow(['Weekly Timetable', 'Classes Exported', visibleWeekSessions.length]),
+        '',
+        joinCsvRow([
+          'Day',
+          'Date',
+          'Time',
+          'Class Title',
+          'Subject',
+          'Teacher',
+          'Audience',
+          'Room',
+          'Status',
+          'Students',
+        ]),
+      ];
+
+      visibleWeekSessions.forEach(({ day, session }) => {
+        lines.push(
+          joinCsvRow([
+            day.dayLabel,
+            new Date(session.startAt).toLocaleDateString(),
+            `${formatSessionTime(session.startAt)} - ${formatSessionTime(session.endAt)}`,
+            session.title,
+            session.subject,
+            session.instructor,
+            getSessionAudienceLabel(session),
+            session.roomCode,
+            statusLabel(getSessionStatus(session, Date.now())),
+            session.expectedStudents,
+          ])
+        );
+      });
+
+      downloadFile(
+        new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }),
+        `edamaa-weekly-timetable-${dateStamp}.csv`
+      );
+      setNotice('Weekly timetable CSV export started.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Weekly timetable CSV export failed.');
+    } finally {
+      setTimetableExportAction(null);
+    }
+  };
+
+  const handleExportWeeklyTimetablePdf = async () => {
+    if (timetableExportAction || visibleWeekSessions.length === 0) {
+      return;
+    }
+
+    setTimetableExportAction('pdf');
+    setNotice(null);
+
+    try {
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const reportFrame = buildSchoolReportFrame({
+        title: 'Weekly Class Timetable',
+        subtitle: formatWeekRangeLabel(weekStartDate),
+        metaLines: [
+          `Filter: ${filter === 'all' ? 'All classes' : statusLabel(filter)}`,
+          `Search: ${searchQuery.trim() || 'None'}`,
+          `Classes shown: ${visibleWeekSessions.length}`,
+        ],
+        documentLabel: 'Timetable export',
+        documentCode: `TIMETABLE-${dateStamp.replaceAll('-', '')}`,
+        leftSignatoryRole: 'Prepared by',
+        rightSignatoryRole: 'Approved for use',
+      });
+
+      const tableBody: Array<Array<string>> = [
+        ['Day', 'Date', 'Time', 'Class', 'Teacher', 'Audience', 'Room'],
+        ...visibleWeekSessions.map(({ day, session }) => [
+          day.dayLabel,
+          new Date(session.startAt).toLocaleDateString(),
+          `${formatSessionTime(session.startAt)} - ${formatSessionTime(session.endAt)}`,
+          `${session.title}\n${session.subject}`,
+          session.instructor,
+          getSessionAudienceLabel(session),
+          session.roomCode,
+        ]),
+      ];
+
+      const docDefinition = {
+        pageOrientation: 'landscape',
+        pageMargins: [28, 36, 28, 28],
+        header: () => ({
+          margin: [28, 24, 28, 0],
+          stack: reportFrame.headerContent,
+        }),
+        footer: reportFrame.footer,
+        content: [
+          {
+            text:
+              visibleWeekSessions.length === 0
+                ? 'No classes are visible for this week and filter.'
+                : 'This export reflects the timetable currently visible in the school schedule workspace.',
+            style: 'muted',
+            margin: [0, 0, 0, 10],
+          },
+          {
+            table: {
+              headerRows: 1,
+              widths: [42, 58, 70, '*', 92, 92, 58],
+              body: tableBody,
+            },
+            layout: 'lightHorizontalLines',
+          },
+          ...reportFrame.signOffContent,
+        ],
+        styles: {
+          ...schoolReportStyles,
+          header: { fontSize: 17, bold: true, margin: [0, 0, 0, 6] },
+          subheader: { fontSize: 12, bold: true, margin: [0, 0, 0, 4] },
+          sectionHeader: { fontSize: 12, bold: true, margin: [0, 8, 0, 6] },
+          muted: { fontSize: 10, color: '#4b5563', margin: [0, 0, 0, 2] },
+        },
+      } as Record<string, unknown>;
+
+      const pdfBlob = await createPdfBlob(docDefinition);
+      downloadFile(pdfBlob, `edamaa-weekly-timetable-${dateStamp}.pdf`);
+      setNotice('Weekly timetable PDF export started.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Weekly timetable PDF export failed.');
+    } finally {
+      setTimetableExportAction(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-linear-to-br from-gray-50 to-gray-100 pb-24">
       <div className="rounded-lg border border-white/20 bg-white/10 backdrop-blur-sm">
@@ -1921,23 +2079,39 @@ const SchoolSchedule = () => {
             </div>
 
             {viewMode === 'week' && (
-              <div className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-1 py-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-1 py-1">
+                  <button
+                    onClick={() => shiftWeek(-1)}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-600 hover:bg-white"
+                    aria-label="Previous week"
+                  >
+                    <FaChevronLeft size={11} />
+                  </button>
+                  <p className="px-2 text-xs font-semibold text-gray-700">
+                    {formatWeekRangeLabel(weekStartDate)}
+                  </p>
+                  <button
+                    onClick={() => shiftWeek(1)}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-600 hover:bg-white"
+                    aria-label="Next week"
+                  >
+                    <FaChevronRight size={11} />
+                  </button>
+                </div>
                 <button
-                  onClick={() => shiftWeek(-1)}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-600 hover:bg-white"
-                  aria-label="Previous week"
+                  onClick={handleExportWeeklyTimetableCsv}
+                  disabled={timetableExportAction !== null || visibleWeekSessions.length === 0}
+                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <FaChevronLeft size={11} />
+                  {timetableExportAction === 'csv' ? 'Exporting CSV...' : 'Export week CSV'}
                 </button>
-                <p className="px-2 text-xs font-semibold text-gray-700">
-                  {formatWeekRangeLabel(weekStartDate)}
-                </p>
                 <button
-                  onClick={() => shiftWeek(1)}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-600 hover:bg-white"
-                  aria-label="Next week"
+                  onClick={() => void handleExportWeeklyTimetablePdf()}
+                  disabled={timetableExportAction !== null || visibleWeekSessions.length === 0}
+                  className="rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <FaChevronRight size={11} />
+                  {timetableExportAction === 'pdf' ? 'Exporting PDF...' : 'Export week PDF'}
                 </button>
               </div>
             )}
