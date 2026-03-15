@@ -77,6 +77,8 @@ type AttendanceFormState = {
   note: string;
 };
 
+type SessionDraftMode = 'create' | 'edit' | 'duplicate' | 'reschedule';
+
 type SchoolScheduleRouteState = {
   inviteTeacher?: {
     name?: string;
@@ -341,6 +343,12 @@ const SchoolSchedule = () => {
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [sessionDraftMode, setSessionDraftMode] = useState<SessionDraftMode>('create');
+  const [sessionDraftOrigin, setSessionDraftOrigin] = useState<{
+    id: string;
+    title: string;
+    startAt: string;
+  } | null>(null);
   const [formState, setFormState] = useState<SessionFormState>({
     title: '',
     subject: '',
@@ -824,6 +832,10 @@ const SchoolSchedule = () => {
 
     return sessions
       .map((session) => {
+        if (editingSessionId && session.id === editingSessionId) {
+          return null;
+        }
+
         const sessionStartMs = new Date(session.startAt).getTime();
         const sessionEndMs = new Date(session.endAt).getTime();
         if (
@@ -873,7 +885,31 @@ const SchoolSchedule = () => {
         } => Boolean(item)
       )
       .slice(0, 3);
-  }, [formState, sessions]);
+  }, [editingSessionId, formState, sessions]);
+
+  const scheduleConflictSummary = useMemo(
+    () =>
+      scheduleConflictPreview.reduce(
+        (summary, item) => {
+          if (item.reasons.includes('same instructor')) {
+            summary.instructor += 1;
+          }
+          if (item.reasons.includes('same assigned teacher')) {
+            summary.teacher += 1;
+          }
+          if (item.reasons.includes('same class audience')) {
+            summary.audience += 1;
+          }
+          return summary;
+        },
+        {
+          instructor: 0,
+          teacher: 0,
+          audience: 0,
+        }
+      ),
+    [scheduleConflictPreview]
+  );
 
   const filteredInviteActivity = useMemo(() => {
     return inviteActivity.filter((event) => {
@@ -951,6 +987,8 @@ const SchoolSchedule = () => {
       notes: '',
     });
     setEditingSessionId(null);
+    setSessionDraftMode('create');
+    setSessionDraftOrigin(null);
   };
 
   const resetTeacherForm = () => {
@@ -1406,6 +1444,8 @@ const SchoolSchedule = () => {
       audienceTag: prev.audienceTag,
     }));
     setEditingSessionId(null);
+    setSessionDraftMode('create');
+    setSessionDraftOrigin(null);
     setIsCreateOpen(true);
   };
 
@@ -1424,6 +1464,12 @@ const SchoolSchedule = () => {
 
   const handleEditSession = (session: SchoolScheduleSession) => {
     setEditingSessionId(session.id);
+    setSessionDraftMode('edit');
+    setSessionDraftOrigin({
+      id: session.id,
+      title: session.title,
+      startAt: session.startAt,
+    });
     setFormState({
       title: session.title || '',
       subject: session.subject || '',
@@ -1443,7 +1489,29 @@ const SchoolSchedule = () => {
   };
 
   const handleRescheduleSession = (session: SchoolScheduleSession) => {
-    handleEditSession(session);
+    setEditingSessionId(session.id);
+    setSessionDraftMode('reschedule');
+    setSessionDraftOrigin({
+      id: session.id,
+      title: session.title,
+      startAt: session.startAt,
+    });
+    setFormState({
+      title: session.title || '',
+      subject: session.subject || '',
+      instructor: session.instructor || '',
+      assignedTutorEmail: session.assignedTutorEmail || '',
+      assignedTutorName: session.assignedTutorName || '',
+      department: session.department || '',
+      classGroup: session.classGroup || '',
+      audienceTag: session.audienceTag || '',
+      startAt: formatDateTimeInputValue(session.startAt),
+      durationMinutes: String(session.durationMinutes || 60),
+      expectedStudents: String(session.expectedStudents ?? ''),
+      notes: session.notes || '',
+    });
+    closeTeacherTimetable();
+    setIsCreateOpen(true);
     setNotice('Update the class date or time, then save to reschedule it.');
   };
 
@@ -1454,6 +1522,12 @@ const SchoolSchedule = () => {
       : formatDateTimeInputValue(addDays(sourceStart, 7).toISOString());
 
     setEditingSessionId(null);
+    setSessionDraftMode('duplicate');
+    setSessionDraftOrigin({
+      id: session.id,
+      title: session.title,
+      startAt: session.startAt,
+    });
     setFormState({
       title: session.title || '',
       subject: session.subject || '',
@@ -2830,13 +2904,45 @@ const SchoolSchedule = () => {
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-5 py-4">
               <div>
                 <h2 className="text-base font-semibold text-gray-900">
-                  {editingSessionId ? 'Edit Scheduled Class' : 'Add New Class to Schedule'}
+                  {sessionDraftMode === 'duplicate'
+                    ? 'Duplicate Class Draft'
+                    : sessionDraftMode === 'reschedule'
+                      ? 'Reschedule Class'
+                      : editingSessionId
+                        ? 'Edit Scheduled Class'
+                        : 'Add New Class to Schedule'}
                 </h2>
                 <p className="mt-1 text-xs text-gray-500">
-                  {editingSessionId
-                    ? 'Update teacher, timing, and class audience without removing the session.'
-                    : 'Set the teacher, audience, and time for the next class.'}
+                  {sessionDraftMode === 'duplicate'
+                    ? 'Start from an existing class, adjust the date or audience, then save as a new schedule.'
+                    : sessionDraftMode === 'reschedule'
+                      ? 'Move the class to a new date or time without rebuilding it.'
+                      : editingSessionId
+                        ? 'Update teacher, timing, and class audience without removing the session.'
+                        : 'Set the teacher, audience, and time for the next class.'}
                 </p>
+                {sessionDraftOrigin && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${
+                        sessionDraftMode === 'duplicate'
+                          ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                          : sessionDraftMode === 'reschedule'
+                            ? 'border border-sky-200 bg-sky-50 text-sky-700'
+                            : 'border border-gray-200 bg-gray-50 text-gray-600'
+                      }`}
+                    >
+                      {sessionDraftMode === 'duplicate'
+                        ? 'Duplicating class'
+                        : sessionDraftMode === 'reschedule'
+                          ? 'Rescheduling class'
+                          : 'Editing class'}
+                    </span>
+                    <span className="text-[11px] text-gray-500">
+                      {sessionDraftOrigin.title} • {formatDateTime(sessionDraftOrigin.startAt)}
+                    </span>
+                  </div>
+                )}
               </div>
               <button
                 onClick={() => {
@@ -3105,12 +3211,37 @@ const SchoolSchedule = () => {
               </div>
               {scheduleConflictPreview.length > 0 && (
                 <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
-                  <p className="text-xs font-semibold text-amber-800">
-                    Potential clash detected
-                  </p>
-                  <p className="mt-1 text-[11px] text-amber-700">
-                    These overlaps are based on the schedule already loaded on this page. The backend will still do the final check.
-                  </p>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold text-amber-800">
+                        {sessionDraftMode === 'duplicate'
+                          ? 'Duplicate draft has schedule clashes'
+                          : sessionDraftMode === 'reschedule'
+                            ? 'New time creates schedule clashes'
+                            : 'Potential clash detected'}
+                      </p>
+                      <p className="mt-1 text-[11px] text-amber-700">
+                        These overlaps are based on the schedule already loaded on this page. The backend will still do the final check.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 text-[10px] font-semibold">
+                      {scheduleConflictSummary.teacher > 0 && (
+                        <span className="rounded-full border border-amber-200 bg-white px-2 py-1 text-amber-700">
+                          Teacher clashes: {scheduleConflictSummary.teacher}
+                        </span>
+                      )}
+                      {scheduleConflictSummary.audience > 0 && (
+                        <span className="rounded-full border border-amber-200 bg-white px-2 py-1 text-amber-700">
+                          Audience clashes: {scheduleConflictSummary.audience}
+                        </span>
+                      )}
+                      {scheduleConflictSummary.instructor > 0 && (
+                        <span className="rounded-full border border-amber-200 bg-white px-2 py-1 text-amber-700">
+                          Instructor clashes: {scheduleConflictSummary.instructor}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                   <div className="mt-3 space-y-2">
                     {scheduleConflictPreview.map(({ session, reasons }) => (
                       <div
