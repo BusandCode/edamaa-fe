@@ -350,6 +350,8 @@ const SchoolSchedule = () => {
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
   const [timetableExportAction, setTimetableExportAction] = useState<'csv' | 'pdf' | null>(null);
   const [teacherTimetableExportAction, setTeacherTimetableExportAction] = useState<'csv' | 'pdf' | null>(null);
+  const [isBulkRescheduleOpen, setIsBulkRescheduleOpen] = useState(false);
+  const [bulkRescheduleDays, setBulkRescheduleDays] = useState('7');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [sessionDraftMode, setSessionDraftMode] = useState<SessionDraftMode>('create');
@@ -993,6 +995,117 @@ const SchoolSchedule = () => {
       weekDays.flatMap((day) => (weekSessionsByDay[day.key] || []).map((session) => ({ day, session }))),
     [weekDays, weekSessionsByDay]
   );
+
+  const bulkRescheduleCandidates = useMemo(
+    () =>
+      visibleWeekSessions
+        .map(({ session }) => session)
+        .filter((session) => getSessionStatus(session, Date.now()) !== 'completed'),
+    [visibleWeekSessions]
+  );
+
+  const bulkReschedulePreview = useMemo(() => {
+    const shiftDays = Number.parseInt(bulkRescheduleDays, 10);
+    if (!Number.isFinite(shiftDays) || shiftDays === 0 || bulkRescheduleCandidates.length === 0) {
+      return [];
+    }
+
+    const candidateIds = new Set(bulkRescheduleCandidates.map((session) => session.id));
+    const otherSessions = sessions.filter((session) => !candidateIds.has(session.id));
+
+    return bulkRescheduleCandidates
+      .map((session) => {
+        const shiftedStart = addDays(new Date(session.startAt), shiftDays);
+        const shiftedEnd = addDays(new Date(session.endAt), shiftDays);
+        const shiftedStartMs = shiftedStart.getTime();
+        const shiftedEndMs = shiftedEnd.getTime();
+
+        if (!Number.isFinite(shiftedStartMs) || !Number.isFinite(shiftedEndMs)) {
+          return null;
+        }
+
+        const conflicts = otherSessions
+          .map((otherSession) => {
+            const otherStartMs = new Date(otherSession.startAt).getTime();
+            const otherEndMs = new Date(otherSession.endAt).getTime();
+            if (
+              !Number.isFinite(otherStartMs) ||
+              !Number.isFinite(otherEndMs) ||
+              otherStartMs >= shiftedEndMs ||
+              otherEndMs <= shiftedStartMs
+            ) {
+              return null;
+            }
+
+            const reasons: string[] = [];
+            if (
+              normalizeScheduleCompareLabel(otherSession.instructor) ===
+              normalizeScheduleCompareLabel(session.instructor)
+            ) {
+              reasons.push('same instructor');
+            }
+            if (
+              normalizeScheduleCompareLabel(otherSession.roomCode) ===
+              normalizeScheduleCompareLabel(session.roomCode)
+            ) {
+              reasons.push('same room');
+            }
+            if (
+              normalizeScheduleCompareLabel(otherSession.assignedTutorEmail) ===
+              normalizeScheduleCompareLabel(session.assignedTutorEmail)
+            ) {
+              reasons.push('same assigned teacher');
+            }
+            if (
+              normalizeScheduleCompareLabel(getSessionAudienceLabel(otherSession)) ===
+              normalizeScheduleCompareLabel(getSessionAudienceLabel(session))
+            ) {
+              reasons.push('same class audience');
+            }
+
+            if (reasons.length === 0) {
+              return null;
+            }
+
+            return {
+              session: otherSession,
+              reasons,
+            };
+          })
+          .filter(
+            (
+              item
+            ): item is {
+              session: SchoolScheduleSession;
+              reasons: string[];
+            } => Boolean(item)
+          )
+          .slice(0, 3);
+
+        if (conflicts.length === 0) {
+          return null;
+        }
+
+        return {
+          session,
+          shiftedStart,
+          conflicts,
+        };
+      })
+      .filter(
+        (
+          item
+        ): item is {
+          session: SchoolScheduleSession;
+          shiftedStart: Date;
+          conflicts: Array<{
+            session: SchoolScheduleSession;
+            reasons: string[];
+          }>;
+        } => Boolean(item)
+      )
+      .slice(0, 4);
+  }, [bulkRescheduleCandidates, bulkRescheduleDays, sessions]);
 
   const resetForm = () => {
     setFormState({
@@ -1948,6 +2061,19 @@ const SchoolSchedule = () => {
     setWeekStartDate((current) => addDays(current, direction * 7));
   };
 
+  const openBulkReschedule = () => {
+    setBulkRescheduleDays('7');
+    setIsBulkRescheduleOpen(true);
+  };
+
+  const closeBulkReschedule = () => {
+    if (activeActionId === 'bulk-reschedule') {
+      return;
+    }
+    setIsBulkRescheduleOpen(false);
+    setBulkRescheduleDays('7');
+  };
+
   const handleExportWeeklyTimetableCsv = () => {
     if (timetableExportAction || visibleWeekSessions.length === 0) {
       return;
@@ -2089,6 +2215,84 @@ const SchoolSchedule = () => {
       setNotice(error instanceof Error ? error.message : 'Weekly timetable PDF export failed.');
     } finally {
       setTimetableExportAction(null);
+    }
+  };
+
+  const handleApplyBulkReschedule = async () => {
+    if (activeActionId || bulkRescheduleCandidates.length === 0) {
+      return;
+    }
+
+    const shiftDays = Number.parseInt(bulkRescheduleDays, 10);
+    if (!Number.isFinite(shiftDays) || shiftDays === 0) {
+      setNotice('Enter a valid number of days to shift the visible classes.');
+      return;
+    }
+
+    setActiveActionId('bulk-reschedule');
+    setNotice(null);
+
+    try {
+      let updatedCount = 0;
+      const failures: string[] = [];
+      const updatedSessions: SchoolScheduleSession[] = [];
+
+      for (const session of bulkRescheduleCandidates) {
+        const shiftedStart = addDays(new Date(session.startAt), shiftDays);
+        if (Number.isNaN(shiftedStart.getTime())) {
+          failures.push(`${session.title}: invalid start time`);
+          continue;
+        }
+
+        try {
+          const payload = await updateSchoolScheduleSession(session.id, {
+            startAt: shiftedStart.toISOString(),
+          });
+          if (payload.session) {
+            updatedSessions.push(payload.session);
+          }
+          updatedCount += 1;
+        } catch (error) {
+          failures.push(
+            `${session.title}: ${
+              error instanceof Error ? error.message : 'Could not reschedule this class.'
+            }`
+          );
+        }
+      }
+
+      if (updatedSessions.length > 0) {
+        setSessions((current) =>
+          current
+            .map((session) => updatedSessions.find((updated) => updated.id === session.id) || session)
+            .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
+        );
+      } else {
+        await refreshSessions();
+      }
+
+      if (updatedCount > 0 && failures.length === 0) {
+        setNotice(
+          `Shifted ${updatedCount} class${updatedCount === 1 ? '' : 'es'} by ${shiftDays} day${
+            Math.abs(shiftDays) === 1 ? '' : 's'
+          }.`
+        );
+      } else if (updatedCount > 0) {
+        setNotice(
+          `Shifted ${updatedCount} class${updatedCount === 1 ? '' : 'es'}. ${
+            failures.length
+          } could not be moved. ${failures.slice(0, 2).join(' ')}`
+        );
+      } else {
+        setNotice(
+          failures[0] || 'No visible classes could be rescheduled with the current settings.'
+        );
+      }
+
+      setIsBulkRescheduleOpen(false);
+      setBulkRescheduleDays('7');
+    } finally {
+      setActiveActionId(null);
     }
   };
 
@@ -2235,6 +2439,13 @@ const SchoolSchedule = () => {
                     <FaChevronRight size={11} />
                   </button>
                 </div>
+                <button
+                  onClick={openBulkReschedule}
+                  disabled={activeActionId !== null || bulkRescheduleCandidates.length === 0}
+                  className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Shift visible week
+                </button>
                 <button
                   onClick={handleExportWeeklyTimetableCsv}
                   disabled={timetableExportAction !== null || visibleWeekSessions.length === 0}
@@ -3225,6 +3436,173 @@ const SchoolSchedule = () => {
                     })}
                   </div>
                 </section>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isBulkRescheduleOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/55 px-4 py-6">
+          <div className="mx-auto flex min-h-full w-full max-w-4xl items-start justify-center">
+            <div className="my-auto flex w-full max-h-[92vh] flex-col overflow-hidden rounded-[28px] border border-white/60 bg-white shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b border-amber-100 bg-linear-to-r from-amber-50 via-white to-white px-6 py-5">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+                    <FaCalendarAlt size={10} />
+                    Bulk reschedule
+                  </div>
+                  <h2 className="mt-3 text-xl font-semibold text-slate-900">
+                    Shift visible week
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Move the currently visible non-completed classes in this week by a fixed number of days.
+                  </p>
+                </div>
+                <button
+                  onClick={closeBulkReschedule}
+                  disabled={activeActionId === 'bulk-reschedule'}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label="Close bulk reschedule"
+                  title="Close bulk reschedule"
+                >
+                  <FaTimes size={12} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto bg-slate-50/70 px-6 py-5">
+                <section className="grid gap-3 md:grid-cols-3">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                      Week range
+                    </p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900">
+                      {formatWeekRangeLabel(weekStartDate)}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+                      Classes to move
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold text-amber-700">
+                      {bulkRescheduleCandidates.length}
+                    </p>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Completed classes are ignored.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-sky-200 bg-white p-4 shadow-sm">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-700">
+                      Visible filter
+                    </p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900">
+                      {filter === 'all' ? 'All visible classes' : statusLabel(filter)}
+                    </p>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Search: {searchQuery.trim() || 'None'}
+                    </p>
+                  </div>
+                </section>
+
+                <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <h3 className="text-sm font-semibold text-slate-900">Shift settings</h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Positive numbers move classes forward. Negative numbers move them backward.
+                  </p>
+                  <div className="mt-4 flex flex-wrap items-end gap-3">
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">
+                        Shift by days
+                      </label>
+                      <input
+                        type="number"
+                        step={1}
+                        value={bulkRescheduleDays}
+                        onChange={(event) => setBulkRescheduleDays(event.target.value)}
+                        className="w-28 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {[-7, -1, 1, 7, 14].map((value) => (
+                        <button
+                          key={value}
+                          onClick={() => setBulkRescheduleDays(String(value))}
+                          className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
+                            bulkRescheduleDays === String(value)
+                              ? 'border-[#3D08BA]/30 bg-[#3D08BA]/10 text-[#3D08BA]'
+                              : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          {value > 0 ? `+${value}` : value} day{Math.abs(value) === 1 ? '' : 's'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+
+                {bulkReschedulePreview.length > 0 && (
+                  <section className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+                    <h3 className="text-sm font-semibold text-amber-800">
+                      Possible conflicts after shift
+                    </h3>
+                    <p className="mt-1 text-xs text-amber-700">
+                      These are clashes with classes outside the visible bulk-reschedule set. The backend will still do the final validation.
+                    </p>
+                    <div className="mt-4 space-y-3">
+                      {bulkReschedulePreview.map((item) => (
+                        <div
+                          key={item.session.id}
+                          className="rounded-xl border border-amber-200 bg-white p-3"
+                        >
+                          <p className="text-xs font-semibold text-slate-900">{item.session.title}</p>
+                          <p className="mt-1 text-[11px] text-slate-600">
+                            New time: {formatDateTime(item.shiftedStart.toISOString())}
+                          </p>
+                          <div className="mt-2 space-y-2">
+                            {item.conflicts.map((conflict) => (
+                              <div
+                                key={`${item.session.id}-${conflict.session.id}`}
+                                className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-slate-700"
+                              >
+                                <p className="font-semibold text-slate-900">{conflict.session.title}</p>
+                                <p className="mt-1 text-slate-600">
+                                  {formatDateTime(conflict.session.startAt)} • {conflict.reasons.join(' • ')}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {bulkRescheduleCandidates.length === 0 && (
+                  <section className="mt-5 rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500 shadow-sm">
+                    There are no visible live or upcoming classes in this week to move.
+                  </section>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-white px-6 py-4">
+                <button
+                  onClick={closeBulkReschedule}
+                  disabled={activeActionId === 'bulk-reschedule'}
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void handleApplyBulkReschedule()}
+                  disabled={activeActionId === 'bulk-reschedule' || bulkRescheduleCandidates.length === 0}
+                  className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2D0690] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {activeActionId === 'bulk-reschedule'
+                    ? 'Shifting...'
+                    : `Shift ${bulkRescheduleCandidates.length} class${
+                        bulkRescheduleCandidates.length === 1 ? '' : 'es'
+                      }`}
+                </button>
               </div>
             </div>
           </div>
