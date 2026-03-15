@@ -1442,6 +1442,37 @@ const SchoolSchedule = () => {
     setIsCreateOpen(true);
   };
 
+  const handleRescheduleSession = (session: SchoolScheduleSession) => {
+    handleEditSession(session);
+    setNotice('Update the class date or time, then save to reschedule it.');
+  };
+
+  const handleDuplicateSession = (session: SchoolScheduleSession) => {
+    const sourceStart = new Date(session.startAt);
+    const duplicateStart = Number.isNaN(sourceStart.getTime())
+      ? ''
+      : formatDateTimeInputValue(addDays(sourceStart, 7).toISOString());
+
+    setEditingSessionId(null);
+    setFormState({
+      title: session.title || '',
+      subject: session.subject || '',
+      instructor: session.instructor || '',
+      assignedTutorEmail: session.assignedTutorEmail || '',
+      assignedTutorName: session.assignedTutorName || '',
+      department: session.department || '',
+      classGroup: session.classGroup || '',
+      audienceTag: session.audienceTag || '',
+      startAt: duplicateStart,
+      durationMinutes: String(session.durationMinutes || 60),
+      expectedStudents: String(session.expectedStudents ?? ''),
+      notes: session.notes || '',
+    });
+    closeTeacherTimetable();
+    setIsCreateOpen(true);
+    setNotice('Class copied into a new draft. Review the date and save when ready.');
+  };
+
   const handleDeleteSession = async (sessionId: string) => {
     if (activeActionId) {
       return;
@@ -2329,6 +2360,20 @@ const SchoolSchedule = () => {
 
                     <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
                       <button
+                        onClick={() => handleDuplicateSession(session)}
+                        disabled={Boolean(activeActionId)}
+                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Duplicate
+                      </button>
+                      <button
+                        onClick={() => handleRescheduleSession(session)}
+                        disabled={Boolean(activeActionId)}
+                        className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Reschedule
+                      </button>
+                      <button
                         onClick={() => handleEditSession(session)}
                         disabled={Boolean(activeActionId)}
                         className="group inline-flex h-9 w-9 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-sky-700 shadow-sm hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-60"
@@ -2666,6 +2711,18 @@ const SchoolSchedule = () => {
                                   </p>
                                   <div className="mt-2 flex flex-wrap gap-1">
                                     <button
+                                      onClick={() => handleDuplicateSession(session)}
+                                      className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-700 hover:bg-slate-50"
+                                    >
+                                      Duplicate
+                                    </button>
+                                    <button
+                                      onClick={() => handleRescheduleSession(session)}
+                                      className="rounded-md border border-sky-200 bg-sky-50 px-2 py-1 text-[10px] font-semibold text-sky-700 hover:bg-sky-100"
+                                    >
+                                      Reschedule
+                                    </button>
+                                    <button
                                       onClick={() => handleEditSession(session)}
                                       className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-700 hover:bg-slate-50"
                                     >
@@ -2726,6 +2783,18 @@ const SchoolSchedule = () => {
                                     {getSessionAudienceLabel(session)}
                                   </p>
                                   <div className="mt-2 flex flex-wrap gap-2">
+                                    <button
+                                      onClick={() => handleDuplicateSession(session)}
+                                      className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-700 hover:bg-slate-50"
+                                    >
+                                      Duplicate
+                                    </button>
+                                    <button
+                                      onClick={() => handleRescheduleSession(session)}
+                                      className="rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-700 hover:bg-sky-100"
+                                    >
+                                      Reschedule
+                                    </button>
                                     <button
                                       onClick={() => handleEditSession(session)}
                                       className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-700 hover:bg-slate-50"
