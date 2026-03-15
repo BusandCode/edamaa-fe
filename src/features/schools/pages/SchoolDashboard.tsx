@@ -31,9 +31,13 @@ import {
 } from '../../subscriptions/utils/teachingSubscriptionApi';
 import {
   archiveSchoolExamNotification,
+  fetchExamSubmissions,
+  fetchSchoolExams,
   fetchSchoolExamNotifications,
   markAllSchoolExamNotificationsAsRead,
   markSchoolExamNotificationAsRead,
+  type ExamSubmission,
+  type SchoolExam,
   type SchoolExamNotification,
 } from '../utils/examsApi';
 import { fetchMyAccountRoles, switchDefaultAccountRole } from '../../auth/utils/accountRolesApi';
@@ -55,6 +59,9 @@ import { signOutEverywhere } from '../../../utils/signOut';
 
 const clampPercentage = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 
+const formatPercentageValue = (value: number | null) =>
+  value === null || Number.isNaN(value) ? '--' : `${clampPercentage(value)}%`;
+
 const formatCompactDateTime = (isoDate: string) => {
   const date = new Date(isoDate);
   if (Number.isNaN(date.getTime())) {
@@ -67,6 +74,18 @@ const formatCompactDateTime = (isoDate: string) => {
     hour: 'numeric',
     minute: '2-digit',
   });
+};
+
+type ResultLedgerEntry = {
+  exam: SchoolExam;
+  submissions: ExamSubmission[];
+  scoredCount: number;
+  publishedCount: number;
+  awaitingReviewCount: number;
+  averagePercentage: number | null;
+  topScorePercentage: number | null;
+  laneLabel: string;
+  effectiveTimestamp: number;
 };
 
 // Performance Overview Component
@@ -385,6 +404,386 @@ const PerformanceOverview = () => {
                 </div>
               );
             })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ResultLedgerOverview = () => {
+  const navigate = useNavigate();
+  const [entries, setEntries] = useState<ResultLedgerEntry[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    let active = true;
+
+    const loadResultLedger = async () => {
+      setIsLoading(true);
+      try {
+        const payload = await fetchSchoolExams();
+        if (!active) {
+          return;
+        }
+
+        const examCandidates = (Array.isArray(payload.exams) ? payload.exams : [])
+          .map((exam) => {
+            const timestamp = new Date(exam.publishedAt || exam.startAt || exam.createdAt).getTime();
+            return {
+              exam,
+              timestamp: Number.isFinite(timestamp) ? timestamp : 0,
+            };
+          })
+          .sort((left, right) => right.timestamp - left.timestamp)
+          .slice(0, 6);
+
+        const submissionResults = await Promise.allSettled(
+          examCandidates.map(async ({ exam, timestamp }) => {
+            const submissionPayload = await fetchExamSubmissions(exam.id);
+            const submissions = Array.isArray(submissionPayload.submissions)
+              ? submissionPayload.submissions
+              : [];
+            const scoredSubmissions = submissions.filter(
+              (submission) =>
+                typeof submission.score === 'number' &&
+                Number.isFinite(submission.score) &&
+                submission.maxScore > 0 &&
+                (submission.status === 'graded' || submission.status === 'published')
+            );
+            const publishedCount = submissions.filter((submission) => submission.status === 'published').length;
+            const awaitingReviewCount = submissions.filter((submission) => submission.status === 'submitted').length;
+            const averagePercentage =
+              scoredSubmissions.length > 0
+                ? scoredSubmissions.reduce(
+                    (total, submission) => total + ((submission.score || 0) / submission.maxScore) * 100,
+                    0
+                  ) / scoredSubmissions.length
+                : null;
+            const topScorePercentage =
+              scoredSubmissions.length > 0
+                ? Math.max(
+                    ...scoredSubmissions.map((submission) =>
+                      ((submission.score || 0) / submission.maxScore) * 100
+                    )
+                  )
+                : null;
+
+            return {
+              exam,
+              submissions,
+              scoredCount: scoredSubmissions.length,
+              publishedCount,
+              awaitingReviewCount,
+              averagePercentage,
+              topScorePercentage,
+              laneLabel:
+                [exam.department, exam.classGroup].filter(Boolean).join(' • ') || 'Class lane pending',
+              effectiveTimestamp: timestamp,
+            };
+          })
+        );
+
+        if (!active) {
+          return;
+        }
+
+        const nextEntries = submissionResults
+          .flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))
+          .sort((left, right) => right.effectiveTimestamp - left.effectiveTimestamp)
+          .slice(0, 4);
+
+        setEntries(nextEntries);
+        setNotice(
+          nextEntries.length === 0
+            ? 'Create and grade exams in the exam center to see your result ledger here.'
+            : ''
+        );
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        const message =
+          error instanceof Error ? error.message : 'Could not load result reporting right now.';
+        setNotice(message);
+        setEntries([]);
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void loadResultLedger();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const resultSummary = useMemo(() => {
+    return entries.reduce(
+      (accumulator, entry) => {
+        accumulator.exams += 1;
+        accumulator.submissions += entry.submissions.length;
+        accumulator.published += entry.publishedCount;
+        accumulator.awaitingReview += entry.awaitingReviewCount;
+        if (entry.averagePercentage !== null) {
+          accumulator.averageTotal += entry.averagePercentage;
+          accumulator.averageCount += 1;
+        }
+        return accumulator;
+      },
+      {
+        exams: 0,
+        submissions: 0,
+        published: 0,
+        awaitingReview: 0,
+        averageTotal: 0,
+        averageCount: 0,
+      }
+    );
+  }, [entries]);
+
+  const overallAverage =
+    resultSummary.averageCount > 0
+      ? resultSummary.averageTotal / resultSummary.averageCount
+      : null;
+
+  const classPerformance = useMemo(() => {
+    const laneMap = new Map<
+      string,
+      {
+        laneLabel: string;
+        exams: number;
+        scoredTotal: number;
+        scoredCount: number;
+        publishedCount: number;
+      }
+    >();
+
+    entries.forEach((entry) => {
+      const current = laneMap.get(entry.laneLabel) || {
+        laneLabel: entry.laneLabel,
+        exams: 0,
+        scoredTotal: 0,
+        scoredCount: 0,
+        publishedCount: 0,
+      };
+      current.exams += 1;
+      current.publishedCount += entry.publishedCount;
+      if (entry.averagePercentage !== null) {
+        current.scoredTotal += entry.averagePercentage;
+        current.scoredCount += 1;
+      }
+      laneMap.set(entry.laneLabel, current);
+    });
+
+    return Array.from(laneMap.values())
+      .map((item) => ({
+        ...item,
+        averagePercentage: item.scoredCount > 0 ? item.scoredTotal / item.scoredCount : null,
+      }))
+      .sort((left, right) => (right.averagePercentage || 0) - (left.averagePercentage || 0))
+      .slice(0, 3);
+  }, [entries]);
+
+  return (
+    <div className='rounded-2xl border border-gray-200 bg-white p-5 shadow-sm'>
+      <div className='mb-4 flex items-start justify-between gap-3'>
+        <div>
+          <h3 className='text-base font-bold text-gray-900'>Result ledger</h3>
+          <p className='mt-1 text-[11px] text-gray-500'>
+            Recent exam outcomes across classes, including released results and pending review.
+          </p>
+        </div>
+        <button
+          type='button'
+          onClick={() => navigate('/school-exams')}
+          className='rounded-lg border border-[#3D08BA]/15 bg-[#3D08BA]/5 px-3 py-1.5 text-[11px] font-semibold text-[#3D08BA] transition-colors hover:bg-[#3D08BA]/10'
+        >
+          Open exam center
+        </button>
+      </div>
+
+      {notice && (
+        <p className='mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700'>
+          {notice}
+        </p>
+      )}
+
+      <div className='grid gap-3 sm:grid-cols-4'>
+        <div className='rounded-2xl border border-gray-200 bg-gray-50/80 p-4'>
+          <p className='text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500'>
+            Average result
+          </p>
+          <p className='mt-2 text-2xl font-bold text-gray-900'>{formatPercentageValue(overallAverage)}</p>
+          <p className='mt-1 text-[11px] text-gray-500'>Across the latest graded exam sets</p>
+        </div>
+        <div className='rounded-2xl border border-gray-200 bg-gray-50/80 p-4'>
+          <p className='text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500'>
+            Released results
+          </p>
+          <p className='mt-2 text-2xl font-bold text-gray-900'>{resultSummary.published}</p>
+          <p className='mt-1 text-[11px] text-gray-500'>Already visible to students</p>
+        </div>
+        <div className='rounded-2xl border border-gray-200 bg-gray-50/80 p-4'>
+          <p className='text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500'>
+            Awaiting review
+          </p>
+          <p className='mt-2 text-2xl font-bold text-gray-900'>{resultSummary.awaitingReview}</p>
+          <p className='mt-1 text-[11px] text-gray-500'>Submissions still pending grading</p>
+        </div>
+        <div className='rounded-2xl border border-gray-200 bg-gray-50/80 p-4'>
+          <p className='text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500'>
+            Tracked exams
+          </p>
+          <p className='mt-2 text-2xl font-bold text-gray-900'>{resultSummary.exams}</p>
+          <p className='mt-1 text-[11px] text-gray-500'>Recent exams included in this ledger</p>
+        </div>
+      </div>
+
+      <div className='mt-5 grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]'>
+        <div className='rounded-2xl border border-gray-200 bg-white p-4'>
+          <div className='mb-3 flex items-center justify-between gap-3'>
+            <div>
+              <h4 className='text-sm font-semibold text-gray-900'>Recent exam reporting</h4>
+              <p className='mt-1 text-[11px] text-gray-500'>
+                Latest reviewed exams with release and score status.
+              </p>
+            </div>
+            <span className='rounded-full bg-[#3D08BA]/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]'>
+              {entries.length} exams
+            </span>
+          </div>
+
+          <div className='space-y-3'>
+            {isLoading && (
+              <div className='rounded-xl border border-gray-100 bg-gray-50 px-3 py-4 text-xs text-gray-500'>
+                Loading result ledger...
+              </div>
+            )}
+            {!isLoading && entries.length === 0 && !notice && (
+              <div className='rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-xs text-gray-600'>
+                No exam reporting available yet.
+              </div>
+            )}
+            {!isLoading &&
+              entries.map((entry) => (
+                <div
+                  key={entry.exam.id}
+                  className='rounded-xl border border-gray-200 bg-gray-50/80 px-3 py-3'
+                >
+                  <div className='flex items-start justify-between gap-3'>
+                    <div className='min-w-0'>
+                      <div className='flex items-center gap-2'>
+                        <p className='truncate text-sm font-semibold text-gray-900'>{entry.exam.title}</p>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                            entry.publishedCount > 0
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-amber-100 text-amber-700'
+                          }`}
+                        >
+                          {entry.publishedCount > 0 ? 'Released' : 'In review'}
+                        </span>
+                      </div>
+                      <p className='mt-1 text-[11px] text-gray-500'>
+                        {entry.exam.subject} • {entry.laneLabel} • {formatCompactDateTime(entry.exam.startAt)}
+                      </p>
+                    </div>
+                    <div className='text-right'>
+                      <p className='text-sm font-bold text-gray-900'>
+                        {formatPercentageValue(entry.averagePercentage)}
+                      </p>
+                      <p className='text-[10px] uppercase tracking-[0.14em] text-gray-400'>avg score</p>
+                    </div>
+                  </div>
+
+                  <div className='mt-3 grid gap-2 text-[11px] text-gray-600 sm:grid-cols-4'>
+                    <div className='rounded-lg bg-white px-2.5 py-2'>
+                      <span className='block text-[10px] uppercase tracking-[0.14em] text-gray-400'>
+                        Submitted
+                      </span>
+                      <span className='mt-1 block font-semibold text-gray-900'>{entry.submissions.length}</span>
+                    </div>
+                    <div className='rounded-lg bg-white px-2.5 py-2'>
+                      <span className='block text-[10px] uppercase tracking-[0.14em] text-gray-400'>
+                        Reviewed
+                      </span>
+                      <span className='mt-1 block font-semibold text-gray-900'>{entry.scoredCount}</span>
+                    </div>
+                    <div className='rounded-lg bg-white px-2.5 py-2'>
+                      <span className='block text-[10px] uppercase tracking-[0.14em] text-gray-400'>
+                        Released
+                      </span>
+                      <span className='mt-1 block font-semibold text-gray-900'>{entry.publishedCount}</span>
+                    </div>
+                    <div className='rounded-lg bg-white px-2.5 py-2'>
+                      <span className='block text-[10px] uppercase tracking-[0.14em] text-gray-400'>
+                        Top score
+                      </span>
+                      <span className='mt-1 block font-semibold text-gray-900'>
+                        {formatPercentageValue(entry.topScorePercentage)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {entry.awaitingReviewCount > 0 && (
+                    <p className='mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700'>
+                      {entry.awaitingReviewCount} submission{entry.awaitingReviewCount === 1 ? '' : 's'} still awaiting review.
+                    </p>
+                  )}
+                </div>
+              ))}
+          </div>
+        </div>
+
+        <div className='rounded-2xl border border-gray-200 bg-white p-4'>
+          <div className='mb-3'>
+            <h4 className='text-sm font-semibold text-gray-900'>Class performance leaders</h4>
+            <p className='mt-1 text-[11px] text-gray-500'>
+              Best-performing lanes from the exams already tracked in this ledger.
+            </p>
+          </div>
+
+          <div className='space-y-3'>
+            {classPerformance.length === 0 && (
+              <div className='rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-xs text-gray-600'>
+                Class performance will appear after graded results are available.
+              </div>
+            )}
+            {classPerformance.map((lane, index) => (
+              <div
+                key={lane.laneLabel}
+                className='rounded-xl border border-gray-200 bg-gray-50/80 px-3 py-3'
+              >
+                <div className='flex items-start justify-between gap-3'>
+                  <div className='min-w-0'>
+                    <p className='text-sm font-semibold text-gray-900'>{lane.laneLabel}</p>
+                    <p className='mt-1 text-[11px] text-gray-500'>
+                      {lane.exams} exam{lane.exams === 1 ? '' : 's'} • {lane.publishedCount} released result{lane.publishedCount === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                  <span className='inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#3D08BA]/10 text-xs font-bold text-[#3D08BA]'>
+                    {index + 1}
+                  </span>
+                </div>
+
+                <div className='mt-3 flex items-center justify-between gap-3'>
+                  <div className='h-2 flex-1 overflow-hidden rounded-full bg-gray-200/80'>
+                    <div
+                      className='h-full rounded-full bg-linear-to-r from-[#3D08BA] to-[#5B22E3]'
+                      style={{ width: `${clampPercentage(lane.averagePercentage || 0)}%` }}
+                    />
+                  </div>
+                  <span className='text-sm font-bold text-gray-900'>
+                    {formatPercentageValue(lane.averagePercentage)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -1322,6 +1721,10 @@ const SchoolDashboard = () => {
         <div className='grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6'>
           <RecentActivity />
           <PerformanceOverview />
+        </div>
+
+        <div className='mb-6'>
+          <ResultLedgerOverview />
         </div>
 
         <div className='mb-6'>
