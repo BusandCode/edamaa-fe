@@ -110,6 +110,35 @@ type AttendanceReportRow = {
   note: string | null;
 };
 
+type AttendanceSessionTrend = {
+  sessionId: string;
+  title: string;
+  subject: string;
+  instructor: string;
+  audience: string;
+  startAt: string;
+  coverage: number;
+  expectedStudents: number;
+  attendedCount: number;
+  lateCount: number;
+  absentCount: number;
+  pendingCount: number;
+};
+
+type AttendanceGroupedTrend = {
+  key: string;
+  label: string;
+  secondaryLabel: string;
+  classCount: number;
+  averageCoverage: number;
+  attendedCount: number;
+  expectedStudents: number;
+  lateCount: number;
+  latestCoverage: number | null;
+  previousCoverage: number | null;
+  deltaCoverage: number | null;
+};
+
 type SessionDraftMode = 'create' | 'edit' | 'duplicate' | 'reschedule';
 
 type SchoolScheduleRouteState = {
@@ -2298,6 +2327,135 @@ const SchoolSchedule = () => {
     return Math.round((attendedCount / attendanceReportSummary.expectedStudents) * 100);
   }, [attendanceReportSummary]);
 
+  const attendanceReportSessionTrends = useMemo<AttendanceSessionTrend[]>(() => {
+    return attendanceReportItems
+      .map(({ session, attendance }) => {
+        const attendedCount = attendance.summary.presentCount + attendance.summary.lateCount;
+        const coverage =
+          attendance.summary.expectedStudents > 0
+            ? Math.round((attendedCount / attendance.summary.expectedStudents) * 100)
+            : attendedCount > 0
+              ? 100
+              : 0;
+
+        return {
+          sessionId: session.id,
+          title: session.title,
+          subject: session.subject,
+          instructor: session.instructor,
+          audience: getSessionAudienceLabel(session),
+          startAt: session.startAt,
+          coverage,
+          expectedStudents: attendance.summary.expectedStudents,
+          attendedCount,
+          lateCount: attendance.summary.lateCount,
+          absentCount: attendance.summary.absentCount,
+          pendingCount: attendance.summary.pendingCount,
+        };
+      })
+      .sort((left, right) => new Date(right.startAt).getTime() - new Date(left.startAt).getTime());
+  }, [attendanceReportItems]);
+
+  const attendanceReportTeacherTrends = useMemo<AttendanceGroupedTrend[]>(() => {
+    const grouped = new Map<
+      string,
+      {
+        label: string;
+        sessions: AttendanceSessionTrend[];
+      }
+    >();
+
+    attendanceReportSessionTrends.forEach((trend) => {
+      const key = trend.instructor.trim().toLowerCase() || 'unassigned-teacher';
+      const current = grouped.get(key) || {
+        label: trend.instructor || 'Unassigned teacher',
+        sessions: [],
+      };
+      current.sessions.push(trend);
+      grouped.set(key, current);
+    });
+
+    return Array.from(grouped.entries())
+      .map(([key, group]) => {
+        const sortedSessions = [...group.sessions].sort(
+          (left, right) => new Date(right.startAt).getTime() - new Date(left.startAt).getTime()
+        );
+        const totalCoverage = group.sessions.reduce((sum, session) => sum + session.coverage, 0);
+        const attendedCount = group.sessions.reduce((sum, session) => sum + session.attendedCount, 0);
+        const expectedStudents = group.sessions.reduce((sum, session) => sum + session.expectedStudents, 0);
+        const lateCount = group.sessions.reduce((sum, session) => sum + session.lateCount, 0);
+        const latestCoverage = sortedSessions[0]?.coverage ?? null;
+        const previousCoverage = sortedSessions[1]?.coverage ?? null;
+        return {
+          key,
+          label: group.label,
+          secondaryLabel: `${group.sessions.length} class${group.sessions.length === 1 ? '' : 'es'}`,
+          classCount: group.sessions.length,
+          averageCoverage: Math.round(totalCoverage / Math.max(1, group.sessions.length)),
+          attendedCount,
+          expectedStudents,
+          lateCount,
+          latestCoverage,
+          previousCoverage,
+          deltaCoverage:
+            latestCoverage !== null && previousCoverage !== null
+              ? latestCoverage - previousCoverage
+              : null,
+        };
+      })
+      .sort((left, right) => right.averageCoverage - left.averageCoverage);
+  }, [attendanceReportSessionTrends]);
+
+  const attendanceReportAudienceTrends = useMemo<AttendanceGroupedTrend[]>(() => {
+    const grouped = new Map<
+      string,
+      {
+        label: string;
+        sessions: AttendanceSessionTrend[];
+      }
+    >();
+
+    attendanceReportSessionTrends.forEach((trend) => {
+      const key = trend.audience.trim().toLowerCase() || 'all-classes';
+      const current = grouped.get(key) || {
+        label: trend.audience || 'All classes',
+        sessions: [],
+      };
+      current.sessions.push(trend);
+      grouped.set(key, current);
+    });
+
+    return Array.from(grouped.entries())
+      .map(([key, group]) => {
+        const sortedSessions = [...group.sessions].sort(
+          (left, right) => new Date(right.startAt).getTime() - new Date(left.startAt).getTime()
+        );
+        const totalCoverage = group.sessions.reduce((sum, session) => sum + session.coverage, 0);
+        const attendedCount = group.sessions.reduce((sum, session) => sum + session.attendedCount, 0);
+        const expectedStudents = group.sessions.reduce((sum, session) => sum + session.expectedStudents, 0);
+        const lateCount = group.sessions.reduce((sum, session) => sum + session.lateCount, 0);
+        const latestCoverage = sortedSessions[0]?.coverage ?? null;
+        const previousCoverage = sortedSessions[1]?.coverage ?? null;
+        return {
+          key,
+          label: group.label,
+          secondaryLabel: `${group.sessions.length} class session${group.sessions.length === 1 ? '' : 's'}`,
+          classCount: group.sessions.length,
+          averageCoverage: Math.round(totalCoverage / Math.max(1, group.sessions.length)),
+          attendedCount,
+          expectedStudents,
+          lateCount,
+          latestCoverage,
+          previousCoverage,
+          deltaCoverage:
+            latestCoverage !== null && previousCoverage !== null
+              ? latestCoverage - previousCoverage
+              : null,
+        };
+      })
+      .sort((left, right) => right.averageCoverage - left.averageCoverage);
+  }, [attendanceReportSessionTrends]);
+
   const openAttendanceReport = () => {
     const rangeStart =
       viewMode === 'week' ? weekStartDate : startOfWeek(new Date());
@@ -2380,6 +2538,20 @@ const SchoolSchedule = () => {
         joinCsvRow(['Attendance Range Report', 'Pending', attendanceReportSummary.pendingCount]),
         joinCsvRow(['Attendance Range Report', 'Absent', attendanceReportSummary.absentCount]),
         joinCsvRow(['Attendance Range Report', 'Coverage', `${attendanceReportCoverage}%`]),
+        joinCsvRow([
+          'Attendance Range Report',
+          'Top Teacher Trend',
+          attendanceReportTeacherTrends[0]
+            ? `${attendanceReportTeacherTrends[0].label} (${attendanceReportTeacherTrends[0].averageCoverage}%)`
+            : 'N/A',
+        ]),
+        joinCsvRow([
+          'Attendance Range Report',
+          'Top Class Trend',
+          attendanceReportAudienceTrends[0]
+            ? `${attendanceReportAudienceTrends[0].label} (${attendanceReportAudienceTrends[0].averageCoverage}%)`
+            : 'N/A',
+        ]),
         '',
         joinCsvRow([
           'Class',
@@ -2443,6 +2615,16 @@ const SchoolSchedule = () => {
           `Status filter: ${attendanceFilterLabel(attendanceReportFilter)}`,
           `Classes included: ${attendanceReportSummary.sessionCount}`,
           `Coverage: ${attendanceReportCoverage}%`,
+          `Top teacher: ${
+            attendanceReportTeacherTrends[0]
+              ? `${attendanceReportTeacherTrends[0].label} (${attendanceReportTeacherTrends[0].averageCoverage}%)`
+              : 'N/A'
+          }`,
+          `Top class trend: ${
+            attendanceReportAudienceTrends[0]
+              ? `${attendanceReportAudienceTrends[0].label} (${attendanceReportAudienceTrends[0].averageCoverage}%)`
+              : 'N/A'
+          }`,
           `Rows exported: ${attendanceReportRows.length}`,
         ],
         documentLabel: 'Attendance analytics export',
@@ -5031,6 +5213,195 @@ const SchoolSchedule = () => {
                       <p className="mt-2 text-2xl font-semibold text-[#3D08BA]">{attendanceReportCoverage}%</p>
                     </div>
                   </section>
+
+                  {attendanceReportItems.length > 0 && (
+                    <>
+                      <section className="grid gap-5 xl:grid-cols-2">
+                        <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h3 className="text-sm font-semibold text-slate-900">Teacher attendance trend</h3>
+                              <p className="mt-1 text-xs leading-5 text-slate-500">
+                                Average attendance coverage across the generated classes, with movement against the previous session.
+                              </p>
+                            </div>
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                              {attendanceReportTeacherTrends.length} teacher{attendanceReportTeacherTrends.length === 1 ? '' : 's'}
+                            </span>
+                          </div>
+
+                          <div className="mt-4 space-y-3">
+                            {attendanceReportTeacherTrends.slice(0, 5).map((trend) => (
+                              <article key={trend.key} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <p className="text-sm font-semibold text-slate-900">{trend.label}</p>
+                                    <p className="mt-1 text-xs text-slate-500">{trend.secondaryLabel}</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-sm font-semibold text-slate-900">{trend.averageCoverage}%</p>
+                                    <p
+                                      className={`mt-1 text-[11px] font-medium ${
+                                        trend.deltaCoverage === null
+                                          ? 'text-slate-400'
+                                          : trend.deltaCoverage >= 0
+                                            ? 'text-emerald-600'
+                                            : 'text-rose-600'
+                                      }`}
+                                    >
+                                      {trend.deltaCoverage === null
+                                        ? 'Need 2 sessions for trend'
+                                        : `${trend.deltaCoverage >= 0 ? '+' : ''}${trend.deltaCoverage} pts vs previous`}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="mt-3 h-2 rounded-full bg-slate-200">
+                                  <div
+                                    className="h-2 rounded-full bg-[#3D08BA]"
+                                    style={{ width: `${Math.max(6, trend.averageCoverage)}%` }}
+                                  />
+                                </div>
+                                <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold">
+                                  <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
+                                    Attended: {trend.attendedCount}/{trend.expectedStudents || 0}
+                                  </span>
+                                  <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
+                                    Late: {trend.lateCount}
+                                  </span>
+                                  {trend.latestCoverage !== null && (
+                                    <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
+                                      Latest: {trend.latestCoverage}%
+                                    </span>
+                                  )}
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h3 className="text-sm font-semibold text-slate-900">Class audience trend</h3>
+                              <p className="mt-1 text-xs leading-5 text-slate-500">
+                                Coverage trend by class group or department audience across the selected report period.
+                              </p>
+                            </div>
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                              {attendanceReportAudienceTrends.length} audience{attendanceReportAudienceTrends.length === 1 ? '' : 's'}
+                            </span>
+                          </div>
+
+                          <div className="mt-4 space-y-3">
+                            {attendanceReportAudienceTrends.slice(0, 5).map((trend) => (
+                              <article key={trend.key} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <p className="text-sm font-semibold text-slate-900">{trend.label}</p>
+                                    <p className="mt-1 text-xs text-slate-500">{trend.secondaryLabel}</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-sm font-semibold text-slate-900">{trend.averageCoverage}%</p>
+                                    <p
+                                      className={`mt-1 text-[11px] font-medium ${
+                                        trend.deltaCoverage === null
+                                          ? 'text-slate-400'
+                                          : trend.deltaCoverage >= 0
+                                            ? 'text-emerald-600'
+                                            : 'text-rose-600'
+                                      }`}
+                                    >
+                                      {trend.deltaCoverage === null
+                                        ? 'Need 2 sessions for trend'
+                                        : `${trend.deltaCoverage >= 0 ? '+' : ''}${trend.deltaCoverage} pts vs previous`}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="mt-3 h-2 rounded-full bg-slate-200">
+                                  <div
+                                    className="h-2 rounded-full bg-emerald-500"
+                                    style={{ width: `${Math.max(6, trend.averageCoverage)}%` }}
+                                  />
+                                </div>
+                                <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold">
+                                  <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
+                                    Attended: {trend.attendedCount}/{trend.expectedStudents || 0}
+                                  </span>
+                                  <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
+                                    Late: {trend.lateCount}
+                                  </span>
+                                  {trend.latestCoverage !== null && (
+                                    <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
+                                      Latest: {trend.latestCoverage}%
+                                    </span>
+                                  )}
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        </div>
+                      </section>
+
+                      <section className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-semibold text-slate-900">Recent session coverage</h3>
+                            <p className="mt-1 text-xs leading-5 text-slate-500">
+                              Track how individual classes performed over time and spot sessions with low attendance coverage quickly.
+                            </p>
+                          </div>
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                            Latest {Math.min(attendanceReportSessionTrends.length, 6)} sessions
+                          </span>
+                        </div>
+
+                        <div className="mt-4 space-y-3">
+                          {attendanceReportSessionTrends.slice(0, 6).map((trend) => (
+                            <article key={trend.sessionId} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-semibold text-slate-900">{trend.title}</p>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {trend.subject} • {trend.instructor} • {trend.audience}
+                                  </p>
+                                  <p className="mt-1 text-[11px] text-slate-500">{formatDateTime(trend.startAt)}</p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-sm font-semibold text-slate-900">{trend.coverage}%</p>
+                                  <p className="mt-1 text-[11px] text-slate-500">
+                                    {trend.attendedCount}/{trend.expectedStudents || 0} attended
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="mt-3 h-2 rounded-full bg-slate-200">
+                                <div
+                                  className={`h-2 rounded-full ${
+                                    trend.coverage >= 75
+                                      ? 'bg-emerald-500'
+                                      : trend.coverage >= 50
+                                        ? 'bg-amber-500'
+                                        : 'bg-rose-500'
+                                  }`}
+                                  style={{ width: `${Math.max(6, trend.coverage)}%` }}
+                                />
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold">
+                                <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
+                                  Late: {trend.lateCount}
+                                </span>
+                                <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
+                                  Pending: {trend.pendingCount}
+                                </span>
+                                <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
+                                  Absent: {trend.absentCount}
+                                </span>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      </section>
+                    </>
+                  )}
 
                   <section className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
                     <div className="flex flex-wrap items-center justify-between gap-3">
