@@ -27,12 +27,21 @@ import PerformanceStats from '../components/PerformanceStats';
 import Announcements from '../components/Announcements';
 import QuickAccessGrid from "../components/QuickAccess";
 import ProgressOverview from '../components/ProgressOverview';
-import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
+import {
+  loadStudentIdentity,
+  saveStudentIdentity,
+  type StudentIdentity,
+} from '../utils/studentIdentity';
 import { signOutEverywhere } from '../../../utils/signOut';
 import {
   loadPersistedLocalDevAuthSession,
   loadPersistedSupabaseAccessToken,
 } from '../../../utils/authSession';
+import {
+  fetchSchoolScheduleFeed,
+  fetchSchoolScheduleLiveAttendance,
+  type SchoolScheduleAttendanceRecord,
+} from '../../schools/utils/schoolScheduleApi';
 import {
   archiveStudentExamNotification,
   markStudentExamNotificationAsRead,
@@ -149,6 +158,324 @@ const extractStudentApiError = async (response: Response) => {
   return response.statusText || `Request failed (${response.status})`;
 };
 
+type StudentAttendanceSnapshot = {
+  sessionId: string;
+  title: string;
+  subject: string;
+  instructor: string;
+  startAt: string;
+  status: 'present' | 'late' | 'pending' | 'absent';
+  checkedInAt: string | null;
+  durationMinutes: number | null;
+  attendanceRate: number;
+  audienceLabel: string;
+};
+
+const normalizeAttendanceName = (value: string) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
+const findStudentAttendanceRecord = (
+  records: SchoolScheduleAttendanceRecord[],
+  studentIdentity: StudentIdentity
+) => {
+  const participantId = `student-${studentIdentity.id}`;
+  const normalizedStudentName = normalizeAttendanceName(studentIdentity.name);
+
+  return (
+    records.find((record) => record.participantId === participantId) ||
+    records.find((record) => normalizeAttendanceName(record.participantName) === normalizedStudentName) ||
+    null
+  );
+};
+
+const formatAttendanceTime = (isoDate: string | null) => {
+  if (!isoDate) {
+    return 'Time pending';
+  }
+
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) {
+    return 'Time pending';
+  }
+
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+};
+
+const StudentAttendanceOverview = ({
+  studentIdentity,
+  onOpenClasses,
+}: {
+  studentIdentity: StudentIdentity;
+  onOpenClasses: () => void;
+}) => {
+  const [recentAttendance, setRecentAttendance] = useState<StudentAttendanceSnapshot[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    let active = true;
+
+    const loadAttendance = async () => {
+      setIsLoading(true);
+      try {
+        const payload = await fetchSchoolScheduleFeed({ status: 'all', limit: 10 });
+        if (!active) {
+          return;
+        }
+
+        const now = Date.now();
+        const recentSessions = (Array.isArray(payload.sessions) ? payload.sessions : [])
+          .map((session) => {
+            const startMs = new Date(session.startAt).getTime();
+            const endMs = startMs + session.durationMinutes * 60 * 1000;
+            const phase = now >= endMs ? 'completed' : now >= startMs ? 'live' : 'upcoming';
+            return { session, startMs, phase };
+          })
+          .filter((entry) => entry.phase !== 'upcoming')
+          .sort((left, right) => right.startMs - left.startMs)
+          .slice(0, 6);
+
+        const attendanceResults = await Promise.allSettled(
+          recentSessions.map(async ({ session, phase }) => ({
+            session,
+            phase,
+            attendance: await fetchSchoolScheduleLiveAttendance(session.id),
+          }))
+        );
+
+        if (!active) {
+          return;
+        }
+
+        const snapshots = attendanceResults
+          .flatMap((result) => {
+            if (result.status !== 'fulfilled') {
+              return [];
+            }
+
+            const { session, phase, attendance } = result.value;
+            const record = findStudentAttendanceRecord(attendance.records, studentIdentity);
+            const expectedStudents = attendance.summary.expectedStudents;
+            const checkedInCount = attendance.summary.checkedInCount;
+            const effectiveStatus = record?.status || (phase === 'completed' ? 'absent' : 'pending');
+
+            return [
+              {
+                sessionId: session.id,
+                title: session.title,
+                subject: session.subject,
+                instructor: session.instructor,
+                startAt: session.startAt,
+                status: effectiveStatus,
+                checkedInAt: record?.checkedInAt || null,
+                durationMinutes: record?.durationMinutes ?? null,
+                attendanceRate:
+                  expectedStudents > 0 ? Math.round((checkedInCount / expectedStudents) * 100) : 0,
+                audienceLabel:
+                  session.audienceTag ||
+                  [session.department, session.classGroup].filter(Boolean).join(' • ') ||
+                  'Class audience pending',
+              },
+            ];
+          })
+          .slice(0, 4);
+
+        setRecentAttendance(snapshots);
+        setNotice(
+          snapshots.length === 0
+            ? 'Attendance will appear here once your school starts taking attendance in live classes.'
+            : ''
+        );
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        const message =
+          error instanceof Error ? error.message : 'Could not load your attendance snapshot.';
+        setNotice(message);
+        setRecentAttendance([]);
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void loadAttendance();
+    return () => {
+      active = false;
+    };
+  }, [studentIdentity]);
+
+  const attendanceStats = useMemo(() => {
+    const completedSessions = recentAttendance.filter((item) => item.status !== 'pending');
+    const attendedCount = completedSessions.filter(
+      (item) => item.status === 'present' || item.status === 'late'
+    ).length;
+    const lateCount = completedSessions.filter((item) => item.status === 'late').length;
+    const absentCount = completedSessions.filter((item) => item.status === 'absent').length;
+    const pendingCount = recentAttendance.filter((item) => item.status === 'pending').length;
+    const attendanceRate =
+      completedSessions.length > 0 ? Math.round((attendedCount / completedSessions.length) * 100) : 0;
+
+    return {
+      attendanceRate,
+      attendedCount,
+      lateCount,
+      absentCount,
+      pendingCount,
+    };
+  }, [recentAttendance]);
+
+  const statusPill = (status: StudentAttendanceSnapshot['status']) => {
+    switch (status) {
+      case 'present':
+        return 'bg-emerald-100 text-emerald-700';
+      case 'late':
+        return 'bg-amber-100 text-amber-700';
+      case 'pending':
+        return 'bg-[#3D08BA]/10 text-[#3D08BA]';
+      case 'absent':
+      default:
+        return 'bg-rose-100 text-rose-700';
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="inline-flex items-center gap-2 rounded-full bg-[#3D08BA]/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">
+            <CheckCircleIcon className="h-4 w-4" />
+            Attendance snapshot
+          </div>
+          <h3 className="mt-3 text-base sm:text-lg font-semibold text-gray-900">
+            Your recent class attendance
+          </h3>
+          <p className="mt-1 text-xs sm:text-sm text-gray-500">
+            Present, late, and missed check-ins from your latest tracked live classes.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenClasses}
+          className="inline-flex items-center rounded-lg border border-[#3D08BA]/20 px-3 py-2 text-xs sm:text-sm font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5 transition-colors"
+        >
+          Open classes
+        </button>
+      </div>
+
+      {notice && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs sm:text-sm text-amber-700">
+          {notice}
+        </div>
+      )}
+
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Attendance rate
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">{attendanceStats.attendanceRate}%</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Present
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">{attendanceStats.attendedCount}</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Late
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">{attendanceStats.lateCount}</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Missed
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">
+            {attendanceStats.absentCount + attendanceStats.pendingCount}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {isLoading && (
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-4 text-xs sm:text-sm text-gray-500">
+            Loading attendance...
+          </div>
+        )}
+
+        {!isLoading && recentAttendance.length === 0 && !notice && (
+          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-xs sm:text-sm text-gray-500">
+            No tracked attendance sessions yet.
+          </div>
+        )}
+
+        {!isLoading &&
+          recentAttendance.map((item) => (
+            <div
+              key={item.sessionId}
+              className="rounded-xl border border-gray-200 px-3 py-3 sm:px-4 sm:py-4"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm sm:text-base font-semibold text-gray-900">{item.title}</p>
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] ${statusPill(
+                        item.status
+                      )}`}
+                    >
+                      {item.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs sm:text-sm text-gray-600">
+                    {item.subject} • {item.instructor}
+                  </p>
+                  <p className="mt-1 text-[11px] sm:text-xs text-gray-500">
+                    {formatAttendanceTime(item.startAt)} • {item.audienceLabel}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-bold text-gray-900">{item.attendanceRate}%</p>
+                  <p className="text-[10px] uppercase tracking-[0.12em] text-gray-400">class coverage</p>
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-2 text-[11px] sm:grid-cols-2">
+                <div className="rounded-lg bg-gray-50 px-3 py-2 text-gray-600">
+                  <span className="block uppercase tracking-[0.12em] text-gray-400">Checked in</span>
+                  <span className="mt-1 block font-semibold text-gray-900">
+                    {item.checkedInAt ? formatAttendanceTime(item.checkedInAt) : 'Not recorded'}
+                  </span>
+                </div>
+                <div className="rounded-lg bg-gray-50 px-3 py-2 text-gray-600">
+                  <span className="block uppercase tracking-[0.12em] text-gray-400">Time in class</span>
+                  <span className="mt-1 block font-semibold text-gray-900">
+                    {typeof item.durationMinutes === 'number' && Number.isFinite(item.durationMinutes)
+                      ? `${item.durationMinutes} min`
+                      : 'Still syncing'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+};
+
 const StudentDashboard = () => {
   const navigate = useNavigate();
   const initialStudentIdentity = useMemo(() => loadStudentIdentity(), []);
@@ -176,6 +503,10 @@ const StudentDashboard = () => {
           invoice.status === 'partially_paid'
       ),
     [schoolInvoices]
+  );
+  const dashboardStudentIdentity = useMemo(
+    () => ({ ...initialStudentIdentity, name }),
+    [initialStudentIdentity, name]
   );
 
   // Use the notification count hook for real-time sync
@@ -682,6 +1013,11 @@ const StudentDashboard = () => {
                 </div>
               </div>
             )}
+
+            <StudentAttendanceOverview
+              studentIdentity={dashboardStudentIdentity}
+              onOpenClasses={handleJoinClassClick}
+            />
 
             {/* Performance Stats */}
             <PerformanceStats />

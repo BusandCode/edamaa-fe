@@ -38,7 +38,12 @@ import {
 } from '../utils/examsApi';
 import { fetchMyAccountRoles, switchDefaultAccountRole } from '../../auth/utils/accountRolesApi';
 import { schoolManagementModules, type SchoolModule } from '../data/schoolManagementModules';
-import { fetchSchoolScheduleSessions, type SchoolScheduleSession } from '../utils/schoolScheduleApi';
+import {
+  fetchSchoolScheduleAttendance,
+  fetchSchoolScheduleSessions,
+  type SchoolScheduleAttendanceResponse,
+  type SchoolScheduleSession,
+} from '../utils/schoolScheduleApi';
 import {
   loadPersistedLocalDevAuthSession,
   loadPersistedAccountRoleState,
@@ -48,47 +53,338 @@ import {
 import { loadSchoolProfileImage, persistSchoolProfileImage } from '../../../utils/schoolBranding';
 import { signOutEverywhere } from '../../../utils/signOut';
 
+const clampPercentage = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 
+const formatCompactDateTime = (isoDate: string) => {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) {
+    return 'Date pending';
+  }
+
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+};
 
 // Performance Overview Component
 const PerformanceOverview = () => {
+  const navigate = useNavigate();
+  const [sessions, setSessions] = useState<SchoolScheduleSession[]>([]);
+  const [attendanceMap, setAttendanceMap] = useState<Record<string, SchoolScheduleAttendanceResponse>>({});
+  const [isLoading, setIsLoading] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    let active = true;
+
+    const loadAttendanceSnapshot = async () => {
+      setIsLoading(true);
+      try {
+        const payload = await fetchSchoolScheduleSessions({ status: 'all' });
+        if (!active) {
+          return;
+        }
+
+        const nextSessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+        setSessions(nextSessions);
+
+        const now = Date.now();
+        const attendanceCandidates = nextSessions
+          .map((session) => {
+            const startMs = new Date(session.startAt).getTime();
+            const endMs = startMs + session.durationMinutes * 60 * 1000;
+            const status =
+              now >= endMs ? 'completed' : now >= startMs ? 'live' : 'upcoming';
+            return { session, startMs, status };
+          })
+          .filter((entry) => entry.status !== 'upcoming')
+          .sort((left, right) => right.startMs - left.startMs)
+          .slice(0, 6);
+
+        const attendanceResults = await Promise.allSettled(
+          attendanceCandidates.map(async ({ session }) => ({
+            sessionId: session.id,
+            attendance: await fetchSchoolScheduleAttendance(session.id),
+          }))
+        );
+
+        if (!active) {
+          return;
+        }
+
+        const nextAttendanceMap: Record<string, SchoolScheduleAttendanceResponse> = {};
+        attendanceResults.forEach((result) => {
+          if (result.status === 'fulfilled') {
+            nextAttendanceMap[result.value.sessionId] = result.value.attendance;
+          }
+        });
+
+        setAttendanceMap(nextAttendanceMap);
+        setNotice(
+          Object.keys(nextAttendanceMap).length === 0 && attendanceCandidates.length > 0
+            ? 'Attendance has not been captured for recent classes yet.'
+            : ''
+        );
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Could not load attendance performance right now.';
+        setNotice(message);
+        setAttendanceMap({});
+        setSessions([]);
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void loadAttendanceSnapshot();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const recentAttendanceEntries = useMemo(() => {
+    const now = Date.now();
+    return sessions
+      .map((session) => {
+        const startMs = new Date(session.startAt).getTime();
+        const endMs = startMs + session.durationMinutes * 60 * 1000;
+        const status =
+          now >= endMs ? 'completed' : now >= startMs ? 'live' : 'upcoming';
+
+        return {
+          session,
+          status,
+          attendance: attendanceMap[session.id] || null,
+          startMs,
+        };
+      })
+      .filter((entry) => entry.status !== 'upcoming')
+      .sort((left, right) => right.startMs - left.startMs)
+      .slice(0, 4);
+  }, [attendanceMap, sessions]);
+
+  const attendanceSummary = useMemo(() => {
+    return recentAttendanceEntries.reduce(
+      (accumulator, entry) => {
+        if (!entry.attendance) {
+          return accumulator;
+        }
+
+        const summary = entry.attendance.summary;
+        accumulator.expected += summary.expectedStudents;
+        accumulator.checkedIn += summary.checkedInCount;
+        accumulator.present += summary.presentCount;
+        accumulator.late += summary.lateCount;
+        accumulator.pending += summary.pendingCount;
+        accumulator.trackedSessions += 1;
+        return accumulator;
+      },
+      {
+        expected: 0,
+        checkedIn: 0,
+        present: 0,
+        late: 0,
+        pending: 0,
+        trackedSessions: 0,
+      }
+    );
+  }, [recentAttendanceEntries]);
+
+  const attendanceCoverage =
+    attendanceSummary.expected > 0
+      ? (attendanceSummary.checkedIn / attendanceSummary.expected) * 100
+      : 0;
+  const onTimeRate =
+    attendanceSummary.checkedIn > 0
+      ? (attendanceSummary.present / attendanceSummary.checkedIn) * 100
+      : 0;
+  const lateRate =
+    attendanceSummary.checkedIn > 0 ? (attendanceSummary.late / attendanceSummary.checkedIn) * 100 : 0;
+
+  const metrics = [
+    {
+      label: 'Attendance coverage',
+      value: `${clampPercentage(attendanceCoverage)}%`,
+      helper:
+        attendanceSummary.expected > 0
+          ? `${attendanceSummary.checkedIn}/${attendanceSummary.expected} students confirmed`
+          : 'Waiting for recent class check-ins',
+      progress: clampPercentage(attendanceCoverage),
+      progressClassName: 'from-[#3D08BA] to-[#5B22E3]',
+    },
+    {
+      label: 'On-time check-ins',
+      value: `${clampPercentage(onTimeRate)}%`,
+      helper:
+        attendanceSummary.checkedIn > 0
+          ? `${attendanceSummary.present} on time`
+          : 'No confirmed check-ins yet',
+      progress: clampPercentage(onTimeRate),
+      progressClassName: 'from-emerald-500 to-emerald-600',
+    },
+    {
+      label: 'Late arrivals',
+      value: `${clampPercentage(lateRate)}%`,
+      helper:
+        attendanceSummary.checkedIn > 0
+          ? `${attendanceSummary.late} late check-ins`
+          : 'No late arrivals recorded',
+      progress: clampPercentage(lateRate),
+      progressClassName: 'from-amber-400 to-orange-500',
+    },
+  ];
+
   return (
-    <div className='bg-white rounded-2xl p-5 shadow-sm'>
-      <div className='flex items-center justify-between mb-4'>
-        <h3 className='text-base font-bold text-gray-900'>Performance Overview</h3>
-        <select className='text-xs border border-gray-200 rounded-lg px-2 py-1'>
-          <option>This Month</option>
-          <option>Last Month</option>
-          <option>This Year</option>
-        </select>
+    <div className='bg-white rounded-2xl border border-gray-200 p-5 shadow-sm'>
+      <div className='mb-4 flex items-start justify-between gap-3'>
+        <div>
+          <h3 className='text-base font-bold text-gray-900'>Attendance performance</h3>
+          <p className='mt-1 text-[11px] text-gray-500'>
+            Live attendance coverage from your most recent tracked classes.
+          </p>
+        </div>
+        <button
+          type='button'
+          onClick={() => navigate('/school-schedule')}
+          className='rounded-lg border border-[#3D08BA]/15 bg-[#3D08BA]/5 px-3 py-1.5 text-[11px] font-semibold text-[#3D08BA] transition-colors hover:bg-[#3D08BA]/10'
+        >
+          Open schedule
+        </button>
       </div>
-      <div className='space-y-4'>
-        <div>
-          <div className='flex items-center justify-between mb-2'>
-            <span className='text-sm text-gray-700'>Student Attendance</span>
-            <span className='text-sm font-bold text-gray-900'>85%</span>
+
+      {notice && (
+        <p className='mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700'>
+          {notice}
+        </p>
+      )}
+
+      <div className='grid gap-3 sm:grid-cols-3'>
+        {metrics.map((metric) => (
+          <div
+            key={metric.label}
+            className='rounded-2xl border border-gray-200 bg-gray-50/80 p-4 transition-colors hover:border-[#3D08BA]/15 hover:bg-white'
+          >
+            <div className='mb-2 flex items-center justify-between gap-2'>
+              <span className='text-xs font-semibold uppercase tracking-[0.16em] text-gray-500'>
+                {metric.label}
+              </span>
+              <span className='text-sm font-bold text-gray-900'>{isLoading ? '--' : metric.value}</span>
+            </div>
+            <p className='mb-3 text-[11px] leading-5 text-gray-600'>{metric.helper}</p>
+            <div className='h-2 overflow-hidden rounded-full bg-gray-200/80'>
+              <div
+                className={`h-full rounded-full bg-linear-to-r ${metric.progressClassName} transition-[width] duration-500`}
+                style={{ width: `${metric.progress}%` }}
+              />
+            </div>
           </div>
-          <div className='h-2 bg-gray-100 rounded-full overflow-hidden'>
-            <div className='h-full bg-linear-to-r from-blue-500 to-blue-600 rounded-full' style={{ width: '85%' }}></div>
+        ))}
+      </div>
+
+      <div className='mt-5 rounded-2xl border border-gray-200 bg-white p-4'>
+        <div className='mb-3 flex items-center justify-between gap-3'>
+          <div>
+            <h4 className='text-sm font-semibold text-gray-900'>Recent tracked classes</h4>
+            <p className='mt-1 text-[11px] text-gray-500'>
+              {attendanceSummary.trackedSessions > 0
+                ? `${attendanceSummary.trackedSessions} recent classes with attendance data`
+                : 'Attendance will appear here once classes start checking in.'}
+            </p>
           </div>
+          <span className='rounded-full bg-[#3D08BA]/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]'>
+            {recentAttendanceEntries.length} sessions
+          </span>
         </div>
-        <div>
-          <div className='flex items-center justify-between mb-2'>
-            <span className='text-sm text-gray-700'>Course Completion</span>
-            <span className='text-sm font-bold text-gray-900'>72%</span>
-          </div>
-          <div className='h-2 bg-gray-100 rounded-full overflow-hidden'>
-            <div className='h-full bg-linear-to-r from-green-500 to-green-600 rounded-full' style={{ width: '72%' }}></div>
-          </div>
-        </div>
-        <div>
-          <div className='flex items-center justify-between mb-2'>
-            <span className='text-sm text-gray-700'>Tutor Availability</span>
-            <span className='text-sm font-bold text-gray-900'>92%</span>
-          </div>
-          <div className='h-2 bg-gray-100 rounded-full overflow-hidden'>
-            <div className='h-full bg-linear-to-r from-purple-500 to-purple-600 rounded-full' style={{ width: '92%' }}></div>
-          </div>
+
+        <div className='space-y-3'>
+          {isLoading && (
+            <div className='rounded-xl border border-gray-100 bg-gray-50 px-3 py-4 text-xs text-gray-500'>
+              Loading recent attendance...
+            </div>
+          )}
+          {!isLoading && recentAttendanceEntries.length === 0 && (
+            <div className='rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-xs text-gray-600'>
+              No recent live or completed classes yet.
+            </div>
+          )}
+          {!isLoading &&
+            recentAttendanceEntries.map((entry) => {
+              const checkedIn = entry.attendance?.summary.checkedInCount ?? 0;
+              const expected = entry.attendance?.summary.expectedStudents ?? entry.session.expectedStudents;
+              const sessionCoverage =
+                expected > 0 ? clampPercentage((checkedIn / expected) * 100) : 0;
+
+              return (
+                <div
+                  key={entry.session.id}
+                  className='rounded-xl border border-gray-200 bg-gray-50/80 px-3 py-3'
+                >
+                  <div className='flex items-start justify-between gap-3'>
+                    <div className='min-w-0'>
+                      <div className='flex items-center gap-2'>
+                        <p className='truncate text-sm font-semibold text-gray-900'>
+                          {entry.session.title}
+                        </p>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                            entry.status === 'live'
+                              ? 'bg-red-100 text-red-700'
+                              : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {entry.status === 'live' ? 'Live' : 'Completed'}
+                        </span>
+                      </div>
+                      <p className='mt-1 text-[11px] text-gray-500'>
+                        {formatCompactDateTime(entry.session.startAt)} • {entry.session.subject}
+                      </p>
+                    </div>
+                    <div className='text-right'>
+                      <p className='text-sm font-bold text-gray-900'>{sessionCoverage}%</p>
+                      <p className='text-[10px] uppercase tracking-[0.14em] text-gray-400'>coverage</p>
+                    </div>
+                  </div>
+
+                  <div className='mt-3 grid gap-2 text-[11px] text-gray-600 sm:grid-cols-3'>
+                    <div className='rounded-lg bg-white px-2.5 py-2'>
+                      <span className='block text-[10px] uppercase tracking-[0.14em] text-gray-400'>
+                        Checked in
+                      </span>
+                      <span className='mt-1 block font-semibold text-gray-900'>
+                        {checkedIn}/{expected || 0}
+                      </span>
+                    </div>
+                    <div className='rounded-lg bg-white px-2.5 py-2'>
+                      <span className='block text-[10px] uppercase tracking-[0.14em] text-gray-400'>
+                        Late
+                      </span>
+                      <span className='mt-1 block font-semibold text-gray-900'>
+                        {entry.attendance?.summary.lateCount ?? 0}
+                      </span>
+                    </div>
+                    <div className='rounded-lg bg-white px-2.5 py-2'>
+                      <span className='block text-[10px] uppercase tracking-[0.14em] text-gray-400'>
+                        Pending
+                      </span>
+                      <span className='mt-1 block font-semibold text-gray-900'>
+                        {entry.attendance?.summary.pendingCount ?? 0}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
         </div>
       </div>
     </div>
