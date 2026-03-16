@@ -76,4 +76,31 @@ export const S = {
     color: primary ? "#fff" : "#3D08BA",
     boxShadow: primary ? "0 4px 12px rgba(61,8,186,0.3)" : "none",
   }),
+
+  label: {
+    display: "block",
+    fontSize: 14,
+    fontWeight: 600,
+    color: "#374151",
+    marginBottom: 6,
+  } as React.CSSProperties,
+
+  icon: {
+    position: "absolute" as const,
+    left: 12,
+    top: "50%",
+    transform: "translateY(-50%)",
+    color: "#9CA3AF",
+    zIndex: 1,
+  } as React.CSSProperties,
+
+  input: {
+    width: "100%",
+    padding: "12px 12px 12px 40px",
+    border: "1px solid #D1D5DB",
+    borderRadius: 8,
+    fontSize: 14,
+    outline: "none",
+    boxSizing: "border-box" as const,
+  } as React.CSSProperties,
 };
