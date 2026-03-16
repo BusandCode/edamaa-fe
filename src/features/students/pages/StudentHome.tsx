@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowRightOnRectangleIcon,
+  BanknotesIcon,
   BuildingOffice2Icon,
   ChatBubbleLeftRightIcon,
   ClockIcon,
@@ -22,6 +23,10 @@ import StudentCommunicationPanel, {
   type IncomingCallInvite,
 } from '../../../components/communication/StudentCommunicationPanel';
 import { signOutEverywhere } from '../../../utils/signOut';
+import {
+  loadPersistedLocalDevAuthSession,
+  loadPersistedSupabaseAccessToken,
+} from '../../../utils/authSession';
 import { RECORDED_COURSES } from '../data/recordedCourses';
 import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
 
@@ -51,6 +56,34 @@ type LiveClass = {
   learners: number;
   startsIn: string;
   category: string;
+};
+
+type StudentSchoolInvoiceStatus =
+  | 'draft'
+  | 'pending'
+  | 'partially_paid'
+  | 'paid'
+  | 'overdue'
+  | 'canceled';
+
+type StudentSchoolInvoice = {
+  id: string;
+  title: string;
+  amount: number;
+  currency: string;
+  status: StudentSchoolInvoiceStatus;
+  dueDate: string | null;
+  schoolName?: string;
+};
+
+type StudentSchoolInvoicesResponse = {
+  invoices: StudentSchoolInvoice[];
+};
+
+type PaySchoolInvoiceResponse = {
+  mode: 'checkout' | 'settled';
+  checkoutUrl?: string | null;
+  message?: string;
 };
 
 type MissedCallReason = 'missed' | 'declined';
@@ -159,6 +192,7 @@ const liveClasses: LiveClass[] = [
 const quickFilters = ['All', 'Technology', 'Science', 'Arts', 'Social Studies', 'Exam Prep'];
 const SIGNAL_CHANNEL = 'signal:student-communication';
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '');
+const STUDENT_HOME_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
 const MISSED_CALL_STORAGE_PREFIX = 'edamaa:student:missed-calls:';
 const MAX_MISSED_CALLS = 20;
 const INCOMING_CALL_TIMEOUT_MS = 30_000;
@@ -208,6 +242,53 @@ const buildFallbackAvatar = (fullName: string) => {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 };
 
+const isLocalhostHost = (host: string) => host === '127.0.0.1' || host === 'localhost';
+
+const resolveStudentApiBaseCandidates = () => {
+  const candidates = new Set<string>();
+  candidates.add('/api');
+
+  if (STUDENT_HOME_API_BASE_URL && STUDENT_HOME_API_BASE_URL !== '/api') {
+    candidates.add(STUDENT_HOME_API_BASE_URL);
+  }
+
+  if (typeof window !== 'undefined') {
+    const host = (window.location.hostname || '').trim();
+    if (isLocalhostHost(host)) {
+      candidates.add(`http://${host}:3001`);
+    }
+  }
+
+  candidates.add('http://127.0.0.1:3001');
+  candidates.add('http://localhost:3001');
+  return Array.from(candidates).map((base) => base.replace(/\/+$/, ''));
+};
+
+const extractStudentApiError = async (response: Response) => {
+  try {
+    const payload = (await response.json()) as { message?: string | string[] };
+    if (Array.isArray(payload.message)) {
+      return payload.message.join(', ');
+    }
+    if (typeof payload.message === 'string' && payload.message.trim()) {
+      return payload.message;
+    }
+  } catch {
+    // Fallback to plain text below.
+  }
+
+  try {
+    const payload = (await response.text()).replace(/\s+/g, ' ').trim();
+    if (payload && !/^</.test(payload)) {
+      return payload;
+    }
+  } catch {
+    // Keep generic fallback.
+  }
+
+  return `Request failed with status ${response.status}`;
+};
+
 const StudentHome = () => {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
@@ -218,6 +299,10 @@ const StudentHome = () => {
   const [incomingCallInvite, setIncomingCallInvite] = useState<IncomingCallInvite | null>(null);
   const [missedCalls, setMissedCalls] = useState<MissedCallEntry[]>([]);
   const [communicationNotice, setCommunicationNotice] = useState('');
+  const [schoolInvoices, setSchoolInvoices] = useState<StudentSchoolInvoice[]>([]);
+  const [isSchoolInvoicesLoading, setIsSchoolInvoicesLoading] = useState(false);
+  const [schoolInvoicesError, setSchoolInvoicesError] = useState<string | null>(null);
+  const [activeSchoolInvoiceId, setActiveSchoolInvoiceId] = useState('');
   const [isSigningOut, setIsSigningOut] = useState(false);
   const seenSignalIdsRef = useRef<Set<string>>(new Set());
   const seenCallIdsRef = useRef<Set<string>>(new Set());
@@ -233,6 +318,33 @@ const StudentHome = () => {
   );
   const missedCallsCount = missedCalls.length;
   const recentMissedCalls = useMemo(() => missedCalls.slice(0, 3), [missedCalls]);
+  const outstandingSchoolInvoices = useMemo(
+    () =>
+      schoolInvoices.filter(
+        (invoice) =>
+          invoice.status === 'pending' ||
+          invoice.status === 'overdue' ||
+          invoice.status === 'partially_paid'
+      ),
+    [schoolInvoices]
+  );
+
+  const urgentSchoolInvoice = useMemo(() => {
+    if (outstandingSchoolInvoices.length === 0) {
+      return null;
+    }
+
+    const overdueInvoice = outstandingSchoolInvoices.find((invoice) => invoice.status === 'overdue');
+    if (overdueInvoice) {
+      return overdueInvoice;
+    }
+
+    return [...outstandingSchoolInvoices].sort((a, b) => {
+      const aTime = a.dueDate ? new Date(a.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
+      const bTime = b.dueDate ? new Date(b.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
+      return aTime - bTime;
+    })[0];
+  }, [outstandingSchoolInvoices]);
 
   const recommendedCourses = useMemo(() => {
     const source = RECORDED_COURSES.filter((course) =>
@@ -271,6 +383,138 @@ const StudentHome = () => {
       setIsSigningOut(false);
     }
   }, [isSigningOut, navigate]);
+
+  const openSchoolFeesView = useCallback(() => {
+    const invoiceQuery = urgentSchoolInvoice
+      ? `&invoice=${encodeURIComponent(urgentSchoolInvoice.id)}`
+      : '';
+    navigate(`/payments?view=school-fees${invoiceQuery}`);
+  }, [navigate, urgentSchoolInvoice]);
+
+  const requestWithStudentAuth = useCallback(async (endpoint: string, init?: RequestInit) => {
+    const token = loadPersistedSupabaseAccessToken();
+    const localDevSession = loadPersistedLocalDevAuthSession();
+
+    if (!token && !localDevSession?.email) {
+      throw new Error('Please sign in to view your school invoices.');
+    }
+
+    const bases = resolveStudentApiBaseCandidates();
+    let networkError: Error | null = null;
+
+    const shouldTryNextBase = (response: Response, base: string) => {
+      if (base.startsWith('/') && response.status === 500) {
+        return true;
+      }
+      if ([502, 503, 504].includes(response.status)) {
+        return true;
+      }
+      if (base.startsWith('/') && [404, 405].includes(response.status)) {
+        return true;
+      }
+      return false;
+    };
+
+    for (let index = 0; index < bases.length; index += 1) {
+      const base = bases[index];
+      let response: Response;
+
+      try {
+        response = await fetch(`${base}${endpoint}`, {
+          ...init,
+          headers: {
+            ...(init?.headers || {}),
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(localDevSession?.email ? { 'X-Dev-User-Email': localDevSession.email } : {}),
+            ...(localDevSession?.defaultRole ? { 'X-Dev-User-Role': localDevSession.defaultRole } : {}),
+          },
+        });
+      } catch (error) {
+        networkError = error instanceof Error ? error : new Error('Network request failed');
+        continue;
+      }
+
+      if (!response.ok) {
+        if (shouldTryNextBase(response, base)) {
+          continue;
+        }
+        throw new Error(await extractStudentApiError(response));
+      }
+
+      return response;
+    }
+
+    const fallbackMessage =
+      networkError?.message && networkError.message.trim() ? networkError.message : 'Failed to fetch';
+    throw new Error(
+      `${fallbackMessage}. Could not reach backend API on ${bases.join(', ')}. Start the API with "bash scripts/api-up.sh", then retry.`
+    );
+  }, []);
+
+  const loadSchoolInvoices = useCallback(async () => {
+    const token = loadPersistedSupabaseAccessToken();
+    const localDevSession = loadPersistedLocalDevAuthSession();
+    if (!token && !localDevSession?.email) {
+      setSchoolInvoices([]);
+      setSchoolInvoicesError(null);
+      return;
+    }
+
+    setIsSchoolInvoicesLoading(true);
+    setSchoolInvoicesError(null);
+    try {
+      const response = await requestWithStudentAuth('/school-finance/invoices/me', {
+        method: 'GET',
+      });
+      const payload = (await response.json()) as StudentSchoolInvoicesResponse;
+      setSchoolInvoices(Array.isArray(payload.invoices) ? payload.invoices : []);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not load your school invoices right now.';
+      setSchoolInvoicesError(message);
+      setSchoolInvoices([]);
+    } finally {
+      setIsSchoolInvoicesLoading(false);
+    }
+  }, [requestWithStudentAuth]);
+
+  const handlePaySchoolInvoiceFromHome = useCallback(
+    async (invoiceId: string) => {
+      if (activeSchoolInvoiceId) {
+        return;
+      }
+
+      setActiveSchoolInvoiceId(invoiceId);
+      try {
+        const response = await requestWithStudentAuth(
+          `/school-finance/invoices/${encodeURIComponent(invoiceId)}/pay`,
+          {
+            method: 'POST',
+            body: JSON.stringify({}),
+          }
+        );
+        const payload = (await response.json()) as PaySchoolInvoiceResponse;
+        if (payload.mode === 'checkout' && payload.checkoutUrl) {
+          window.location.assign(payload.checkoutUrl);
+          return;
+        }
+
+        if (payload.message) {
+          setCommunicationNotice(payload.message);
+        }
+        await loadSchoolInvoices();
+        navigate('/payments?view=school-fees');
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Could not process school invoice payment.';
+        setSchoolInvoicesError(message);
+      } finally {
+        setActiveSchoolInvoiceId('');
+      }
+    },
+    [activeSchoolInvoiceId, loadSchoolInvoices, navigate, requestWithStudentAuth]
+  );
 
   const sendRealtimeSignal = useCallback(
     async (event: string, payload: Record<string, unknown>) => {
@@ -435,6 +679,10 @@ const StudentHome = () => {
     // Keep a stable receiver profile so tutor/school and student panels route on the same student id.
     saveStudentIdentity(studentIdentity);
   }, [studentIdentity]);
+
+  useEffect(() => {
+    void loadSchoolInvoices();
+  }, [loadSchoolInvoices]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -741,6 +989,27 @@ const StudentHome = () => {
                 </span>
               </button>
               <button
+                onClick={openSchoolFeesView}
+                className="relative rounded-full border border-gray-200 bg-white p-2 hover:bg-gray-50 transition-colors"
+                aria-label="Open school fee alerts"
+                title="School fee alerts"
+              >
+                <BanknotesIcon className="h-5 w-5 text-[#3D08BA]" />
+                {outstandingSchoolInvoices.length > 0 && (
+                  <span
+                    className={`absolute -top-1 -right-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white ${
+                      urgentSchoolInvoice?.status === 'overdue'
+                        ? 'bg-red-500'
+                        : 'bg-[#F68C29]'
+                    }`}
+                  >
+                    {outstandingSchoolInvoices.length > 9
+                      ? '9+'
+                      : outstandingSchoolInvoices.length}
+                  </span>
+                )}
+              </button>
+              <button
                 onClick={() => navigate('/my-profile')}
                 className="rounded-full border border-gray-200 bg-white p-2 hover:bg-gray-50 transition-colors"
                 aria-label="Open my profile"
@@ -770,6 +1039,91 @@ const StudentHome = () => {
             {communicationNotice}
           </div>
         )}
+
+        <section className="mb-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">School Fee Alerts</h2>
+              <p className="mt-1 text-xs text-gray-600">
+                Stay ahead of deadlines. Pay assigned school invoices from your home workspace.
+              </p>
+            </div>
+            <span
+              className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                outstandingSchoolInvoices.length > 0
+                  ? 'bg-red-50 text-red-700'
+                  : 'bg-emerald-50 text-emerald-700'
+              }`}
+            >
+              {outstandingSchoolInvoices.length} outstanding
+            </span>
+          </div>
+
+          {isSchoolInvoicesLoading && (
+            <p className="mt-3 text-sm text-gray-600">Checking your assigned school invoices...</p>
+          )}
+
+          {!isSchoolInvoicesLoading && schoolInvoicesError && (
+            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              {schoolInvoicesError}
+            </div>
+          )}
+
+          {!isSchoolInvoicesLoading && !schoolInvoicesError && urgentSchoolInvoice && (
+            <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-[220px]">
+                  <p className="text-sm font-semibold text-gray-900">{urgentSchoolInvoice.title}</p>
+                  <p className="mt-0.5 text-xs text-gray-600">
+                    {(urgentSchoolInvoice.schoolName || 'School')} • ₦
+                    {urgentSchoolInvoice.amount.toLocaleString()}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-gray-500">
+                    {urgentSchoolInvoice.dueDate
+                      ? `Due ${new Date(urgentSchoolInvoice.dueDate).toLocaleDateString()}`
+                      : 'No due date'}
+                  </p>
+                </div>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                    urgentSchoolInvoice.status === 'overdue'
+                      ? 'bg-red-100 text-red-700'
+                      : 'bg-[#3D08BA]/10 text-[#3D08BA]'
+                  }`}
+                >
+                  {urgentSchoolInvoice.status.replace('_', ' ')}
+                </span>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => void handlePaySchoolInvoiceFromHome(urgentSchoolInvoice.id)}
+                  disabled={activeSchoolInvoiceId === urgentSchoolInvoice.id}
+                  className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2D0690] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {activeSchoolInvoiceId === urgentSchoolInvoice.id ? 'Processing...' : 'Pay now'}
+                </button>
+                <button
+                  onClick={() => navigate('/payments?view=school-fees')}
+                  className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Open payments
+                </button>
+                <button
+                  onClick={openSchoolFeesView}
+                  className="rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10"
+                >
+                  Open exact invoice
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!isSchoolInvoicesLoading && !schoolInvoicesError && !urgentSchoolInvoice && (
+            <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+              You are all caught up. No outstanding school invoices right now.
+            </p>
+          )}
+        </section>
 
         <section className="relative overflow-hidden rounded-3xl bg-linear-to-r from-[#2e0a91] via-[#3D08BA] to-[#5f2ce0] p-6 sm:p-8 text-white shadow-xl">
           <div className="absolute -right-12 -top-10 h-44 w-44 rounded-full bg-white/10"></div>

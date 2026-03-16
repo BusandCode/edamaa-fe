@@ -33,6 +33,10 @@ model User {
   // Relation to Enrollment model.
   enrollments Enrollment[]
 
+  // Multi-role account access for student/tutor/school/admin personas.
+  accountRoles       UserRole[]
+  roleChangeRequests RoleChangeRequest[]
+
   // Payment domain relations.
   paymentMethods      PaymentMethod[]
   paymentTransactions PaymentTransaction[]
@@ -43,6 +47,9 @@ model User {
   // School finance domain (marketplace payout model).
   schoolFinanceAccount  SchoolFinanceAccount?
   schoolFeePayments     SchoolFeePayment[]   @relation("SchoolFeePaymentPayer")
+  schoolFeeInvoices     SchoolFeeInvoice[]   @relation("SchoolFeeInvoiceStudent")
+  schoolScheduleSessions SchoolScheduleSession[] @relation("SchoolScheduleOwner")
+  schoolScheduleNotifications SchoolScheduleNotification[] @relation("SchoolScheduleNotificationOwner")
 }
 
 model School {
@@ -66,6 +73,46 @@ model Enrollment {
   course   Course @relation(fields: [courseId], references: [id])
   courseId Int
   role     String @default("student")
+}
+
+model UserRole {
+  id            Int               @id @default(autoincrement())
+  publicId      String            @unique
+  user          User              @relation(fields: [userId], references: [id])
+  userId        Int
+  role          AccountRole
+  status        AccountRoleStatus @default(ACTIVE)
+  isDefault     Boolean           @default(false)
+  requestedAt   DateTime          @default(now())
+  activatedAt   DateTime?
+  deactivatedAt DateTime?
+  metadata      Json?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([userId, role])
+  @@index([userId, status, isDefault])
+  @@index([role, status, createdAt])
+}
+
+model RoleChangeRequest {
+  id              Int                     @id @default(autoincrement())
+  publicId        String                  @unique
+  user            User                    @relation(fields: [userId], references: [id])
+  userId          Int
+  targetRole      AccountRole
+  status          RoleChangeRequestStatus @default(PENDING)
+  note            String?
+  requestPayload  Json?
+  reviewedByEmail String?
+  reviewedAt      DateTime?
+  rejectionReason String?
+  metadata        Json?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  @@index([userId, status, createdAt])
+  @@index([targetRole, status, createdAt])
 }
 
 enum PaymentMethodType {
@@ -105,6 +152,25 @@ enum SubscriptionStatus {
   CANCELED
 }
 
+enum AccountRole {
+  STUDENT
+  TUTOR
+  SCHOOL
+  ADMIN
+}
+
+enum AccountRoleStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum RoleChangeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELED
+}
+
 enum SchoolFeeInvoiceStatus {
   DRAFT
   PENDING
@@ -127,6 +193,23 @@ enum SchoolPayoutStatus {
   PAID
   FAILED
   CANCELED
+}
+
+enum SchoolFeeReminderType {
+  DUE_SOON
+  OVERDUE
+}
+
+enum SchoolFeeReminderChannel {
+  IN_APP
+  EMAIL
+}
+
+enum SchoolFeeReminderDispatchStatus {
+  QUEUED
+  SENT
+  FAILED
+  SKIPPED
 }
 
 model PaymentMethod {
@@ -238,6 +321,75 @@ model SchoolFeePlan {
   @@index([accountId, isActive, createdAt])
 }
 
+model SchoolScheduleSession {
+  id               Int      @id @default(autoincrement())
+  publicId         String   @unique
+  schoolUser       User     @relation("SchoolScheduleOwner", fields: [schoolUserId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  schoolUserId     Int
+  title            String
+  subject          String
+  instructor       String
+  startAt          DateTime
+  endAt            DateTime
+  durationMinutes  Int
+  expectedStudents Int      @default(0)
+  roomCode         String
+  notes            String?
+  metadata         Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([schoolUserId, startAt])
+  @@index([schoolUserId, instructor, startAt])
+  @@index([schoolUserId, roomCode, startAt])
+}
+
+model SchoolScheduleNotification {
+  id               Int      @id @default(autoincrement())
+  publicId         String   @unique
+  schoolUser       User     @relation("SchoolScheduleNotificationOwner", fields: [schoolUserId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  schoolUserId     Int
+  kind             String
+  sessionPublicId  String
+  sessionTitle     String
+  subject          String
+  instructor       String
+  roomCode         String
+  startAt          DateTime
+  assignedTutorEmail String?
+  department       String?
+  classGroup       String?
+  audienceTag      String?
+  targetEmail      String?
+  tutorJoinLink    String?
+  tutorJoinCode    String?
+  tutorJoinToken   String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  reads SchoolScheduleNotificationRead[]
+
+  @@index([schoolUserId, createdAt])
+  @@index([targetEmail, createdAt])
+  @@index([kind, createdAt])
+  @@index([sessionPublicId, createdAt])
+}
+
+model SchoolScheduleNotificationRead {
+  id             Int      @id @default(autoincrement())
+  publicId       String   @unique
+  notification   SchoolScheduleNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  notificationId Int
+  userEmail      String
+  readAt         DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userEmail, notificationId])
+  @@index([userEmail, createdAt])
+  @@index([notificationId, createdAt])
+}
+
 model SchoolFeeInvoice {
   id                    Int                  @id @default(autoincrement())
   publicId              String               @unique
@@ -245,6 +397,8 @@ model SchoolFeeInvoice {
   accountId             Int
   plan                  SchoolFeePlan?       @relation(fields: [planId], references: [id])
   planId                Int?
+  studentUser           User?                @relation("SchoolFeeInvoiceStudent", fields: [studentUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  studentUserId         Int?
   studentEmail          String
   studentName           String?
   title                 String
@@ -261,9 +415,55 @@ model SchoolFeeInvoice {
   updatedAt             DateTime             @updatedAt
 
   payments SchoolFeePayment[]
+  reminderDispatches SchoolFeeReminderDispatch[]
 
   @@index([accountId, status, createdAt])
   @@index([studentEmail, status, dueAt])
+  @@index([studentUserId, status, dueAt])
+}
+
+model SchoolFeeInvoiceNotificationRead {
+  id            Int      @id @default(autoincrement())
+  publicId      String   @unique
+  invoicePublicId String?
+  userEmail     String
+  notificationId String
+  kind          String
+  readAt        DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userEmail, notificationId])
+  @@index([invoicePublicId, createdAt])
+  @@index([userEmail, createdAt])
+}
+
+model SchoolFeeReminderDispatch {
+  id             Int                           @id @default(autoincrement())
+  publicId       String                        @unique
+  invoice        SchoolFeeInvoice              @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceId      Int
+  invoicePublicId String
+  accountId      Int
+  studentEmail   String
+  reminderType   SchoolFeeReminderType
+  channel        SchoolFeeReminderChannel
+  status         SchoolFeeReminderDispatchStatus @default(QUEUED)
+  attemptCount   Int                           @default(0)
+  nextRetryAt    DateTime?
+  lastError      String?
+  reminderDate   DateTime
+  sentAt         DateTime?
+  failureReason  String?
+  metadata       Json?
+  createdAt      DateTime                      @default(now())
+  updatedAt      DateTime                      @updatedAt
+
+  @@unique([invoiceId, studentEmail, reminderType, channel, reminderDate], name: "SchoolFeeReminderDispatch_invoice_student_type_channel_date_key")
+  @@index([accountId, createdAt])
+  @@index([studentEmail, createdAt])
+  @@index([channel, status, createdAt])
+  @@index([channel, status, nextRetryAt, createdAt])
 }
 
 model SchoolFeePayment {

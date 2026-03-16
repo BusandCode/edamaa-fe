@@ -1,7 +1,16 @@
 import { clearPersistedAuthSession } from './authSession';
+import { clearCurrentSchoolProfileImage, schoolBrandingStorageKeys } from './schoolBranding';
 import { getSupabaseBrowserClient } from './supabaseClient';
 
-const ADDITIONAL_AUTH_STORAGE_KEYS = ['supabase_access_token', 'edamaa-supabase-auth'];
+const ADDITIONAL_AUTH_STORAGE_KEYS = [
+  'supabase_access_token',
+  'edamaa-supabase-auth',
+  schoolBrandingStorageKeys.schoolDisplayName,
+  schoolBrandingStorageKeys.schoolAdminName,
+  'edamaa_tutor_display_name',
+  'edamaa_student_display_name',
+  'edamaa_account_role_state_v1',
+];
 
 const clearLocalAuthArtifacts = () => {
   if (typeof window === 'undefined') {
@@ -9,6 +18,7 @@ const clearLocalAuthArtifacts = () => {
   }
 
   clearPersistedAuthSession();
+  clearCurrentSchoolProfileImage();
   ADDITIONAL_AUTH_STORAGE_KEYS.forEach((storageKey) => {
     window.localStorage.removeItem(storageKey);
   });

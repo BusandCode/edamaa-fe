@@ -102,6 +102,7 @@ interface SchoolFeeInvoice {
   id: string;
   title: string;
   description: string | null;
+  studentUserId: string | null;
   studentEmail: string;
   studentName: string | null;
   amount: number;
@@ -117,6 +118,26 @@ interface SchoolFeeInvoice {
 
 interface StudentSchoolInvoicesResponse {
   invoices: SchoolFeeInvoice[];
+}
+
+interface SchoolFeeInvoiceNotification {
+  id: string;
+  kind: 'new_invoice' | 'due_soon' | 'overdue_reminder';
+  invoiceId: string;
+  schoolName: string;
+  title: string;
+  message: string;
+  amount: number;
+  currency: string;
+  status: SchoolFeeInvoice['status'];
+  dueDate: string | null;
+  createdAt: string;
+  isRead: boolean;
+}
+
+interface StudentSchoolInvoiceNotificationsResponse {
+  unreadCount: number;
+  notifications: SchoolFeeInvoiceNotification[];
 }
 
 interface PaySchoolInvoiceResponse {
@@ -162,6 +183,30 @@ const schoolInvoiceStatusStyle = (status: SchoolFeeInvoice['status']) => {
       return 'bg-gray-100 text-gray-700';
     case 'canceled':
       return 'bg-slate-100 text-slate-700';
+  }
+};
+
+const schoolInvoiceNotificationKindStyle = (kind: SchoolFeeInvoiceNotification['kind']) => {
+  switch (kind) {
+    case 'overdue_reminder':
+      return 'bg-red-100 text-red-700';
+    case 'due_soon':
+      return 'bg-amber-100 text-amber-700';
+    case 'new_invoice':
+    default:
+      return 'bg-[#3D08BA]/10 text-[#3D08BA]';
+  }
+};
+
+const schoolInvoiceNotificationKindLabel = (kind: SchoolFeeInvoiceNotification['kind']) => {
+  switch (kind) {
+    case 'overdue_reminder':
+      return 'Overdue';
+    case 'due_soon':
+      return 'Due soon';
+    case 'new_invoice':
+    default:
+      return 'New';
   }
 };
 
@@ -483,6 +528,9 @@ const Payments = () => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [payments, setPayments] = useState<Payment[]>(FALLBACK_PAYMENTS);
   const [schoolInvoices, setSchoolInvoices] = useState<SchoolFeeInvoice[]>([]);
+  const [schoolInvoiceNotifications, setSchoolInvoiceNotifications] = useState<
+    SchoolFeeInvoiceNotification[]
+  >([]);
   const [methods, setMethods] = useState<PaymentMethod[]>(FALLBACK_METHODS);
   const [isLoading, setIsLoading] = useState(false);
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
@@ -499,10 +547,12 @@ const Payments = () => {
   const [activePaymentId, setActivePaymentId] = useState<string | null>(null);
   const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState('');
   const schoolFeesSectionRef = useRef<HTMLDivElement | null>(null);
+  const schoolInvoiceCardRefs = useRef<Record<string, HTMLElement | null>>({});
   const checkoutStatus = searchParams.get('checkout');
   const checkoutSessionId = searchParams.get('session_id');
   const isSchoolFeeCheckout = searchParams.get('school_fee') === '1';
   const focusedView = searchParams.get('view');
+  const focusedInvoiceId = (searchParams.get('invoice') || '').trim();
   const focusSchoolFeesView = focusedView === 'school-fees';
 
   const stripePromise = useMemo(() => {
@@ -602,7 +652,7 @@ const Payments = () => {
         ? networkError.message
         : 'Failed to fetch';
     throw new Error(
-      `${fallbackMessage}. Could not reach the backend API on ${bases.join(', ')}. Ensure NestJS is running on http://127.0.0.1:3001 and your web app is running on Vite dev server.`
+      `${fallbackMessage}. Could not reach the backend API on ${bases.join(', ')}. Start the API with "bash scripts/api-up.sh", then retry.`
     );
   };
 
@@ -630,12 +680,24 @@ const Payments = () => {
       }
 
       try {
-        const schoolInvoicesResponse = await requestWithAuth('/school-finance/invoices/me');
+        const [schoolInvoicesResponse, schoolInvoiceNotificationsResponse] = await Promise.all([
+          requestWithAuth('/school-finance/invoices/me'),
+          requestWithAuth('/school-finance/invoices/me/notifications'),
+        ]);
         const schoolInvoicesPayload = (await schoolInvoicesResponse.json()) as StudentSchoolInvoicesResponse;
+        const schoolNotificationsPayload =
+          (await schoolInvoiceNotificationsResponse.json()) as StudentSchoolInvoiceNotificationsResponse;
+
         if (Array.isArray(schoolInvoicesPayload.invoices)) {
           setSchoolInvoices(schoolInvoicesPayload.invoices);
         } else {
           setSchoolInvoices([]);
+        }
+
+        if (Array.isArray(schoolNotificationsPayload.notifications)) {
+          setSchoolInvoiceNotifications(schoolNotificationsPayload.notifications);
+        } else {
+          setSchoolInvoiceNotifications([]);
         }
       } catch (schoolInvoiceError) {
         console.warn(
@@ -644,6 +706,7 @@ const Payments = () => {
             : 'Unable to load school fee invoices right now.'
         );
         setSchoolInvoices([]);
+        setSchoolInvoiceNotifications([]);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load payments right now.';
@@ -737,6 +800,55 @@ const Payments = () => {
         error instanceof Error
           ? error.message
           : 'Could not process school fee invoice payment right now.';
+      window.alert(message);
+    } finally {
+      setActiveActionId(null);
+    }
+  };
+
+  const handleMarkSchoolNotificationRead = async (notificationId: string) => {
+    if (activeActionId) {
+      return;
+    }
+
+    setActiveActionId(`school-notification-read-${notificationId}`);
+    try {
+      await requestWithAuth(
+        `/school-finance/invoices/me/notifications/${encodeURIComponent(notificationId)}/read`,
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        }
+      );
+      setSchoolInvoiceNotifications((previous) =>
+        previous.map((notification) =>
+          notification.id === notificationId ? { ...notification, isRead: true } : notification
+        )
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not mark notification as read.';
+      window.alert(message);
+    } finally {
+      setActiveActionId(null);
+    }
+  };
+
+  const handleMarkAllSchoolNotificationsRead = async () => {
+    if (activeActionId) {
+      return;
+    }
+
+    setActiveActionId('school-notification-read-all');
+    try {
+      await requestWithAuth('/school-finance/invoices/me/notifications/read-all', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      setSchoolInvoiceNotifications((previous) =>
+        previous.map((notification) => ({ ...notification, isRead: true }))
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not mark all notifications as read.';
       window.alert(message);
     } finally {
       setActiveActionId(null);
@@ -991,6 +1103,24 @@ const Payments = () => {
   }, [focusSchoolFeesView]);
 
   useEffect(() => {
+    if (!focusSchoolFeesView || !focusedInvoiceId) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      const target = schoolInvoiceCardRefs.current[focusedInvoiceId];
+      target?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    }, 180);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [focusSchoolFeesView, focusedInvoiceId, schoolInvoices]);
+
+  useEffect(() => {
     if (!isPaymentMethodModalOpen) {
       return;
     }
@@ -1047,6 +1177,24 @@ const Payments = () => {
       invoice.status === 'overdue' ||
       invoice.status === 'partially_paid'
   );
+  const unreadSchoolInvoiceNotifications = schoolInvoiceNotifications.filter(
+    (notification) => !notification.isRead
+  );
+  const visibleSchoolInvoices = useMemo(() => {
+    if (!focusedInvoiceId) {
+      return schoolInvoices.slice(0, 8);
+    }
+
+    const focusedInvoice = schoolInvoices.find((invoice) => invoice.id === focusedInvoiceId);
+    if (!focusedInvoice) {
+      return schoolInvoices.slice(0, 8);
+    }
+
+    const otherInvoices = schoolInvoices
+      .filter((invoice) => invoice.id !== focusedInvoiceId)
+      .slice(0, 7);
+    return [focusedInvoice, ...otherInvoices];
+  }, [focusedInvoiceId, schoolInvoices]);
 
   const filters: { id: FilterId; label: string }[] = [
     { id: 'all',     label: 'All' },
@@ -1142,6 +1290,73 @@ const Payments = () => {
         <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-100 shadow-sm p-3 sm:p-4">
           <div className="flex items-center justify-between gap-2">
             <div>
+              <h2 className="text-sm font-semibold text-gray-900">Invoice Notifications</h2>
+              <p className="text-[11px] text-gray-500 mt-0.5">
+                Stay updated when schools assign invoices and payment reminders.
+              </p>
+            </div>
+            {unreadSchoolInvoiceNotifications.length > 0 && (
+              <button
+                type="button"
+                onClick={() => void handleMarkAllSchoolNotificationsRead()}
+                disabled={Boolean(activeActionId)}
+                className="rounded-md border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-2 py-1 text-[10px] font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {activeActionId === 'school-notification-read-all' ? 'Updating...' : 'Mark all read'}
+              </button>
+            )}
+          </div>
+
+          {schoolInvoiceNotifications.length === 0 ? (
+            <p className="mt-3 text-xs text-gray-500">No invoice notifications yet.</p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              {schoolInvoiceNotifications.slice(0, 6).map((notification) => (
+                <article
+                  key={notification.id}
+                  className={`rounded-lg border px-3 py-2.5 ${
+                    notification.isRead
+                      ? 'border-gray-200 bg-gray-50'
+                      : 'border-[#3D08BA]/30 bg-[#3D08BA]/5'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${schoolInvoiceNotificationKindStyle(
+                          notification.kind
+                        )}`}
+                      >
+                        {schoolInvoiceNotificationKindLabel(notification.kind)}
+                      </span>
+                      <p className="text-xs font-semibold text-gray-900">{notification.title}</p>
+                      <p className="mt-0.5 text-[11px] text-gray-600">{notification.message}</p>
+                      <p className="mt-1 text-[10px] text-gray-500">
+                        {new Date(notification.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                    {!notification.isRead && (
+                      <button
+                        type="button"
+                        onClick={() => void handleMarkSchoolNotificationRead(notification.id)}
+                        disabled={Boolean(activeActionId)}
+                        className="shrink-0 rounded-md border border-gray-200 bg-white px-2 py-1 text-[10px] font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {activeActionId === `school-notification-read-${notification.id}`
+                          ? '...'
+                          : 'Mark read'}
+                      </button>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-100 shadow-sm p-3 sm:p-4">
+          <div className="flex items-center justify-between gap-2">
+            <div>
               <h2 className="text-sm font-semibold text-gray-900">School Fee Invoices</h2>
               <p className="text-[11px] text-gray-500 mt-0.5">
                 Invoices assigned by your school appear here with direct pay actions.
@@ -1158,10 +1373,17 @@ const Payments = () => {
             <p className="mt-3 text-xs text-gray-500">No school invoices yet.</p>
           ) : (
             <div className="mt-3 space-y-2">
-              {schoolInvoices.slice(0, 8).map((invoice) => (
+              {visibleSchoolInvoices.map((invoice) => (
                 <article
                   key={invoice.id}
-                  className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5"
+                  ref={(node) => {
+                    schoolInvoiceCardRefs.current[invoice.id] = node;
+                  }}
+                  className={`rounded-lg border px-3 py-2.5 ${
+                    focusedInvoiceId === invoice.id
+                      ? 'border-[#3D08BA]/45 bg-[#3D08BA]/5 ring-1 ring-[#3D08BA]/25'
+                      : 'border-gray-200 bg-gray-50'
+                  }`}
                 >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">

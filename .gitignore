@@ -30,4 +30,5 @@ backend/django/**/*.pyc
 backend/nestjs/node_modules/
 backend/nestjs/dist/
 backend/nestjs/.env
+backend/nestjs/.env.backup.*
 backend/django/.env

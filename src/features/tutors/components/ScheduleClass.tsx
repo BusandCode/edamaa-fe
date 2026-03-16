@@ -1,20 +1,32 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FaTimes } from 'react-icons/fa';
 import { toast } from 'react-toastify';
 
 interface ScheduleClassProps {
   isOpen: boolean;
   onClose: () => void;
-  onSchedule: (classData: NewClassData) => void;
+  onSchedule: (classData: NewClassData) => Promise<{ ok: boolean; message: string }>;
+  mode?: 'create' | 'edit';
+  initialClass?: NewClassData | null;
 }
 
 export interface NewClassData {
-  id: number;
+  id: string;
   title: string;
   date: string;
   time: string;
   students: number;
   avatars: number;
+  source?: 'independent' | 'assigned-school' | 'sample';
+  roomCode?: string;
+  subject?: string;
+  instructor?: string;
+  instructorImage?: string;
+  scheduleLabel?: string;
+  duration?: string;
+  notes?: string;
+  startAtIso?: string;
+  durationMinutes?: number;
 }
 
 interface ScheduleFormData {
@@ -25,16 +37,88 @@ interface ScheduleFormData {
   students: string;
 }
 
-const ScheduleClass = ({ isOpen, onClose, onSchedule }: ScheduleClassProps) => {
-  const [scheduleForm, setScheduleForm] = useState<ScheduleFormData>({
-    title: '',
-    date: '',
-    time: '',
-    duration: '60',
-    students: ''
-  });
+const emptyScheduleForm = (): ScheduleFormData => ({
+  title: '',
+  date: '',
+  time: '',
+  duration: '60',
+  students: '',
+});
 
-  const handleSubmit = (e: React.FormEvent) => {
+const toDateInputValue = (isoValue?: string) => {
+  if (!isoValue) {
+    return '';
+  }
+  const date = new Date(isoValue);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const toTimeInputValue = (isoValue?: string) => {
+  if (!isoValue) {
+    return '';
+  }
+  const date = new Date(isoValue);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+};
+
+const ScheduleClass = ({
+  isOpen,
+  onClose,
+  onSchedule,
+  mode = 'create',
+  initialClass = null,
+}: ScheduleClassProps) => {
+  const [scheduleForm, setScheduleForm] = useState<ScheduleFormData>({
+    ...emptyScheduleForm(),
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const calendarYearOptions = Array.from({ length: 41 }, (_, index) => new Date().getFullYear() - 20 + index);
+  const monthOptions = [
+    { value: '01', label: 'Jan' },
+    { value: '02', label: 'Feb' },
+    { value: '03', label: 'Mar' },
+    { value: '04', label: 'Apr' },
+    { value: '05', label: 'May' },
+    { value: '06', label: 'Jun' },
+    { value: '07', label: 'Jul' },
+    { value: '08', label: 'Aug' },
+    { value: '09', label: 'Sep' },
+    { value: '10', label: 'Oct' },
+    { value: '11', label: 'Nov' },
+    { value: '12', label: 'Dec' },
+  ];
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (mode === 'edit' && initialClass) {
+      setScheduleForm({
+        title: initialClass.title || '',
+        date: toDateInputValue(initialClass.startAtIso),
+        time: toTimeInputValue(initialClass.startAtIso),
+        duration: String(initialClass.durationMinutes || 60),
+        students: String(initialClass.students || 0),
+      });
+      return;
+    }
+
+    setScheduleForm(emptyScheduleForm());
+  }, [initialClass, isOpen, mode]);
+
+  const handleSubmit = async (e: React.FormEvent | React.MouseEvent) => {
     e.preventDefault();
     
     if (!scheduleForm.title || !scheduleForm.date || !scheduleForm.time) {
@@ -57,27 +141,39 @@ const ScheduleClass = ({ isOpen, onClose, onSchedule }: ScheduleClassProps) => {
     const displayHour = hour % 12 || 12;
     const formattedTime = `${displayHour}:${minutes}${ampm}`;
 
+    const startAtIso = new Date(`${scheduleForm.date}T${scheduleForm.time}:00`).toISOString();
+    const durationMinutes = Number.parseInt(scheduleForm.duration, 10) || 60;
+
     const newClass: NewClassData = {
-      id: Date.now(), // Using timestamp as unique ID
+      id: mode === 'edit' && initialClass?.id ? initialClass.id : String(Date.now()),
       title: scheduleForm.title,
       date: formattedDate,
       time: formattedTime,
       students: parseInt(scheduleForm.students) || 0,
-      avatars: 3
+      avatars: 3,
+      source: 'independent',
+      startAtIso,
+      durationMinutes,
     };
 
-    onSchedule(newClass);
-    toast.success('Class scheduled successfully!');
-    onClose();
-    
-    // Reset form
-    setScheduleForm({
-      title: '',
-      date: '',
-      time: '',
-      duration: '60',
-      students: ''
-    });
+    setIsSubmitting(true);
+    try {
+      const result = await onSchedule(newClass);
+      if (!result.ok) {
+        toast.error(result.message || 'Unable to schedule class right now.');
+        return;
+      }
+
+      toast.success(result.message || 'Class scheduled successfully!');
+      onClose();
+
+      // Reset form after successful submit only.
+      setScheduleForm(emptyScheduleForm());
+    } catch {
+      toast.error('Unable to schedule class right now. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -88,13 +184,44 @@ const ScheduleClass = ({ isOpen, onClose, onSchedule }: ScheduleClassProps) => {
     }));
   };
 
+  const handleDateYearChange = (yearText: string) => {
+    const selectedYear = Number.parseInt(yearText, 10);
+    if (!Number.isFinite(selectedYear)) {
+      return;
+    }
+
+    setScheduleForm((prev) => {
+      const current = prev.date || `${new Date().getFullYear()}-01-01`;
+      const [yearPart, monthPart, dayPart] = current.split('-');
+      if (!yearPart || !monthPart || !dayPart) {
+        return prev;
+      }
+      return { ...prev, date: `${selectedYear}-${monthPart}-${dayPart}` };
+    });
+  };
+
+  const handleDateMonthChange = (monthText: string) => {
+    const normalizedMonth = String(monthText || '').padStart(2, '0');
+    if (!normalizedMonth) {
+      return;
+    }
+
+    setScheduleForm((prev) => {
+      const base = prev.date || `${new Date().getFullYear()}-01-01`;
+      const [year = String(new Date().getFullYear()), , day = '01'] = base.split('-');
+      return { ...prev, date: `${year}-${normalizedMonth}-${day}` };
+    });
+  };
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 backdrop-blur-sm bg-white/30 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between rounded-t-2xl">
-          <h2 className="text-xl font-bold text-gray-800">Schedule New Class</h2>
+          <h2 className="text-xl font-bold text-gray-800">
+            {mode === 'edit' ? 'Edit Scheduled Class' : 'Schedule New Class'}
+          </h2>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600 transition-colors"
@@ -126,14 +253,44 @@ const ScheduleClass = ({ isOpen, onClose, onSchedule }: ScheduleClassProps) => {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Date <span className="text-red-500">*</span>
               </label>
-              <input
-                type="date"
-                name="date"
-                value={scheduleForm.date}
-                onChange={handleInputChange}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3D08BA] focus:border-transparent"
-                required
-              />
+              <div className="space-y-2">
+                <input
+                  type="date"
+                  name="date"
+                  value={scheduleForm.date}
+                  onChange={handleInputChange}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3D08BA] focus:border-transparent"
+                  required
+                />
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-semibold text-gray-500">Jump year:</label>
+                  <select
+                    value={scheduleForm.date ? scheduleForm.date.slice(0, 4) : ''}
+                    onChange={(event) => handleDateYearChange(event.target.value)}
+                    className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                  >
+                    <option value="">Select year</option>
+                    {calendarYearOptions.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                      ))}
+                    </select>
+                    <label className="text-xs font-semibold text-gray-500">Month:</label>
+                    <select
+                      value={scheduleForm.date ? scheduleForm.date.slice(5, 7) : ''}
+                      onChange={(event) => handleDateMonthChange(event.target.value)}
+                      className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                    >
+                      <option value="">Select month</option>
+                      {monthOptions.map((month) => (
+                        <option key={month.value} value={month.value}>
+                          {month.label}
+                        </option>
+                      ))}
+                    </select>
+                </div>
+              </div>
             </div>
 
             {/* Time */}
@@ -192,6 +349,7 @@ const ScheduleClass = ({ isOpen, onClose, onSchedule }: ScheduleClassProps) => {
             <button
               type="button"
               onClick={onClose}
+              disabled={isSubmitting}
               className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-50 transition-colors"
             >
               Cancel
@@ -199,9 +357,16 @@ const ScheduleClass = ({ isOpen, onClose, onSchedule }: ScheduleClassProps) => {
             <button
               type="button"
               onClick={handleSubmit}
-              className="flex-1 px-2 py-2 bg-[#3D08BA] text-white rounded-lg font-semibold hover:bg-[#2c0691] transition-colors"
+              disabled={isSubmitting}
+              className="flex-1 px-2 py-2 bg-[#3D08BA] text-white rounded-lg font-semibold hover:bg-[#2c0691] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Schedule Class
+              {isSubmitting
+                ? mode === 'edit'
+                  ? 'Saving changes...'
+                  : 'Scheduling...'
+                : mode === 'edit'
+                  ? 'Save Changes'
+                  : 'Schedule Class'}
             </button>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import NewLogo from '../../../components/common/NewLogo';
 import RecordClasses from "../../tutors/components/RecordClasses";
 import { useNavigate } from 'react-router-dom';
@@ -9,6 +9,7 @@ import {
   PlusIcon,
   Cog6ToothIcon,
   AcademicCapIcon,
+  CheckCircleIcon,
   HomeIcon,
   QuestionMarkCircleIcon,
   ArrowRightOnRectangleIcon,
@@ -26,8 +27,454 @@ import PerformanceStats from '../components/PerformanceStats';
 import Announcements from '../components/Announcements';
 import QuickAccessGrid from "../components/QuickAccess";
 import ProgressOverview from '../components/ProgressOverview';
-import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
+import {
+  loadStudentIdentity,
+  saveStudentIdentity,
+  type StudentIdentity,
+} from '../utils/studentIdentity';
 import { signOutEverywhere } from '../../../utils/signOut';
+import {
+  loadPersistedLocalDevAuthSession,
+  loadPersistedSupabaseAccessToken,
+} from '../../../utils/authSession';
+import {
+  fetchSchoolScheduleFeed,
+  fetchSchoolScheduleLiveAttendance,
+  type SchoolScheduleAttendanceRecord,
+} from '../../schools/utils/schoolScheduleApi';
+import {
+  archiveStudentExamNotification,
+  markStudentExamNotificationAsRead,
+} from '../../schools/utils/examsApi';
+
+type StudentSchoolInvoiceStatus =
+  | 'draft'
+  | 'pending'
+  | 'partially_paid'
+  | 'paid'
+  | 'overdue'
+  | 'canceled';
+
+type StudentSchoolInvoice = {
+  id: string;
+  title: string;
+  amount: number;
+  currency: string;
+  status: StudentSchoolInvoiceStatus;
+  dueDate: string | null;
+  schoolName?: string;
+};
+
+type StudentSchoolInvoicesResponse = {
+  invoices: StudentSchoolInvoice[];
+};
+
+type PaySchoolInvoiceResponse = {
+  mode: 'checkout' | 'settled';
+  checkoutUrl?: string | null;
+  message?: string;
+};
+
+type DashboardNotification = {
+  id: string;
+  title?: string;
+  message?: string;
+  time?: string;
+  isRead?: boolean;
+  createdAt?: string;
+  source?: 'seed' | 'schedule' | 'local' | 'exam';
+  examId?: string;
+  examDepartment?: string;
+  examClassGroup?: string;
+};
+
+const EXAM_NOTIFICATION_PREFIX = 'exam:';
+
+const isExamNotification = (notification: DashboardNotification) =>
+  notification.source === 'exam' &&
+  String(notification.id || '').startsWith(EXAM_NOTIFICATION_PREFIX) &&
+  Boolean(notification.examId && notification.examDepartment && notification.examClassGroup);
+
+const fromExamNotificationId = (notificationId: string) =>
+  String(notificationId || '').slice(EXAM_NOTIFICATION_PREFIX.length);
+
+const readDashboardNotifications = (): DashboardNotification[] => {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  const stored = window.localStorage.getItem('notifications');
+  if (!stored) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(stored) as unknown;
+    return Array.isArray(parsed) ? (parsed as DashboardNotification[]) : [];
+  } catch {
+    return [];
+  }
+};
+
+const writeDashboardNotifications = (notifications: DashboardNotification[]) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem('notifications', JSON.stringify(notifications));
+  window.dispatchEvent(new Event('notificationsUpdated'));
+};
+
+const STUDENT_API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
+
+const studentInvoiceStatusPill = (status: StudentSchoolInvoiceStatus) => {
+  switch (status) {
+    case 'overdue':
+      return 'bg-red-100 text-red-700';
+    case 'pending':
+      return 'bg-[#3D08BA]/10 text-[#3D08BA]';
+    case 'partially_paid':
+      return 'bg-amber-100 text-amber-700';
+    case 'paid':
+      return 'bg-emerald-100 text-emerald-700';
+    case 'canceled':
+      return 'bg-slate-100 text-slate-700';
+    case 'draft':
+    default:
+      return 'bg-gray-100 text-gray-700';
+  }
+};
+
+const extractStudentApiError = async (response: Response) => {
+  try {
+    const payload = (await response.json()) as { message?: string };
+    if (payload?.message && typeof payload.message === 'string') {
+      return payload.message;
+    }
+  } catch {
+    // Ignore JSON parse errors; we fall back to status text.
+  }
+
+  return response.statusText || `Request failed (${response.status})`;
+};
+
+type StudentAttendanceSnapshot = {
+  sessionId: string;
+  title: string;
+  subject: string;
+  instructor: string;
+  startAt: string;
+  status: 'present' | 'late' | 'pending' | 'absent';
+  checkedInAt: string | null;
+  durationMinutes: number | null;
+  attendanceRate: number;
+  audienceLabel: string;
+};
+
+const normalizeAttendanceName = (value: string) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
+const findStudentAttendanceRecord = (
+  records: SchoolScheduleAttendanceRecord[],
+  studentIdentity: StudentIdentity
+) => {
+  const participantId = `student-${studentIdentity.id}`;
+  const normalizedStudentName = normalizeAttendanceName(studentIdentity.name);
+
+  return (
+    records.find((record) => record.participantId === participantId) ||
+    records.find((record) => normalizeAttendanceName(record.participantName) === normalizedStudentName) ||
+    null
+  );
+};
+
+const formatAttendanceTime = (isoDate: string | null) => {
+  if (!isoDate) {
+    return 'Time pending';
+  }
+
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) {
+    return 'Time pending';
+  }
+
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+};
+
+const StudentAttendanceOverview = ({
+  studentIdentity,
+  onOpenClasses,
+}: {
+  studentIdentity: StudentIdentity;
+  onOpenClasses: () => void;
+}) => {
+  const [recentAttendance, setRecentAttendance] = useState<StudentAttendanceSnapshot[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    let active = true;
+
+    const loadAttendance = async () => {
+      setIsLoading(true);
+      try {
+        const payload = await fetchSchoolScheduleFeed({ status: 'all', limit: 10 });
+        if (!active) {
+          return;
+        }
+
+        const now = Date.now();
+        const recentSessions = (Array.isArray(payload.sessions) ? payload.sessions : [])
+          .map((session) => {
+            const startMs = new Date(session.startAt).getTime();
+            const endMs = startMs + session.durationMinutes * 60 * 1000;
+            const phase = now >= endMs ? 'completed' : now >= startMs ? 'live' : 'upcoming';
+            return { session, startMs, phase };
+          })
+          .filter((entry) => entry.phase !== 'upcoming')
+          .sort((left, right) => right.startMs - left.startMs)
+          .slice(0, 6);
+
+        const attendanceResults = await Promise.allSettled(
+          recentSessions.map(async ({ session, phase }) => ({
+            session,
+            phase,
+            attendance: await fetchSchoolScheduleLiveAttendance(session.id),
+          }))
+        );
+
+        if (!active) {
+          return;
+        }
+
+        const snapshots = attendanceResults
+          .flatMap((result) => {
+            if (result.status !== 'fulfilled') {
+              return [];
+            }
+
+            const { session, phase, attendance } = result.value;
+            const record = findStudentAttendanceRecord(attendance.records, studentIdentity);
+            const expectedStudents = attendance.summary.expectedStudents;
+            const checkedInCount = attendance.summary.checkedInCount;
+            const effectiveStatus = record?.status || (phase === 'completed' ? 'absent' : 'pending');
+
+            return [
+              {
+                sessionId: session.id,
+                title: session.title,
+                subject: session.subject,
+                instructor: session.instructor,
+                startAt: session.startAt,
+                status: effectiveStatus,
+                checkedInAt: record?.checkedInAt || null,
+                durationMinutes: record?.durationMinutes ?? null,
+                attendanceRate:
+                  expectedStudents > 0 ? Math.round((checkedInCount / expectedStudents) * 100) : 0,
+                audienceLabel:
+                  session.audienceTag ||
+                  [session.department, session.classGroup].filter(Boolean).join(' • ') ||
+                  'Class audience pending',
+              },
+            ];
+          })
+          .slice(0, 4);
+
+        setRecentAttendance(snapshots);
+        setNotice(
+          snapshots.length === 0
+            ? 'Attendance will appear here once your school starts taking attendance in live classes.'
+            : ''
+        );
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        const message =
+          error instanceof Error ? error.message : 'Could not load your attendance snapshot.';
+        setNotice(message);
+        setRecentAttendance([]);
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void loadAttendance();
+    return () => {
+      active = false;
+    };
+  }, [studentIdentity]);
+
+  const attendanceStats = useMemo(() => {
+    const completedSessions = recentAttendance.filter((item) => item.status !== 'pending');
+    const attendedCount = completedSessions.filter(
+      (item) => item.status === 'present' || item.status === 'late'
+    ).length;
+    const lateCount = completedSessions.filter((item) => item.status === 'late').length;
+    const absentCount = completedSessions.filter((item) => item.status === 'absent').length;
+    const pendingCount = recentAttendance.filter((item) => item.status === 'pending').length;
+    const attendanceRate =
+      completedSessions.length > 0 ? Math.round((attendedCount / completedSessions.length) * 100) : 0;
+
+    return {
+      attendanceRate,
+      attendedCount,
+      lateCount,
+      absentCount,
+      pendingCount,
+    };
+  }, [recentAttendance]);
+
+  const statusPill = (status: StudentAttendanceSnapshot['status']) => {
+    switch (status) {
+      case 'present':
+        return 'bg-emerald-100 text-emerald-700';
+      case 'late':
+        return 'bg-amber-100 text-amber-700';
+      case 'pending':
+        return 'bg-[#3D08BA]/10 text-[#3D08BA]';
+      case 'absent':
+      default:
+        return 'bg-rose-100 text-rose-700';
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="inline-flex items-center gap-2 rounded-full bg-[#3D08BA]/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">
+            <CheckCircleIcon className="h-4 w-4" />
+            Attendance snapshot
+          </div>
+          <h3 className="mt-3 text-base sm:text-lg font-semibold text-gray-900">
+            Your recent class attendance
+          </h3>
+          <p className="mt-1 text-xs sm:text-sm text-gray-500">
+            Present, late, and missed check-ins from your latest tracked live classes.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenClasses}
+          className="inline-flex items-center rounded-lg border border-[#3D08BA]/20 px-3 py-2 text-xs sm:text-sm font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5 transition-colors"
+        >
+          Open classes
+        </button>
+      </div>
+
+      {notice && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs sm:text-sm text-amber-700">
+          {notice}
+        </div>
+      )}
+
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Attendance rate
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">{attendanceStats.attendanceRate}%</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Present
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">{attendanceStats.attendedCount}</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Late
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">{attendanceStats.lateCount}</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Missed
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">
+            {attendanceStats.absentCount + attendanceStats.pendingCount}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {isLoading && (
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-4 text-xs sm:text-sm text-gray-500">
+            Loading attendance...
+          </div>
+        )}
+
+        {!isLoading && recentAttendance.length === 0 && !notice && (
+          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-xs sm:text-sm text-gray-500">
+            No tracked attendance sessions yet.
+          </div>
+        )}
+
+        {!isLoading &&
+          recentAttendance.map((item) => (
+            <div
+              key={item.sessionId}
+              className="rounded-xl border border-gray-200 px-3 py-3 sm:px-4 sm:py-4"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm sm:text-base font-semibold text-gray-900">{item.title}</p>
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] ${statusPill(
+                        item.status
+                      )}`}
+                    >
+                      {item.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs sm:text-sm text-gray-600">
+                    {item.subject} • {item.instructor}
+                  </p>
+                  <p className="mt-1 text-[11px] sm:text-xs text-gray-500">
+                    {formatAttendanceTime(item.startAt)} • {item.audienceLabel}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-bold text-gray-900">{item.attendanceRate}%</p>
+                  <p className="text-[10px] uppercase tracking-[0.12em] text-gray-400">class coverage</p>
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-2 text-[11px] sm:grid-cols-2">
+                <div className="rounded-lg bg-gray-50 px-3 py-2 text-gray-600">
+                  <span className="block uppercase tracking-[0.12em] text-gray-400">Checked in</span>
+                  <span className="mt-1 block font-semibold text-gray-900">
+                    {item.checkedInAt ? formatAttendanceTime(item.checkedInAt) : 'Not recorded'}
+                  </span>
+                </div>
+                <div className="rounded-lg bg-gray-50 px-3 py-2 text-gray-600">
+                  <span className="block uppercase tracking-[0.12em] text-gray-400">Time in class</span>
+                  <span className="mt-1 block font-semibold text-gray-900">
+                    {typeof item.durationMinutes === 'number' && Number.isFinite(item.durationMinutes)
+                      ? `${item.durationMinutes} min`
+                      : 'Still syncing'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+};
 
 const StudentDashboard = () => {
   const navigate = useNavigate();
@@ -41,9 +488,34 @@ const StudentDashboard = () => {
   const [description, setDescription] = useState(
     'I am here to learn, unlearn and relearn'
   );
+  const [schoolInvoices, setSchoolInvoices] = useState<StudentSchoolInvoice[]>([]);
+  const [isSchoolInvoicesLoading, setIsSchoolInvoicesLoading] = useState(false);
+  const [schoolInvoicesError, setSchoolInvoicesError] = useState<string | null>(null);
+  const [activeSchoolInvoiceId, setActiveSchoolInvoiceId] = useState('');
+  const [resultNotifications, setResultNotifications] = useState<DashboardNotification[]>([]);
+  const [activeResultNotificationId, setActiveResultNotificationId] = useState('');
+  const outstandingSchoolInvoices = useMemo(
+    () =>
+      schoolInvoices.filter(
+        (invoice) =>
+          invoice.status === 'pending' ||
+          invoice.status === 'overdue' ||
+          invoice.status === 'partially_paid'
+      ),
+    [schoolInvoices]
+  );
+  const dashboardStudentIdentity = useMemo(
+    () => ({ ...initialStudentIdentity, name }),
+    [initialStudentIdentity, name]
+  );
 
   // Use the notification count hook for real-time sync
   const notificationCount = useNotificationCount();
+
+  const unreadResultNotifications = useMemo(
+    () => resultNotifications.filter((notification) => !notification.isRead),
+    [resultNotifications]
+  );
 
   const handleProfileUpdate = (updatedProfile: {
     name: string;
@@ -74,6 +546,18 @@ const StudentDashboard = () => {
     navigate('/notifications');
   };
 
+  const syncResultNotifications = () => {
+    const notifications = readDashboardNotifications();
+    const examNotifications = notifications
+      .filter(isExamNotification)
+      .sort((left, right) => {
+        const leftTs = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+        const rightTs = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+        return rightTs - leftTs;
+      });
+    setResultNotifications(examNotifications);
+  };
+
   const handleAssignmentsClick = () => {
     navigate('/assignments');
   };
@@ -88,10 +572,180 @@ const StudentDashboard = () => {
   const handleResourcesClick = () => {
     navigate('/resources');
   };
+  const handleExamsClick = () => {
+    navigate('/student-exams');
+  };
 
   const handleLogout = async () => {
     await signOutEverywhere();
     navigate('/signin', { replace: true });
+  };
+
+  const requestWithStudentAuth = async (path: string, init: RequestInit = {}) => {
+    const token = loadPersistedSupabaseAccessToken();
+    const localDevSession = loadPersistedLocalDevAuthSession();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(init.headers as Record<string, string>),
+    };
+
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    } else if (localDevSession?.email) {
+      headers['x-dev-user-email'] = localDevSession.email;
+      headers['x-dev-user-role'] = localDevSession.role || 'student';
+    } else {
+      throw new Error('Please sign in to continue.');
+    }
+
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    let response: Response;
+    try {
+      response = await fetch(`${STUDENT_API_BASE_URL}${normalizedPath}`, {
+        ...init,
+        headers,
+      });
+    } catch (error) {
+      const fallbackMessage =
+        error instanceof Error && error.message.trim() ? error.message : 'Failed to fetch';
+      throw new Error(
+        `${fallbackMessage}. Could not reach the backend API. Start the API with "bash scripts/api-up.sh", then retry.`
+      );
+    }
+
+    if (!response.ok) {
+      throw new Error(await extractStudentApiError(response));
+    }
+
+    return response;
+  };
+
+  const loadSchoolInvoices = async () => {
+    const token = loadPersistedSupabaseAccessToken();
+    const localDevSession = loadPersistedLocalDevAuthSession();
+    if (!token && !localDevSession?.email) {
+      setSchoolInvoices([]);
+      return;
+    }
+
+    setIsSchoolInvoicesLoading(true);
+    setSchoolInvoicesError(null);
+    try {
+      const response = await requestWithStudentAuth('/school-finance/invoices/me');
+      const payload = (await response.json()) as StudentSchoolInvoicesResponse;
+      if (Array.isArray(payload.invoices)) {
+        setSchoolInvoices(payload.invoices);
+      } else {
+        setSchoolInvoices([]);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not load school invoices right now.';
+      setSchoolInvoicesError(message);
+      setSchoolInvoices([]);
+    } finally {
+      setIsSchoolInvoicesLoading(false);
+    }
+  };
+
+  const handlePaySchoolInvoiceFromDashboard = async (invoiceId: string) => {
+    if (activeSchoolInvoiceId) {
+      return;
+    }
+
+    setActiveSchoolInvoiceId(invoiceId);
+    try {
+      const response = await requestWithStudentAuth(
+        `/school-finance/invoices/${encodeURIComponent(invoiceId)}/pay`,
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+        }
+      );
+      const payload = (await response.json()) as PaySchoolInvoiceResponse;
+      if (payload.mode === 'checkout' && payload.checkoutUrl) {
+        window.location.assign(payload.checkoutUrl);
+        return;
+      }
+
+      if (payload.message) {
+        window.alert(payload.message);
+      }
+
+      await loadSchoolInvoices();
+      navigate('/payments?view=school-fees');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not process school invoice payment.';
+      window.alert(message);
+    } finally {
+      setActiveSchoolInvoiceId('');
+    }
+  };
+
+  useEffect(() => {
+    void loadSchoolInvoices();
+  }, []);
+
+  useEffect(() => {
+    syncResultNotifications();
+
+    const handleNotificationsUpdated = () => {
+      syncResultNotifications();
+    };
+
+    window.addEventListener('notificationsUpdated', handleNotificationsUpdated);
+    window.addEventListener('storage', handleNotificationsUpdated);
+    return () => {
+      window.removeEventListener('notificationsUpdated', handleNotificationsUpdated);
+      window.removeEventListener('storage', handleNotificationsUpdated);
+    };
+  }, []);
+
+  const openPublishedResult = async (notification: DashboardNotification) => {
+    if (!isExamNotification(notification)) {
+      return;
+    }
+
+    setActiveResultNotificationId(notification.id);
+    const nextNotifications = readDashboardNotifications().map((item) =>
+      item.id === notification.id ? { ...item, isRead: true } : item
+    );
+    writeDashboardNotifications(nextNotifications);
+
+    try {
+      await markStudentExamNotificationAsRead(fromExamNotificationId(notification.id));
+    } catch {
+      // Keep optimistic local read state to avoid blocking result access.
+    } finally {
+      setActiveResultNotificationId('');
+    }
+
+    const params = new URLSearchParams({
+      examId: notification.examId || '',
+      department: notification.examDepartment || '',
+      classGroup: notification.examClassGroup || '',
+      view: 'result',
+    });
+    navigate(`/student-exams?${params.toString()}`);
+  };
+
+  const dismissPublishedResult = async (notification: DashboardNotification) => {
+    if (!isExamNotification(notification)) {
+      return;
+    }
+
+    setActiveResultNotificationId(notification.id);
+    const nextNotifications = readDashboardNotifications().filter((item) => item.id !== notification.id);
+    writeDashboardNotifications(nextNotifications);
+
+    try {
+      await archiveStudentExamNotification(fromExamNotificationId(notification.id));
+    } catch {
+      // Keep local dismissal to avoid a disruptive UX.
+    } finally {
+      setActiveResultNotificationId('');
+    }
   };
 
   // Menu items configuration
@@ -289,6 +943,82 @@ const StudentDashboard = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
           {/* LEFT COLUMN - Main Content */}
           <div className="lg:col-span-2 space-y-4 sm:space-y-6">
+            {unreadResultNotifications.length > 0 && (
+              <div className="bg-[linear-gradient(135deg,_rgba(61,8,186,0.08),_rgba(255,255,255,0.98))] rounded-xl sm:rounded-2xl border border-[#3D08BA]/15 shadow-sm p-4 sm:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">
+                      <CheckCircleIcon className="h-4 w-4" />
+                      Result release
+                    </div>
+                    <h2 className="mt-3 text-lg sm:text-xl font-bold text-gray-900">
+                      New published result{unreadResultNotifications.length === 1 ? '' : 's'} ready
+                    </h2>
+                    <p className="mt-1 text-xs sm:text-sm text-gray-600">
+                      Your school has released exam result{unreadResultNotifications.length === 1 ? '' : 's'}. Open them directly from here.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleNotificationClick}
+                    className="inline-flex items-center rounded-lg border border-[#3D08BA]/20 bg-white px-3 py-2 text-xs sm:text-sm font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5 transition-colors"
+                  >
+                    View all notifications
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {unreadResultNotifications.slice(0, 2).map((notification) => (
+                    <div
+                      key={notification.id}
+                      className="rounded-xl border border-white/80 bg-white/90 px-4 py-4 shadow-sm"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm sm:text-base font-semibold text-gray-900">
+                            {notification.title || 'Published result available'}
+                          </p>
+                          <p className="mt-1 text-xs sm:text-sm text-gray-600 leading-5">
+                            {notification.message}
+                          </p>
+                          <p className="mt-2 text-[11px] text-gray-500">
+                            {notification.time || 'Recently'}
+                          </p>
+                        </div>
+                        <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                          Published
+                        </span>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void openPublishedResult(notification)}
+                          disabled={activeResultNotificationId === notification.id}
+                          className="inline-flex items-center rounded-lg bg-[#3D08BA] px-3 py-2 text-xs sm:text-sm font-semibold text-white hover:bg-[#2e06a1] disabled:opacity-60"
+                        >
+                          {activeResultNotificationId === notification.id ? 'Opening...' : 'Open result'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void dismissPublishedResult(notification)}
+                          disabled={activeResultNotificationId === notification.id}
+                          className="inline-flex items-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs sm:text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <StudentAttendanceOverview
+              studentIdentity={dashboardStudentIdentity}
+              onOpenClasses={handleJoinClassClick}
+            />
+
             {/* Performance Stats */}
             <PerformanceStats />
 
@@ -301,7 +1031,102 @@ const StudentDashboard = () => {
               onPerformanceClick={handlePerformanceClick}
               onJoinClass={handleJoinClassClick}
               onResourceClick={handleResourcesClick}
+              onExamsClick={handleExamsClick}
             />
+
+            <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-6">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-base sm:text-lg font-semibold text-gray-900">
+                    School Fee Invoices
+                  </h3>
+                  <p className="text-xs sm:text-sm text-gray-500">
+                    Pay assigned school invoices quickly from your dashboard.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSchoolFeesClick}
+                  className="inline-flex items-center rounded-lg border border-[#3D08BA]/20 px-3 py-2 text-xs sm:text-sm font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5 transition-colors"
+                >
+                  Open all
+                </button>
+              </div>
+
+              {isSchoolInvoicesLoading && (
+                <p className="mt-4 text-xs sm:text-sm text-gray-500">Loading your school invoices...</p>
+              )}
+
+              {!isSchoolInvoicesLoading && schoolInvoicesError && (
+                <div className="mt-4 rounded-xl border border-red-100 bg-red-50 px-3 py-3 text-xs sm:text-sm text-red-700">
+                  <p>{schoolInvoicesError}</p>
+                  <button
+                    type="button"
+                    onClick={() => void loadSchoolInvoices()}
+                    className="mt-2 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {!isSchoolInvoicesLoading && !schoolInvoicesError && outstandingSchoolInvoices.length === 0 && (
+                <p className="mt-4 text-xs sm:text-sm text-gray-500">
+                  No outstanding school invoices right now.
+                </p>
+              )}
+
+              {!isSchoolInvoicesLoading && !schoolInvoicesError && outstandingSchoolInvoices.length > 0 && (
+                <div className="mt-4 space-y-3">
+                  {outstandingSchoolInvoices.slice(0, 4).map((invoice) => (
+                    <div
+                      key={invoice.id}
+                      className="rounded-xl border border-gray-200 px-3 py-3 sm:px-4 sm:py-4"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm sm:text-base font-semibold text-gray-900 truncate">
+                            {invoice.title}
+                          </p>
+                          <p className="mt-0.5 text-xs sm:text-sm text-gray-500">
+                            {(invoice.schoolName || 'School')} • ₦{invoice.amount.toLocaleString()}
+                          </p>
+                          {invoice.dueDate && (
+                            <p className="mt-1 text-[11px] sm:text-xs text-gray-500">
+                              Due {new Date(invoice.dueDate).toLocaleDateString()}
+                            </p>
+                          )}
+                        </div>
+                        <span
+                          className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] sm:text-xs font-semibold capitalize ${studentInvoiceStatusPill(
+                            invoice.status
+                          )}`}
+                        >
+                          {invoice.status.replace('_', ' ')}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handlePaySchoolInvoiceFromDashboard(invoice.id)}
+                          disabled={activeSchoolInvoiceId === invoice.id}
+                          className="inline-flex items-center rounded-lg bg-[#3D08BA] px-3 py-2 text-xs sm:text-sm font-semibold text-white hover:bg-[#2e06a1] disabled:opacity-60"
+                        >
+                          {activeSchoolInvoiceId === invoice.id ? 'Processing...' : 'Pay now'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/payments?view=school-fees&invoice=${encodeURIComponent(invoice.id)}`)}
+                          className="inline-flex items-center rounded-lg border border-gray-200 px-3 py-2 text-xs sm:text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                        >
+                          View details
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Upcoming Classes */}
             <UpcomingClasses />

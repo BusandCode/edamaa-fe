@@ -1,4 +1,4 @@
-.PHONY: help up down local-up local-down web-up web-down nest-install nest-start prisma-generate prisma-push django-install django-migrate bootstrap check-boundaries smoke-internal-bridge
+.PHONY: help up down local-up local-down api-up web-up web-down nest-install nest-start prisma-generate prisma-push django-install django-migrate bootstrap check-boundaries smoke-internal-bridge
 
 DATABASE_URL ?= postgresql://postgres:password@localhost:5432/edamaa
 DIRECT_URL ?= $(DATABASE_URL)
@@ -7,7 +7,7 @@ DJANGO_INTERNAL_API_URL ?= http://localhost:8000/admin-api
 INTERNAL_API_TOKEN ?=
 
 help:
-	@echo "Make targets: up down local-up local-down web-up web-down nest-install nest-start prisma-generate prisma-push django-install django-migrate bootstrap check-boundaries smoke-internal-bridge"
+	@echo "Make targets: up down local-up local-down api-up web-up web-down nest-install nest-start prisma-generate prisma-push django-install django-migrate bootstrap check-boundaries smoke-internal-bridge"
 	@echo "Vars: DATABASE_URL, DIRECT_URL, REDIS_URL, DJANGO_INTERNAL_API_URL, INTERNAL_API_TOKEN"
 
 up:
@@ -21,6 +21,9 @@ local-up:
 
 local-down:
 	bash scripts/local-down.sh
+
+api-up:
+	bash scripts/api-up.sh
 
 web-up:
 	bash scripts/web-up.sh

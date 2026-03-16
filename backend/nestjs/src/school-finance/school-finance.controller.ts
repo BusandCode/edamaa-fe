@@ -15,6 +15,7 @@ type CreateInvoiceBody = {
   title?: string;
   description?: string;
   amount?: number;
+  studentUserId?: string;
   studentEmail?: string;
   studentName?: string;
   dueDate?: string | null;
@@ -27,6 +28,20 @@ type PayInvoiceBody = {
 
 type SyncInvoiceCheckoutBody = {
   checkoutSessionId?: string;
+};
+
+type RequeueFailedReminderEmailsBody = {
+  limit?: number;
+};
+
+type RequeueExhaustedReminderEmailsBody = {
+  limit?: number;
+  confirm?: string;
+};
+
+type RecordReminderExportAuditBody = {
+  format?: string;
+  filters?: Record<string, unknown>;
 };
 
 type UpdateWithdrawalStatusBody = {
@@ -66,6 +81,82 @@ export class SchoolFinanceController {
     });
   }
 
+  @Get('me/reminders/dispatches')
+  listMyReminderDispatches(
+    @Req() request: Request,
+    @Query('type') reminderType?: string,
+    @Query('channel') channel?: string,
+    @Query('status') status?: string,
+    @Query('limit') limit?: string,
+    @Query('page') page?: string
+  ) {
+    return this.schoolFinanceService.listReminderDispatchesForAuthUser(this.getAuthUser(request), {
+      reminderType,
+      channel,
+      status,
+      limit: typeof limit === 'string' && limit.trim() ? Number(limit) : undefined,
+      page: typeof page === 'string' && page.trim() ? Number(page) : undefined,
+    });
+  }
+
+  @Get('me/reminders/health')
+  getMyReminderHealth(@Req() request: Request, @Query('days') days?: string) {
+    return this.schoolFinanceService.getReminderDeliveryHealthForAuthUser(
+      this.getAuthUser(request),
+      {
+        days: typeof days === 'string' && days.trim() ? Number(days) : undefined,
+      }
+    );
+  }
+
+  @Post('me/reminders/exports/audit')
+  recordMyReminderExportAudit(@Req() request: Request, @Body() body: RecordReminderExportAuditBody) {
+    return this.schoolFinanceService.recordReminderExportAuditForAuthUser(
+      this.getAuthUser(request),
+      {
+        format: body.format,
+        filters: body.filters,
+      }
+    );
+  }
+
+  @Post('me/reminders/run')
+  runMyReminderSweep(@Req() request: Request) {
+    return this.schoolFinanceService.runReminderSweepForAuthUser(this.getAuthUser(request));
+  }
+
+  @Post('me/reminders/email-drain')
+  drainMyReminderEmails(@Req() request: Request) {
+    return this.schoolFinanceService.processQueuedReminderEmailsForAuthUser(
+      this.getAuthUser(request)
+    );
+  }
+
+  @Post('me/reminders/requeue-failed')
+  requeueFailedReminderEmails(
+    @Req() request: Request,
+    @Body() body: RequeueFailedReminderEmailsBody
+  ) {
+    return this.schoolFinanceService.requeueFailedReminderEmailsForAuthUser(
+      this.getAuthUser(request),
+      { limit: body.limit }
+    );
+  }
+
+  @Post('me/reminders/requeue-exhausted')
+  requeueExhaustedReminderEmails(
+    @Req() request: Request,
+    @Body() body: RequeueExhaustedReminderEmailsBody
+  ) {
+    return this.schoolFinanceService.requeueExhaustedReminderEmailsForAuthUser(
+      this.getAuthUser(request),
+      {
+        limit: body.limit,
+        confirm: body.confirm,
+      }
+    );
+  }
+
   @Post('me/invoices')
   createInvoice(@Req() request: Request, @Body() body: CreateInvoiceBody) {
     return this.schoolFinanceService.createInvoiceForAuthUser(this.getAuthUser(request), {
@@ -73,15 +164,46 @@ export class SchoolFinanceController {
       title: body.title,
       description: body.description,
       amount: body.amount,
+      studentUserId: body.studentUserId,
       studentEmail: body.studentEmail,
       studentName: body.studentName,
       dueDate: body.dueDate,
     });
   }
 
+  @Get('me/students')
+  listSchoolStudents(@Req() request: Request) {
+    return this.schoolFinanceService.listSchoolStudentsForAuthUser(this.getAuthUser(request));
+  }
+
   @Get('invoices/me')
   listMyStudentInvoices(@Req() request: Request) {
     return this.schoolFinanceService.listStudentInvoicesForAuthUser(this.getAuthUser(request));
+  }
+
+  @Get('invoices/me/notifications')
+  listMyStudentInvoiceNotifications(@Req() request: Request) {
+    return this.schoolFinanceService.listStudentInvoiceNotificationsForAuthUser(
+      this.getAuthUser(request)
+    );
+  }
+
+  @Post('invoices/me/notifications/:notificationId/read')
+  markMyStudentInvoiceNotificationAsRead(
+    @Req() request: Request,
+    @Param('notificationId') notificationId: string
+  ) {
+    return this.schoolFinanceService.markStudentInvoiceNotificationAsReadForAuthUser(
+      this.getAuthUser(request),
+      notificationId
+    );
+  }
+
+  @Post('invoices/me/notifications/read-all')
+  markAllMyStudentInvoiceNotificationsAsRead(@Req() request: Request) {
+    return this.schoolFinanceService.markAllStudentInvoiceNotificationsAsReadForAuthUser(
+      this.getAuthUser(request)
+    );
   }
 
   @Post('invoices/:invoiceId/pay')
@@ -113,8 +235,15 @@ export class SchoolFinanceController {
   }
 
   @Get('me/withdrawals')
-  listWithdrawals(@Req() request: Request) {
-    return this.schoolFinanceService.listWithdrawalsForAuthUser(this.getAuthUser(request));
+  listWithdrawals(
+    @Req() request: Request,
+    @Query('status') status?: string,
+    @Query('limit') limit?: string
+  ) {
+    return this.schoolFinanceService.listWithdrawalsForAuthUser(this.getAuthUser(request), {
+      status,
+      limit: typeof limit === 'string' && limit.trim() ? Number(limit) : undefined,
+    });
   }
 
   @Post('me/withdrawals')

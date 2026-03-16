@@ -4,7 +4,13 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "bash scripts/dev.sh",
+    "dev:ui": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "api:up": "bash scripts/api-up.sh",
+    "web:up": "bash scripts/web-up.sh",
+    "local:up": "bash scripts/api-up.sh && bash scripts/web-up.sh",
+    "local:down": "bash scripts/web-down.sh && bash scripts/local-down.sh",
+    "reset:auth": "bash scripts/reset-local-auth-db.sh",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"

@@ -1,6 +1,7 @@
 import {
   BookOpenIcon,
   ClipboardDocumentListIcon,
+  AcademicCapIcon,
   VideoCameraIcon,
   ChartBarIcon,
   DocumentTextIcon,
@@ -23,6 +24,7 @@ interface QuickAccessGridProps {
   onResourceClick: () => void;
   onPaymentsClick: () => void;
   onSchoolFeesClick: () => void;
+  onExamsClick: () => void;
 }
 
 const QuickAccessGrid = ({
@@ -32,7 +34,8 @@ const QuickAccessGrid = ({
   onJoinClass,
   onResourceClick,
   onPaymentsClick,
-  onSchoolFeesClick
+  onSchoolFeesClick,
+  onExamsClick
 }: QuickAccessGridProps) => {
   const quickAccessItems: QuickAccessItem[] = [
     {
@@ -60,6 +63,11 @@ const QuickAccessGrid = ({
       label: 'Resources',
       icon: DocumentTextIcon,
       onClick: onResourceClick,
+    },
+    {
+      label: 'Exams',
+      icon: AcademicCapIcon,
+      onClick: onExamsClick,
     },
     {
       label: 'Payments',

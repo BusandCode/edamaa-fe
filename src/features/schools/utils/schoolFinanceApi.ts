@@ -40,6 +40,7 @@ export type SchoolFinanceDashboard = {
     id: string;
     title: string;
     description: string | null;
+    studentUserId: string | null;
     studentEmail: string;
     studentName: string | null;
     amount: number;
@@ -76,6 +77,13 @@ export type SchoolFinanceDashboard = {
   }>;
 };
 
+export type SchoolFinanceStudent = {
+  id: string | null;
+  email: string;
+  name: string | null;
+  role: string | null;
+};
+
 export type SchoolInvoiceCheckoutStatus = {
   checkoutSessionId: string;
   paymentStatus: string;
@@ -95,6 +103,103 @@ export type SchoolPayoutLedgerEntry = {
   currency: string;
   note: string | null;
   createdAt: string;
+};
+
+export type SchoolWithdrawalsResponse = {
+  payouts: SchoolFinanceDashboard['recentPayouts'];
+  wallet: SchoolFinanceDashboard['wallet'];
+};
+
+export type SchoolFeeReminderDispatch = {
+  id: string;
+  invoiceId: string;
+  invoiceTitle: string;
+  studentEmail: string;
+  reminderType: 'due_soon' | 'overdue';
+  channel: 'in_app' | 'email';
+  status: 'queued' | 'sent' | 'failed' | 'skipped';
+  attemptCount: number;
+  nextRetryAt: string | null;
+  lastError: string | null;
+  reminderDate: string;
+  sentAt: string | null;
+  failureReason: string | null;
+  createdAt: string;
+};
+
+export type SchoolFeeReminderDispatchesResponse = {
+  generatedAt: string;
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  hasMore: boolean;
+  dispatches: SchoolFeeReminderDispatch[];
+};
+
+export type SchoolFeeReminderSweepResponse = {
+  generatedAt: string;
+  accountId: number | null;
+  scannedInvoices: number;
+  dueSoonInApp: number;
+  dueSoonEmail: number;
+  overdueInApp: number;
+  overdueEmail: number;
+  emailDispatchEnabled: boolean;
+  emailProvider?: 'resend' | 'log' | 'disabled';
+  emailAttempted?: number;
+  emailSent?: number;
+  emailFailed?: number;
+  emailSkipped?: number;
+  emailQueuedForRetry?: number;
+  emailExhausted?: number;
+  skipped?: boolean;
+};
+
+export type SchoolFeeReminderRequeueResponse = {
+  generatedAt: string;
+  accountId: number | null;
+  selected: number;
+  requeued: number;
+  maxRetries: number;
+};
+
+export type SchoolFeeReminderEmailDrainResponse = {
+  provider: 'resend' | 'log' | 'disabled';
+  attempted: number;
+  sent: number;
+  failed: number;
+  skipped: number;
+  queuedForRetry: number;
+  exhausted: number;
+};
+
+export type SchoolFeeReminderDeliveryHealthResponse = {
+  generatedAt: string;
+  accountId: number | null;
+  windowDays: number;
+  windowStart: string;
+  email: {
+    queued: number;
+    sent: number;
+    failed: number;
+    skipped: number;
+    retryableFailed: number;
+    exhausted: number;
+    attempted: number;
+    successRate: number;
+    failureRate: number;
+    retryRate: number;
+    exhaustedRate: number;
+  };
+};
+
+export type SchoolFeeReminderExportAuditResponse = {
+  auditId: string;
+  generatedAt: string;
+  accountId: number | null;
+  format: 'csv' | 'pdf';
+  filters: Record<string, unknown>;
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
@@ -120,6 +225,305 @@ const resolveApiBaseCandidates = () => {
   candidates.add('http://localhost:3001');
   return Array.from(candidates).map((base) => base.replace(/\/+$/, ''));
 };
+
+type LocalFinanceWorkspace = {
+  dashboard: SchoolFinanceDashboard;
+  payoutLedgers: Record<string, SchoolPayoutLedgerEntry[]>;
+  reminderDispatches: SchoolFeeReminderDispatch[];
+};
+
+const LOCAL_FINANCE_STORAGE_KEY = 'edamaa_school_finance_local_v1';
+const LOCAL_REMINDER_EXPORT_AUDIT_STORAGE_KEY = 'edamaa_school_reminder_export_audit_v1';
+
+const createLocalId = (prefix: string) =>
+  `${prefix}_LOCAL_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+const nowIso = () => new Date().toISOString();
+
+const normalizeReminderType = (value: unknown): SchoolFeeReminderDispatch['reminderType'] => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'overdue' ? 'overdue' : 'due_soon';
+};
+
+const normalizeReminderChannel = (value: unknown): SchoolFeeReminderDispatch['channel'] => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'email' ? 'email' : 'in_app';
+};
+
+const normalizeReminderStatus = (value: unknown): SchoolFeeReminderDispatch['status'] => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'sent') {
+    return 'sent';
+  }
+  if (normalized === 'failed') {
+    return 'failed';
+  }
+  if (normalized === 'skipped') {
+    return 'skipped';
+  }
+  return 'queued';
+};
+
+const normalizeLocalReminderDispatch = (value: unknown): SchoolFeeReminderDispatch => {
+  const record = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+
+  // Keep older locally-cached reminder objects readable after we introduced retry fields.
+  const rawAttemptCount = Number(record.attemptCount);
+  const attemptCount =
+    Number.isFinite(rawAttemptCount) && rawAttemptCount > 0
+      ? Math.round(rawAttemptCount)
+      : 0;
+
+  return {
+    id: String(record.id || createLocalId('RMD')),
+    invoiceId: String(record.invoiceId || ''),
+    invoiceTitle: String(record.invoiceTitle || 'Invoice'),
+    studentEmail: String(record.studentEmail || ''),
+    reminderType: normalizeReminderType(record.reminderType),
+    channel: normalizeReminderChannel(record.channel),
+    status: normalizeReminderStatus(record.status),
+    attemptCount,
+    nextRetryAt: record.nextRetryAt ? String(record.nextRetryAt) : null,
+    lastError: record.lastError ? String(record.lastError) : null,
+    reminderDate: String(record.reminderDate || nowIso()),
+    sentAt: record.sentAt ? String(record.sentAt) : null,
+    failureReason: record.failureReason ? String(record.failureReason) : null,
+    createdAt: String(record.createdAt || nowIso()),
+  };
+};
+
+const extractEmailFromToken = (token?: string | null) => {
+  const normalizedToken = String(token || '').trim();
+  if (!normalizedToken) {
+    return '';
+  }
+
+  const parts = normalizedToken.split('.');
+  if (parts.length !== 3) {
+    return '';
+  }
+
+  try {
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'))) as {
+      email?: string;
+    };
+    return String(payload.email || '').trim().toLowerCase();
+  } catch {
+    return '';
+  }
+};
+
+const resolveSchoolEmailForLocalFallback = () => {
+  const localSession = loadPersistedLocalDevAuthSession();
+  const localEmail = String(localSession?.email || '').trim().toLowerCase();
+  if (localEmail) {
+    return localEmail;
+  }
+
+  const tokenEmail = extractEmailFromToken(loadPersistedSupabaseAccessToken());
+  if (tokenEmail) {
+    return tokenEmail;
+  }
+
+  return 'school@edamaa.local';
+};
+
+const buildEmptyLocalDashboard = (email: string): SchoolFinanceDashboard => {
+  const normalizedEmail = String(email || 'school@edamaa.local').trim().toLowerCase();
+  const nameSeed = normalizedEmail.split('@')[0] || 'School';
+  const schoolName = `${nameSeed.charAt(0).toUpperCase()}${nameSeed.slice(1)} School`;
+
+  return {
+    generatedAt: nowIso(),
+    school: {
+      financeAccountId: `LOCAL_${nameSeed.replace(/[^a-z0-9]/gi, '').slice(0, 16) || 'SCHOOL'}`,
+      name: schoolName,
+      email: normalizedEmail,
+      currency: 'NGN',
+    },
+    wallet: {
+      available: 0,
+      pending: 0,
+      onHold: 0,
+      lifetimeGross: 0,
+      lifetimeNet: 0,
+      totalWithdrawn: 0,
+    },
+    overview: {
+      totalInvoices: 0,
+      outstandingAmount: 0,
+      paidInvoices: 0,
+      pendingInvoices: 0,
+      overdueInvoices: 0,
+    },
+    feePlans: [],
+    recentInvoices: [],
+    recentPayments: [],
+    recentPayouts: [],
+  };
+};
+
+const readLocalFinanceStore = (): Record<string, LocalFinanceWorkspace> => {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(LOCAL_FINANCE_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as Record<string, LocalFinanceWorkspace>;
+    if (!parsed || typeof parsed !== 'object') {
+      return {};
+    }
+    return parsed;
+  } catch {
+    return {};
+  }
+};
+
+const writeLocalFinanceStore = (store: Record<string, LocalFinanceWorkspace>) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(LOCAL_FINANCE_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // Ignore storage write errors in private mode or restricted environments.
+  }
+};
+
+const getLocalFinanceWorkspace = (email: string): LocalFinanceWorkspace => {
+  const normalizedEmail = String(email || '').trim().toLowerCase() || 'school@edamaa.local';
+  const store = readLocalFinanceStore();
+  const existing = store[normalizedEmail];
+  if (existing?.dashboard) {
+    const normalizedExisting: LocalFinanceWorkspace = {
+      dashboard: existing.dashboard,
+      payoutLedgers: existing.payoutLedgers || {},
+      reminderDispatches: Array.isArray((existing as LocalFinanceWorkspace).reminderDispatches)
+        ? (existing as LocalFinanceWorkspace).reminderDispatches.map((dispatch) =>
+            normalizeLocalReminderDispatch(dispatch)
+          )
+        : [],
+    };
+    store[normalizedEmail] = normalizedExisting;
+    writeLocalFinanceStore(store);
+    return normalizedExisting;
+  }
+
+  const created: LocalFinanceWorkspace = {
+    dashboard: buildEmptyLocalDashboard(normalizedEmail),
+    payoutLedgers: {},
+    reminderDispatches: [],
+  };
+  store[normalizedEmail] = created;
+  writeLocalFinanceStore(store);
+  return created;
+};
+
+const saveLocalFinanceWorkspace = (email: string, workspace: LocalFinanceWorkspace) => {
+  const normalizedEmail = String(email || '').trim().toLowerCase() || 'school@edamaa.local';
+  const store = readLocalFinanceStore();
+  store[normalizedEmail] = workspace;
+  writeLocalFinanceStore(store);
+};
+
+const hasLocalFinanceActivity = (workspace?: LocalFinanceWorkspace | null) => {
+  if (!workspace?.dashboard) {
+    return false;
+  }
+
+  const dashboard = workspace.dashboard;
+  return (
+    dashboard.feePlans.length > 0 ||
+    dashboard.recentInvoices.length > 0 ||
+    dashboard.recentPayments.length > 0 ||
+    dashboard.recentPayouts.length > 0 ||
+    dashboard.wallet.available > 0 ||
+    dashboard.wallet.pending > 0 ||
+    dashboard.wallet.onHold > 0 ||
+    dashboard.wallet.lifetimeGross > 0 ||
+    dashboard.wallet.lifetimeNet > 0 ||
+    dashboard.wallet.totalWithdrawn > 0 ||
+    (workspace.reminderDispatches || []).length > 0
+  );
+};
+
+const findLocalFinanceWorkspaceForEmail = (email: string) => {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const fallbackEmail = resolveSchoolEmailForLocalFallback();
+  const store = readLocalFinanceStore();
+
+  const exactMatch = normalizedEmail ? store[normalizedEmail] : undefined;
+  if (hasLocalFinanceActivity(exactMatch)) {
+    return { email: normalizedEmail, workspace: exactMatch as LocalFinanceWorkspace };
+  }
+
+  const fallbackMatch = fallbackEmail ? store[fallbackEmail] : undefined;
+  if (hasLocalFinanceActivity(fallbackMatch)) {
+    return { email: fallbackEmail, workspace: fallbackMatch as LocalFinanceWorkspace };
+  }
+
+  return null;
+};
+
+const shouldPreferLocalDashboard = (dashboard: SchoolFinanceDashboard | null | undefined) => {
+  const financeAccountId = String(dashboard?.school?.financeAccountId || '')
+    .trim()
+    .toUpperCase();
+
+  return financeAccountId === 'SFA-PENDING-SETUP';
+};
+
+const refreshDashboardOverview = (dashboard: SchoolFinanceDashboard) => {
+  const totalInvoices = dashboard.recentInvoices.length;
+  const paidInvoices = dashboard.recentInvoices.filter((invoice) => invoice.status === 'paid').length;
+  const pendingInvoices = dashboard.recentInvoices.filter((invoice) => invoice.status === 'pending').length;
+  const overdueInvoices = dashboard.recentInvoices.filter((invoice) => invoice.status === 'overdue').length;
+  const outstandingAmount = dashboard.recentInvoices
+    .filter(
+      (invoice) =>
+        invoice.status === 'pending' ||
+        invoice.status === 'overdue' ||
+        invoice.status === 'partially_paid'
+    )
+    .reduce((sum, invoice) => sum + invoice.amount, 0);
+
+  dashboard.overview = {
+    totalInvoices,
+    outstandingAmount,
+    paidInvoices,
+    pendingInvoices,
+    overdueInvoices,
+  };
+  dashboard.generatedAt = nowIso();
+};
+
+const shouldUseLocalFinanceFallback = (error: unknown) => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  if (!message) {
+    return false;
+  }
+
+  return (
+    message.includes('could not reach backend api') ||
+    message.includes('failed to fetch') ||
+    message.includes('network request failed') ||
+    message.includes('temporarily unavailable')
+  );
+};
+
+const createLocalFinanceFallbackError = () =>
+  new Error(
+    'Live backend is temporarily unavailable. You are now in local offline mode for school finance on this browser.'
+  );
 
 const extractErrorMessage = async (response: Response) => {
   try {
@@ -206,13 +610,860 @@ const requestWithSchoolAuth = async (endpoint: string, init?: RequestInit) => {
   const fallbackMessage =
     networkError?.message && networkError.message.trim() ? networkError.message : 'Failed to fetch';
   throw new Error(
-    `${fallbackMessage}. Could not reach backend API on ${bases.join(', ')}. Ensure NestJS is running on http://127.0.0.1:3001.`
+    `${fallbackMessage}. Could not reach backend API on ${bases.join(', ')}. Start the API with "bash scripts/api-up.sh", then retry.`
   );
 };
 
+const runWithLocalFinanceFallback = async <T>(action: () => Promise<T>, fallback: () => T) => {
+  try {
+    return await action();
+  } catch (error) {
+    if (!shouldUseLocalFinanceFallback(error)) {
+      throw error;
+    }
+
+    const result = fallback();
+    // Surface a soft warning one time in console so local mode is explicit to developers.
+    if (typeof window !== 'undefined') {
+      // eslint-disable-next-line no-console
+      console.warn(createLocalFinanceFallbackError().message);
+    }
+    return result;
+  }
+};
+
+const localFetchSchoolFinanceDashboard = () => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  refreshDashboardOverview(workspace.dashboard);
+  saveLocalFinanceWorkspace(schoolEmail, workspace);
+  return workspace.dashboard;
+};
+
+const localFetchSchoolFinanceStudents = () => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const studentsByEmail = new Map<string, SchoolFinanceStudent>();
+
+  workspace.dashboard.recentInvoices.forEach((invoice) => {
+    const normalizedEmail = String(invoice.studentEmail || '').trim().toLowerCase();
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      return;
+    }
+
+    const existing = studentsByEmail.get(normalizedEmail);
+    if (existing) {
+      if (!existing.name && invoice.studentName) {
+        existing.name = invoice.studentName;
+      }
+      if (!existing.id && invoice.studentUserId) {
+        existing.id = invoice.studentUserId;
+      }
+      return;
+    }
+
+    studentsByEmail.set(normalizedEmail, {
+      id: invoice.studentUserId || null,
+      email: normalizedEmail,
+      name: invoice.studentName || null,
+      role: 'student',
+    });
+  });
+
+  return {
+    students: Array.from(studentsByEmail.values()).sort((a, b) =>
+      `${a.name || ''} ${a.email}`.localeCompare(`${b.name || ''} ${b.email}`)
+    ),
+  };
+};
+
+const localCreateSchoolFeePlan = (payload: {
+  title: string;
+  description?: string;
+  amount: number;
+  dueDays?: number | null;
+}) => {
+  const title = String(payload.title || '').trim();
+  const amount = Number(payload.amount);
+
+  if (!title) {
+    throw new Error('Fee plan title is required.');
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('Fee plan amount must be greater than zero.');
+  }
+
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const plan: SchoolFinanceDashboard['feePlans'][number] = {
+    id: createLocalId('FPL'),
+    title,
+    description: String(payload.description || '').trim() || null,
+    amount,
+    currency: workspace.dashboard.school.currency || 'NGN',
+    dueDays: payload.dueDays ?? null,
+    isActive: true,
+    createdAt: nowIso(),
+  };
+
+  workspace.dashboard.feePlans = [plan, ...workspace.dashboard.feePlans].slice(0, 50);
+  refreshDashboardOverview(workspace.dashboard);
+  saveLocalFinanceWorkspace(schoolEmail, workspace);
+  return {
+    plan,
+    message: 'Fee plan saved in local mode.',
+  };
+};
+
+const localCreateSchoolInvoice = (payload: {
+  feePlanId?: string;
+  title?: string;
+  description?: string;
+  amount?: number;
+  studentUserId?: string;
+  studentEmail: string;
+  studentName?: string;
+  dueDate?: string | null;
+}) => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+
+  const selectedPlan = payload.feePlanId
+    ? workspace.dashboard.feePlans.find((plan) => plan.id === payload.feePlanId) || null
+    : null;
+
+  const studentEmail = String(payload.studentEmail || '').trim().toLowerCase();
+  if (!studentEmail || !studentEmail.includes('@')) {
+    throw new Error('Student email is required.');
+  }
+
+  const title = String(payload.title || selectedPlan?.title || '').trim();
+  if (!title) {
+    throw new Error('Invoice title is required.');
+  }
+
+  const amount = Number(payload.amount ?? selectedPlan?.amount ?? 0);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('Invoice amount must be greater than zero.');
+  }
+
+  const invoice: SchoolFinanceDashboard['recentInvoices'][number] = {
+    id: createLocalId('INV'),
+    title,
+    description: String(payload.description || selectedPlan?.description || '').trim() || null,
+    studentUserId: String(payload.studentUserId || '').trim() || null,
+    studentEmail,
+    studentName: String(payload.studentName || '').trim() || null,
+    amount,
+    currency: workspace.dashboard.school.currency || 'NGN',
+    status: 'pending',
+    dueDate: payload.dueDate || null,
+    paidAt: null,
+    createdAt: nowIso(),
+    paymentLink: `/school-finance/pay/${createLocalId('INVLINK')}`,
+  };
+
+  workspace.dashboard.recentInvoices = [invoice, ...workspace.dashboard.recentInvoices].slice(0, 100);
+  refreshDashboardOverview(workspace.dashboard);
+  saveLocalFinanceWorkspace(schoolEmail, workspace);
+  return {
+    invoice,
+    message: 'Invoice created in local mode.',
+  };
+};
+
+const localCreateSchoolWithdrawal = (payload: { amount: number }) => {
+  const amount = Number(payload.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('Withdrawal amount must be greater than zero.');
+  }
+
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  if (amount > workspace.dashboard.wallet.available) {
+    throw new Error('Withdrawal amount exceeds available balance.');
+  }
+
+  const payoutId = createLocalId('PAYOUT');
+  const payout: SchoolFinanceDashboard['recentPayouts'][number] = {
+    id: payoutId,
+    amount,
+    currency: workspace.dashboard.school.currency || 'NGN',
+    status: 'requested',
+    requestedAt: nowIso(),
+    processedAt: null,
+    failureReason: null,
+    createdAt: nowIso(),
+    ledgerCount: 1,
+  };
+
+  workspace.dashboard.wallet.available -= amount;
+  workspace.dashboard.wallet.onHold += amount;
+  workspace.dashboard.recentPayouts = [payout, ...workspace.dashboard.recentPayouts].slice(0, 50);
+  workspace.payoutLedgers[payoutId] = [
+    {
+      id: createLocalId('LEDGER'),
+      payoutId,
+      previousStatus: null,
+      nextStatus: 'requested',
+      amount,
+      currency: payout.currency,
+      note: 'Withdrawal request created in local mode.',
+      createdAt: nowIso(),
+    },
+  ];
+  refreshDashboardOverview(workspace.dashboard);
+  saveLocalFinanceWorkspace(schoolEmail, workspace);
+  return {
+    payout,
+    message: 'Withdrawal request saved in local mode.',
+  };
+};
+
+const localPaySchoolInvoice = (invoiceId: string) => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const invoice = workspace.dashboard.recentInvoices.find((item) => item.id === invoiceId) || null;
+
+  if (!invoice) {
+    throw new Error('Invoice not found.');
+  }
+
+  if (invoice.status === 'paid') {
+    return {
+      mode: 'settled' as const,
+      checkoutUrl: null,
+      checkoutSessionId: null,
+      message: 'Invoice is already marked as paid.',
+      invoice,
+      payment: null,
+      wallet: workspace.dashboard.wallet,
+    };
+  }
+
+  invoice.status = 'paid';
+  invoice.paidAt = nowIso();
+
+  const payment: SchoolFinanceDashboard['recentPayments'][number] = {
+    id: createLocalId('PAY'),
+    invoiceId: invoice.id,
+    payerEmail: invoice.studentEmail,
+    grossAmount: invoice.amount,
+    platformFee: 0,
+    processingFee: 0,
+    netAmount: invoice.amount,
+    currency: invoice.currency,
+    status: 'settled',
+    settledAt: nowIso(),
+    createdAt: nowIso(),
+  };
+
+  workspace.dashboard.wallet.available += invoice.amount;
+  workspace.dashboard.wallet.lifetimeGross += invoice.amount;
+  workspace.dashboard.wallet.lifetimeNet += invoice.amount;
+  workspace.dashboard.recentPayments = [payment, ...workspace.dashboard.recentPayments].slice(0, 100);
+  refreshDashboardOverview(workspace.dashboard);
+  saveLocalFinanceWorkspace(schoolEmail, workspace);
+
+  return {
+    mode: 'settled' as const,
+    checkoutUrl: null,
+    checkoutSessionId: null,
+    message: 'Invoice marked as paid in local mode.',
+    invoice,
+    payment,
+    wallet: workspace.dashboard.wallet,
+  };
+};
+
+const localSyncSchoolInvoiceCheckout = (checkoutSessionId: string) => ({
+  checkoutSessionId,
+  synced: false,
+  message: 'Local mode active: checkout sync is not required.',
+});
+
+const localFetchSchoolInvoiceCheckoutStatus = (checkoutSessionId: string): SchoolInvoiceCheckoutStatus => ({
+  checkoutSessionId,
+  paymentStatus: 'local_mode',
+  isSettled: false,
+  needsManualSync: false,
+  reconciliationSource: 'local-fallback',
+  invoice: null,
+  payment: null,
+});
+
+const localUpdateSchoolWithdrawalStatus = (payload: {
+  payoutId: string;
+  status: 'requested' | 'processing' | 'paid' | 'failed' | 'canceled';
+  failureReason?: string;
+  note?: string;
+}) => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const payout = workspace.dashboard.recentPayouts.find((item) => item.id === payload.payoutId) || null;
+  if (!payout) {
+    throw new Error('Payout not found.');
+  }
+
+  const previousStatus = payout.status;
+  payout.status = payload.status;
+  payout.failureReason = payload.failureReason || null;
+  if (payload.status === 'paid' || payload.status === 'failed' || payload.status === 'canceled') {
+    payout.processedAt = nowIso();
+  }
+
+  const wasHoldStatus = previousStatus === 'requested' || previousStatus === 'processing';
+  if (wasHoldStatus && payload.status === 'paid') {
+    workspace.dashboard.wallet.onHold = Math.max(0, workspace.dashboard.wallet.onHold - payout.amount);
+    workspace.dashboard.wallet.totalWithdrawn += payout.amount;
+  }
+  if (wasHoldStatus && (payload.status === 'failed' || payload.status === 'canceled')) {
+    workspace.dashboard.wallet.onHold = Math.max(0, workspace.dashboard.wallet.onHold - payout.amount);
+    workspace.dashboard.wallet.available += payout.amount;
+  }
+
+  const ledger = workspace.payoutLedgers[payout.id] || [];
+  ledger.unshift({
+    id: createLocalId('LEDGER'),
+    payoutId: payout.id,
+    previousStatus,
+    nextStatus: payload.status,
+    amount: payout.amount,
+    currency: payout.currency,
+    note: String(payload.note || payload.failureReason || '').trim() || null,
+    createdAt: nowIso(),
+  });
+  workspace.payoutLedgers[payout.id] = ledger.slice(0, 80);
+  payout.ledgerCount = workspace.payoutLedgers[payout.id].length;
+
+  refreshDashboardOverview(workspace.dashboard);
+  saveLocalFinanceWorkspace(schoolEmail, workspace);
+  return {
+    payout,
+    ledger: workspace.payoutLedgers[payout.id],
+    message: `Payout updated to ${payload.status} in local mode.`,
+  };
+};
+
+const localFetchSchoolWithdrawalLedger = (payoutId: string) => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const payout = workspace.dashboard.recentPayouts.find((item) => item.id === payoutId) || null;
+  if (!payout) {
+    throw new Error('Payout not found.');
+  }
+  const ledger = workspace.payoutLedgers[payoutId] || [];
+  return {
+    payout: {
+      ...payout,
+      ledgerCount: ledger.length,
+    },
+    ledger,
+  };
+};
+
+const localFetchSchoolWithdrawals = (input?: {
+  status?: 'requested' | 'processing' | 'paid' | 'failed' | 'canceled';
+  limit?: number;
+}): SchoolWithdrawalsResponse => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const limit =
+    typeof input?.limit === 'number' && Number.isFinite(input.limit)
+      ? Math.min(200, Math.max(1, Math.round(input.limit)))
+      : 120;
+  const statusFilter = input?.status || null;
+  const payouts = workspace.dashboard.recentPayouts
+    .filter((payout) => (statusFilter ? payout.status === statusFilter : true))
+    .slice(0, limit);
+
+  return {
+    payouts,
+    wallet: workspace.dashboard.wallet,
+  };
+};
+
+const toUtcDateBucketIso = (value: Date) =>
+  new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate(), 0, 0, 0, 0)).toISOString();
+
+const upsertLocalReminderDispatch = (
+  workspace: LocalFinanceWorkspace,
+  payload: Omit<SchoolFeeReminderDispatch, 'id' | 'createdAt'>
+) => {
+  const existing = workspace.reminderDispatches.find(
+    (dispatch) =>
+      dispatch.invoiceId === payload.invoiceId &&
+      dispatch.studentEmail === payload.studentEmail &&
+      dispatch.reminderType === payload.reminderType &&
+      dispatch.channel === payload.channel &&
+      dispatch.reminderDate === payload.reminderDate
+  );
+
+  if (existing) {
+    return false;
+  }
+
+  const created: SchoolFeeReminderDispatch = {
+    ...payload,
+    id: createLocalId('RMD'),
+    createdAt: nowIso(),
+  };
+  workspace.reminderDispatches.unshift(created);
+  workspace.reminderDispatches = workspace.reminderDispatches.slice(0, 300);
+  return true;
+};
+
+const localRunSchoolReminderSweep = () => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const now = new Date();
+  const dueSoonWindowMs = 72 * 60 * 60 * 1000;
+  const dueSoonCutoff = new Date(now.getTime() + dueSoonWindowMs);
+  const overdueReminderDate = toUtcDateBucketIso(now);
+
+  let dueSoonInApp = 0;
+  let dueSoonEmail = 0;
+  let overdueInApp = 0;
+  let overdueEmail = 0;
+  let scannedInvoices = 0;
+
+  workspace.dashboard.recentInvoices.forEach((invoice) => {
+    const dueDateValue = String(invoice.dueDate || '').trim();
+    if (!dueDateValue) {
+      return;
+    }
+
+    const dueDate = new Date(dueDateValue);
+    if (Number.isNaN(dueDate.getTime())) {
+      return;
+    }
+
+    const isOutstanding = invoice.status !== 'paid' && invoice.status !== 'canceled';
+    if (!isOutstanding) {
+      return;
+    }
+
+    scannedInvoices += 1;
+    const normalizedStudentEmail = String(invoice.studentEmail || '').trim().toLowerCase();
+    if (!normalizedStudentEmail || !normalizedStudentEmail.includes('@')) {
+      return;
+    }
+
+    const isOverdue = dueDate.getTime() <= now.getTime();
+    const isDueSoon = dueDate.getTime() > now.getTime() && dueDate.getTime() <= dueSoonCutoff.getTime();
+
+    if (isOverdue && invoice.status === 'pending') {
+      invoice.status = 'overdue';
+    }
+
+    if (isDueSoon) {
+      const reminderDate = toUtcDateBucketIso(dueDate);
+      if (
+        upsertLocalReminderDispatch(workspace, {
+          invoiceId: invoice.id,
+          invoiceTitle: invoice.title,
+          studentEmail: normalizedStudentEmail,
+          reminderType: 'due_soon',
+          channel: 'in_app',
+          status: 'sent',
+          attemptCount: 1,
+          nextRetryAt: null,
+          lastError: null,
+          reminderDate,
+          sentAt: nowIso(),
+          failureReason: null,
+        })
+      ) {
+        dueSoonInApp += 1;
+      }
+
+      if (
+        upsertLocalReminderDispatch(workspace, {
+          invoiceId: invoice.id,
+          invoiceTitle: invoice.title,
+          studentEmail: normalizedStudentEmail,
+          reminderType: 'due_soon',
+          channel: 'email',
+          status: 'skipped',
+          attemptCount: 1,
+          nextRetryAt: null,
+          lastError: 'Email reminder delivery is disabled in local mode.',
+          reminderDate,
+          sentAt: nowIso(),
+          failureReason: 'Email reminder delivery is disabled in local mode.',
+        })
+      ) {
+        dueSoonEmail += 1;
+      }
+    }
+
+    if (isOverdue) {
+      if (
+        upsertLocalReminderDispatch(workspace, {
+          invoiceId: invoice.id,
+          invoiceTitle: invoice.title,
+          studentEmail: normalizedStudentEmail,
+          reminderType: 'overdue',
+          channel: 'in_app',
+          status: 'sent',
+          attemptCount: 1,
+          nextRetryAt: null,
+          lastError: null,
+          reminderDate: overdueReminderDate,
+          sentAt: nowIso(),
+          failureReason: null,
+        })
+      ) {
+        overdueInApp += 1;
+      }
+
+      if (
+        upsertLocalReminderDispatch(workspace, {
+          invoiceId: invoice.id,
+          invoiceTitle: invoice.title,
+          studentEmail: normalizedStudentEmail,
+          reminderType: 'overdue',
+          channel: 'email',
+          status: 'skipped',
+          attemptCount: 1,
+          nextRetryAt: null,
+          lastError: 'Email reminder delivery is disabled in local mode.',
+          reminderDate: overdueReminderDate,
+          sentAt: nowIso(),
+          failureReason: 'Email reminder delivery is disabled in local mode.',
+        })
+      ) {
+        overdueEmail += 1;
+      }
+    }
+  });
+
+  refreshDashboardOverview(workspace.dashboard);
+  saveLocalFinanceWorkspace(schoolEmail, workspace);
+
+  return {
+    generatedAt: nowIso(),
+    accountId: null,
+    scannedInvoices,
+    dueSoonInApp,
+    dueSoonEmail,
+    overdueInApp,
+    overdueEmail,
+    emailDispatchEnabled: false,
+    emailProvider: 'disabled',
+    emailAttempted: 0,
+    emailSent: 0,
+    emailFailed: 0,
+    emailSkipped: dueSoonEmail + overdueEmail,
+    emailQueuedForRetry: 0,
+    emailExhausted: 0,
+  } as SchoolFeeReminderSweepResponse;
+};
+
+const localFetchSchoolReminderDispatches = (input?: {
+  reminderType?: 'due_soon' | 'overdue';
+  channel?: 'in_app' | 'email';
+  status?: 'queued' | 'sent' | 'failed' | 'skipped';
+  limit?: number;
+  page?: number;
+}): SchoolFeeReminderDispatchesResponse => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const parsedLimit = Number(input?.limit);
+  const limit = Math.min(
+    200,
+    Math.max(1, Number.isFinite(parsedLimit) ? Math.round(parsedLimit) : 80)
+  );
+  const parsedPage = Number(input?.page);
+  const page = Math.max(1, Number.isFinite(parsedPage) ? Math.round(parsedPage) : 1);
+
+  const filtered = workspace.reminderDispatches
+    .filter((dispatch) => {
+      if (input?.reminderType && dispatch.reminderType !== input.reminderType) {
+        return false;
+      }
+      if (input?.channel && dispatch.channel !== input.channel) {
+        return false;
+      }
+      if (input?.status && dispatch.status !== input.status) {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const total = filtered.length;
+  const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
+  const offset = (page - 1) * limit;
+  const pagedDispatches = filtered.slice(offset, offset + limit);
+
+  return {
+    generatedAt: nowIso(),
+    total,
+    page,
+    limit,
+    totalPages,
+    hasMore: page * limit < total,
+    dispatches: pagedDispatches,
+  };
+};
+
+const localRequeueFailedSchoolReminderEmails = (input?: {
+  limit?: number;
+}): SchoolFeeReminderRequeueResponse => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const parsedLimit = Number(input?.limit);
+  const limit = Math.min(
+    200,
+    Math.max(1, Number.isFinite(parsedLimit) ? Math.round(parsedLimit) : 80)
+  );
+
+  const failedEmailDispatches = workspace.reminderDispatches
+    .filter((dispatch) => dispatch.channel === 'email' && dispatch.status === 'failed')
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, limit);
+
+  failedEmailDispatches.forEach((dispatch) => {
+    dispatch.status = 'queued';
+    dispatch.attemptCount = 0;
+    dispatch.nextRetryAt = null;
+    dispatch.lastError = null;
+    dispatch.failureReason = null;
+    dispatch.sentAt = null;
+  });
+
+  saveLocalFinanceWorkspace(schoolEmail, workspace);
+  return {
+    generatedAt: nowIso(),
+    accountId: null,
+    selected: failedEmailDispatches.length,
+    requeued: failedEmailDispatches.length,
+    maxRetries: 4,
+  };
+};
+
+const localDrainQueuedSchoolReminderEmails = (): SchoolFeeReminderEmailDrainResponse => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const queuedEmailDispatches = workspace.reminderDispatches
+    .filter((dispatch) => dispatch.channel === 'email' && dispatch.status === 'queued')
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    .slice(0, 40);
+
+  let skipped = 0;
+  let exhausted = 0;
+  const reason = 'Email reminder delivery is disabled in local mode.';
+
+  queuedEmailDispatches.forEach((dispatch) => {
+    dispatch.status = 'skipped';
+    dispatch.attemptCount = Math.max(0, Number(dispatch.attemptCount || 0)) + 1;
+    dispatch.nextRetryAt = null;
+    dispatch.sentAt = nowIso();
+    dispatch.failureReason = reason;
+    dispatch.lastError = reason;
+    skipped += 1;
+    exhausted += 1;
+  });
+
+  saveLocalFinanceWorkspace(schoolEmail, workspace);
+  return {
+    provider: 'disabled',
+    attempted: queuedEmailDispatches.length,
+    sent: 0,
+    failed: 0,
+    skipped,
+    queuedForRetry: 0,
+    exhausted,
+  };
+};
+
+const localFetchSchoolReminderDeliveryHealth = (input?: {
+  days?: number;
+}): SchoolFeeReminderDeliveryHealthResponse => {
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const parsedDays = Number(input?.days);
+  const windowDays = Math.min(
+    90,
+    Math.max(1, Number.isFinite(parsedDays) ? Math.round(parsedDays) : 7)
+  );
+  const maxRetries = 4;
+  const windowStart = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+
+  const recentEmailDispatches = workspace.reminderDispatches.filter((dispatch) => {
+    if (dispatch.channel !== 'email') {
+      return false;
+    }
+    const createdAt = new Date(dispatch.createdAt);
+    if (Number.isNaN(createdAt.getTime())) {
+      return false;
+    }
+    return createdAt.getTime() >= windowStart.getTime();
+  });
+
+  const queued = recentEmailDispatches.filter((dispatch) => dispatch.status === 'queued').length;
+  const sent = recentEmailDispatches.filter((dispatch) => dispatch.status === 'sent').length;
+  const failed = recentEmailDispatches.filter((dispatch) => dispatch.status === 'failed').length;
+  const skipped = recentEmailDispatches.filter((dispatch) => dispatch.status === 'skipped').length;
+  const retryableFailed = recentEmailDispatches.filter(
+    (dispatch) => dispatch.status === 'failed' && Number(dispatch.attemptCount || 0) < maxRetries
+  ).length;
+  const exhausted = recentEmailDispatches.filter(
+    (dispatch) => dispatch.status === 'failed' && Number(dispatch.attemptCount || 0) >= maxRetries
+  ).length;
+  const attempted = sent + failed + skipped;
+  const toRate = (value: number, total: number) =>
+    total > 0 ? Number((value / total).toFixed(4)) : 0;
+
+  return {
+    generatedAt: nowIso(),
+    accountId: null,
+    windowDays,
+    windowStart: windowStart.toISOString(),
+    email: {
+      queued,
+      sent,
+      failed,
+      skipped,
+      retryableFailed,
+      exhausted,
+      attempted,
+      successRate: toRate(sent, attempted),
+      failureRate: toRate(failed, attempted),
+      retryRate: toRate(retryableFailed, attempted),
+      exhaustedRate: toRate(exhausted, attempted),
+    },
+  };
+};
+
+const localRequeueExhaustedSchoolReminderEmails = (input?: {
+  limit?: number;
+  confirm?: string;
+}): SchoolFeeReminderRequeueResponse => {
+  const requiredConfirm = 'REQUEUE_EXHAUSTED';
+  if (String(input?.confirm || '').trim() !== requiredConfirm) {
+    throw new Error(
+      `Confirmation phrase is required to retry exhausted reminders. Send confirm="${requiredConfirm}".`
+    );
+  }
+
+  const schoolEmail = resolveSchoolEmailForLocalFallback();
+  const workspace = getLocalFinanceWorkspace(schoolEmail);
+  const parsedLimit = Number(input?.limit);
+  const limit = Math.min(
+    200,
+    Math.max(1, Number.isFinite(parsedLimit) ? Math.round(parsedLimit) : 80)
+  );
+  const maxRetries = 4;
+
+  const exhaustedDispatches = workspace.reminderDispatches
+    .filter(
+      (dispatch) =>
+        dispatch.channel === 'email' &&
+        dispatch.status === 'failed' &&
+        Number(dispatch.attemptCount || 0) >= maxRetries
+    )
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, limit);
+
+  exhaustedDispatches.forEach((dispatch) => {
+    dispatch.status = 'queued';
+    dispatch.attemptCount = 0;
+    dispatch.nextRetryAt = null;
+    dispatch.lastError = null;
+    dispatch.failureReason = null;
+    dispatch.sentAt = null;
+  });
+
+  saveLocalFinanceWorkspace(schoolEmail, workspace);
+  return {
+    generatedAt: nowIso(),
+    accountId: null,
+    selected: exhaustedDispatches.length,
+    requeued: exhaustedDispatches.length,
+    maxRetries,
+  };
+};
+
+const localRecordSchoolReminderExportAudit = (payload: {
+  format?: string;
+  filters?: Record<string, unknown>;
+}): SchoolFeeReminderExportAuditResponse => {
+  const normalizedFormat = String(payload.format || '').trim().toLowerCase();
+  if (normalizedFormat !== 'csv' && normalizedFormat !== 'pdf') {
+    throw new Error('Export format must be one of: csv, pdf.');
+  }
+
+  const auditRecord: SchoolFeeReminderExportAuditResponse = {
+    auditId: createLocalId('RPT'),
+    generatedAt: nowIso(),
+    accountId: null,
+    format: normalizedFormat,
+    filters: payload.filters && typeof payload.filters === 'object' ? payload.filters : {},
+  };
+
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = window.localStorage.getItem(LOCAL_REMINDER_EXPORT_AUDIT_STORAGE_KEY);
+      const parsed = raw ? (JSON.parse(raw) as SchoolFeeReminderExportAuditResponse[]) : [];
+      const next = [auditRecord, ...(Array.isArray(parsed) ? parsed : [])].slice(0, 100);
+      window.localStorage.setItem(LOCAL_REMINDER_EXPORT_AUDIT_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Ignore local audit storage write failures.
+    }
+  }
+
+  return auditRecord;
+};
+
 export const fetchSchoolFinanceDashboard = async () => {
-  const response = await requestWithSchoolAuth('/school-finance/me/dashboard');
-  return (await response.json()) as SchoolFinanceDashboard;
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth('/school-finance/me/dashboard');
+      const payload = (await response.json()) as SchoolFinanceDashboard;
+
+      if (!shouldPreferLocalDashboard(payload)) {
+        return payload;
+      }
+
+      // Backend can return a setup-only placeholder dashboard when DB tables are
+      // unavailable. If local fallback data exists, keep showing it so recent
+      // fee plans/invoices remain visible to the user.
+      const localCandidate = findLocalFinanceWorkspaceForEmail(payload.school.email);
+      if (!localCandidate) {
+        return payload;
+      }
+
+      const localDashboard = localCandidate.workspace.dashboard;
+      localDashboard.generatedAt = nowIso();
+      localDashboard.school = {
+        ...localDashboard.school,
+        name: payload.school.name || localDashboard.school.name,
+        email: payload.school.email || localDashboard.school.email,
+        currency: payload.school.currency || localDashboard.school.currency,
+      };
+      refreshDashboardOverview(localDashboard);
+      saveLocalFinanceWorkspace(localCandidate.email, localCandidate.workspace);
+      return localDashboard;
+    },
+    () => localFetchSchoolFinanceDashboard()
+  );
+};
+
+export const fetchSchoolFinanceStudents = async () => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth('/school-finance/me/students');
+      const payload = (await response.json()) as {
+        students?: SchoolFinanceStudent[];
+      };
+      return {
+        students: Array.isArray(payload.students) ? payload.students : [],
+      };
+    },
+    () => localFetchSchoolFinanceStudents()
+  );
 };
 
 export const createSchoolFeePlan = async (payload: {
@@ -221,11 +1472,16 @@ export const createSchoolFeePlan = async (payload: {
   amount: number;
   dueDays?: number | null;
 }) => {
-  const response = await requestWithSchoolAuth('/school-finance/me/fee-plans', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  return response.json();
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth('/school-finance/me/fee-plans', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      return response.json();
+    },
+    () => localCreateSchoolFeePlan(payload)
+  );
 };
 
 export const createSchoolInvoice = async (payload: {
@@ -233,23 +1489,57 @@ export const createSchoolInvoice = async (payload: {
   title?: string;
   description?: string;
   amount?: number;
+  studentUserId?: string;
   studentEmail: string;
   studentName?: string;
   dueDate?: string | null;
 }) => {
-  const response = await requestWithSchoolAuth('/school-finance/me/invoices', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  return response.json();
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth('/school-finance/me/invoices', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      return response.json();
+    },
+    () => localCreateSchoolInvoice(payload)
+  );
 };
 
 export const createSchoolWithdrawal = async (payload: { amount: number }) => {
-  const response = await requestWithSchoolAuth('/school-finance/me/withdrawals', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  return response.json();
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth('/school-finance/me/withdrawals', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      return response.json();
+    },
+    () => localCreateSchoolWithdrawal(payload)
+  );
+};
+
+export const fetchSchoolWithdrawals = async (input?: {
+  status?: 'requested' | 'processing' | 'paid' | 'failed' | 'canceled';
+  limit?: number;
+}) => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      const params = new URLSearchParams();
+      if (input?.status) {
+        params.set('status', input.status);
+      }
+      if (typeof input?.limit === 'number' && Number.isFinite(input.limit)) {
+        params.set('limit', String(Math.max(1, Math.round(input.limit))));
+      }
+      const query = params.toString();
+      const response = await requestWithSchoolAuth(
+        `/school-finance/me/withdrawals${query ? `?${query}` : ''}`
+      );
+      return (await response.json()) as SchoolWithdrawalsResponse;
+    },
+    () => localFetchSchoolWithdrawals(input)
+  );
 };
 
 export const paySchoolInvoice = async (
@@ -259,31 +1549,46 @@ export const paySchoolInvoice = async (
     cancelUrl?: string;
   }
 ) => {
-  const response = await requestWithSchoolAuth(
-    `/school-finance/invoices/${encodeURIComponent(invoiceId)}/pay`,
-    {
-      method: 'POST',
-      body: JSON.stringify(payload || {}),
-    }
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth(
+        `/school-finance/invoices/${encodeURIComponent(invoiceId)}/pay`,
+        {
+          method: 'POST',
+          body: JSON.stringify(payload || {}),
+        }
+      );
+      return response.json();
+    },
+    () => localPaySchoolInvoice(invoiceId)
   );
-  return response.json();
 };
 
 export const syncSchoolInvoiceCheckout = async (checkoutSessionId: string) => {
-  const response = await requestWithSchoolAuth('/school-finance/invoices/payments/sync', {
-    method: 'POST',
-    body: JSON.stringify({
-      checkoutSessionId,
-    }),
-  });
-  return response.json();
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth('/school-finance/invoices/payments/sync', {
+        method: 'POST',
+        body: JSON.stringify({
+          checkoutSessionId,
+        }),
+      });
+      return response.json();
+    },
+    () => localSyncSchoolInvoiceCheckout(checkoutSessionId)
+  );
 };
 
 export const fetchSchoolInvoiceCheckoutStatus = async (checkoutSessionId: string) => {
-  const response = await requestWithSchoolAuth(
-    `/school-finance/invoices/payments/${encodeURIComponent(checkoutSessionId)}/status`
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth(
+        `/school-finance/invoices/payments/${encodeURIComponent(checkoutSessionId)}/status`
+      );
+      return (await response.json()) as SchoolInvoiceCheckoutStatus;
+    },
+    () => localFetchSchoolInvoiceCheckoutStatus(checkoutSessionId)
   );
-  return (await response.json()) as SchoolInvoiceCheckoutStatus;
 };
 
 export const updateSchoolWithdrawalStatus = async (payload: {
@@ -292,28 +1597,237 @@ export const updateSchoolWithdrawalStatus = async (payload: {
   failureReason?: string;
   note?: string;
 }) => {
-  const response = await requestWithSchoolAuth(
-    `/school-finance/me/withdrawals/${encodeURIComponent(payload.payoutId)}/status`,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        status: payload.status,
-        failureReason: payload.failureReason,
-        note: payload.note,
-      }),
-    }
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth(
+        `/school-finance/me/withdrawals/${encodeURIComponent(payload.payoutId)}/status`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            status: payload.status,
+            failureReason: payload.failureReason,
+            note: payload.note,
+          }),
+        }
+      );
+      return response.json();
+    },
+    () => localUpdateSchoolWithdrawalStatus(payload)
   );
-  return response.json();
 };
 
 export const fetchSchoolWithdrawalLedger = async (payoutId: string) => {
-  const response = await requestWithSchoolAuth(
-    `/school-finance/me/withdrawals/${encodeURIComponent(payoutId)}/ledger`
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth(
+        `/school-finance/me/withdrawals/${encodeURIComponent(payoutId)}/ledger`
+      );
+      return (await response.json()) as {
+        payout: SchoolFinanceDashboard['recentPayouts'][number] & {
+          ledgerCount?: number;
+        };
+        ledger: SchoolPayoutLedgerEntry[];
+      };
+    },
+    () => localFetchSchoolWithdrawalLedger(payoutId)
   );
-  return (await response.json()) as {
-    payout: SchoolFinanceDashboard['recentPayouts'][number] & {
-      ledgerCount?: number;
-    };
-    ledger: SchoolPayoutLedgerEntry[];
-  };
+};
+
+export const runSchoolReminderSweep = async () => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth('/school-finance/me/reminders/run', {
+        method: 'POST',
+      });
+      return (await response.json()) as SchoolFeeReminderSweepResponse;
+    },
+    () => localRunSchoolReminderSweep()
+  );
+};
+
+export const fetchSchoolReminderDispatches = async (input?: {
+  reminderType?: 'due_soon' | 'overdue';
+  channel?: 'in_app' | 'email';
+  status?: 'queued' | 'sent' | 'failed' | 'skipped';
+  limit?: number;
+  page?: number;
+}) => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      const params = new URLSearchParams();
+      if (input?.reminderType) {
+        params.set('type', input.reminderType);
+      }
+      if (input?.channel) {
+        params.set('channel', input.channel);
+      }
+      if (input?.status) {
+        params.set('status', input.status);
+      }
+      if (typeof input?.limit === 'number' && Number.isFinite(input.limit)) {
+        params.set('limit', String(Math.round(input.limit)));
+      }
+      if (typeof input?.page === 'number' && Number.isFinite(input.page)) {
+        params.set('page', String(Math.max(1, Math.round(input.page))));
+      }
+
+      const query = params.toString();
+      const response = await requestWithSchoolAuth(
+        `/school-finance/me/reminders/dispatches${query ? `?${query}` : ''}`
+      );
+      const payload = (await response.json()) as {
+        generatedAt?: string;
+        total?: number;
+        page?: number;
+        limit?: number;
+        totalPages?: number;
+        hasMore?: boolean;
+        dispatches?: unknown[];
+      };
+      const dispatches = Array.isArray(payload.dispatches)
+        ? payload.dispatches.map((dispatch) => normalizeLocalReminderDispatch(dispatch))
+        : [];
+      const total = Number.isFinite(Number(payload.total)) ? Number(payload.total) : dispatches.length;
+      const limit =
+        Number.isFinite(Number(payload.limit)) && Number(payload.limit) > 0
+          ? Number(payload.limit)
+          : typeof input?.limit === 'number' && Number.isFinite(input.limit)
+            ? Math.max(1, Math.round(input.limit))
+            : 80;
+      const page =
+        Number.isFinite(Number(payload.page)) && Number(payload.page) > 0
+          ? Number(payload.page)
+          : typeof input?.page === 'number' && Number.isFinite(input.page)
+            ? Math.max(1, Math.round(input.page))
+            : 1;
+      const totalPages =
+        Number.isFinite(Number(payload.totalPages)) && Number(payload.totalPages) >= 0
+          ? Number(payload.totalPages)
+          : total > 0
+            ? Math.ceil(total / limit)
+            : 0;
+      return {
+        generatedAt: String(payload.generatedAt || nowIso()),
+        total,
+        page,
+        limit,
+        totalPages,
+        hasMore: Boolean(payload.hasMore) || page * limit < total,
+        dispatches,
+      } as SchoolFeeReminderDispatchesResponse;
+    },
+    () => localFetchSchoolReminderDispatches(input)
+  );
+};
+
+export const requeueFailedSchoolReminderEmails = async (payload?: {
+  limit?: number;
+}) => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth('/school-finance/me/reminders/requeue-failed', {
+        method: 'POST',
+        body: JSON.stringify({
+          limit: payload?.limit,
+        }),
+      });
+      return (await response.json()) as SchoolFeeReminderRequeueResponse;
+    },
+    () => localRequeueFailedSchoolReminderEmails(payload)
+  );
+};
+
+export const requeueExhaustedSchoolReminderEmails = async (payload?: {
+  limit?: number;
+  confirm?: string;
+}) => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      try {
+        const response = await requestWithSchoolAuth('/school-finance/me/reminders/requeue-exhausted', {
+          method: 'POST',
+          body: JSON.stringify({
+            limit: payload?.limit,
+            confirm: payload?.confirm,
+          }),
+        });
+        return (await response.json()) as SchoolFeeReminderRequeueResponse;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (message.includes('Cannot POST /school-finance/me/reminders/requeue-exhausted')) {
+          return localRequeueExhaustedSchoolReminderEmails(payload);
+        }
+        throw error;
+      }
+    },
+    () => localRequeueExhaustedSchoolReminderEmails(payload)
+  );
+};
+
+export const fetchSchoolReminderDeliveryHealth = async (input?: { days?: number }) => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      try {
+        const params = new URLSearchParams();
+        if (typeof input?.days === 'number' && Number.isFinite(input.days)) {
+          params.set('days', String(Math.max(1, Math.round(input.days))));
+        }
+        const query = params.toString();
+        const response = await requestWithSchoolAuth(
+          `/school-finance/me/reminders/health${query ? `?${query}` : ''}`
+        );
+        return (await response.json()) as SchoolFeeReminderDeliveryHealthResponse;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (message.includes('Cannot GET /school-finance/me/reminders/health')) {
+          return localFetchSchoolReminderDeliveryHealth(input);
+        }
+        throw error;
+      }
+    },
+    () => localFetchSchoolReminderDeliveryHealth(input)
+  );
+};
+
+export const recordSchoolReminderExportAudit = async (payload: {
+  format: 'csv' | 'pdf';
+  filters?: Record<string, unknown>;
+}) => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      try {
+        const response = await requestWithSchoolAuth('/school-finance/me/reminders/exports/audit', {
+          method: 'POST',
+          body: JSON.stringify({
+            format: payload.format,
+            filters: payload.filters || {},
+          }),
+        });
+        return (await response.json()) as SchoolFeeReminderExportAuditResponse;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (message.includes('Cannot POST /school-finance/me/reminders/exports/audit')) {
+          return localRecordSchoolReminderExportAudit(payload);
+        }
+        throw error;
+      }
+    },
+    () =>
+      localRecordSchoolReminderExportAudit({
+        format: payload.format,
+        filters: payload.filters || {},
+      })
+  );
+};
+
+export const drainQueuedSchoolReminderEmails = async () => {
+  return runWithLocalFinanceFallback(
+    async () => {
+      const response = await requestWithSchoolAuth('/school-finance/me/reminders/email-drain', {
+        method: 'POST',
+      });
+      return (await response.json()) as SchoolFeeReminderEmailDrainResponse;
+    },
+    () => localDrainQueuedSchoolReminderEmails()
+  );
 };

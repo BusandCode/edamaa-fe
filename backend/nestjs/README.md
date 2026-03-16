@@ -30,10 +30,25 @@ SUPABASE_SERVICE_ROLE_KEY=...
 REDIS_URL=redis://localhost:6379
 DJANGO_INTERNAL_API_URL=http://localhost:8000/admin-api
 INTERNAL_API_TOKEN=<same token configured in Django>
+ADMIN_EMAIL_ALLOWLIST=admin1@edamaa.app,admin2@edamaa.app
 STRIPE_API_KEY=sk_...
 STRIPE_PUBLISHABLE_KEY=pk_...
 STRIPE_TUTOR_SUBSCRIPTION_PRICE_ID=price_...
 STRIPE_SCHOOL_SUBSCRIPTION_PRICE_ID=price_...
+SCHOOL_FEE_REMINDERS_ENABLED=1
+SCHOOL_FEE_REMINDERS_INTERVAL_MS=300000
+SCHOOL_FEE_DUE_SOON_WINDOW_HOURS=72
+SCHOOL_FEE_REMINDER_EMAIL_ENABLED=0
+SCHOOL_FEE_REMINDER_EMAIL_PROVIDER=resend
+SCHOOL_FEE_REMINDER_EMAIL_FROM=Edamaa <reminders@edamaa.app>
+SCHOOL_FEE_REMINDER_EMAIL_REPLY_TO=support@edamaa.app
+SCHOOL_FEE_REMINDER_EMAIL_BATCH_SIZE=40
+SCHOOL_FEE_REMINDER_EMAIL_TIMEOUT_MS=15000
+SCHOOL_FEE_REMINDER_EMAIL_MAX_RETRIES=4
+SCHOOL_FEE_REMINDER_EMAIL_RETRY_BASE_MS=60000
+SCHOOL_FEE_REMINDER_EMAIL_RETRY_MAX_MS=1800000
+SCHOOL_FEE_REMINDER_REQUEUE_CONFIRM=REQUEUE_EXHAUSTED
+RESEND_API_KEY=re_...
 ```
 
 Note:
@@ -64,6 +79,9 @@ If `prisma db push` cannot run in your environment, apply the SQL manually:
 
 ```bash
 psql "$DATABASE_URL" -f prisma/manual/20260224_add_call_signal_event.sql
+psql "$DATABASE_URL" -f prisma/manual/20260303_add_account_roles.sql
+psql "$DATABASE_URL" -f prisma/manual/20260306_add_school_fee_reminder_dispatches.sql
+psql "$DATABASE_URL" -f prisma/manual/20260306_add_school_fee_reminder_retry_backoff.sql
 ```
 
 Start API:
@@ -90,6 +108,39 @@ Subscription endpoints (requires `Authorization: Bearer <supabase_access_token>`
 - `POST /subscriptions/me/checkout`
 - `POST /subscriptions/me/sync`
 
+School finance reminder endpoints (school role):
+
+- `GET /school-finance/me/reminders/dispatches?type=due_soon|overdue&channel=in_app|email&status=queued|sent|failed|skipped&limit=80&page=1`
+- `GET /school-finance/me/reminders/health?days=7`
+- `POST /school-finance/me/reminders/exports/audit`
+- `POST /school-finance/me/reminders/run`
+- `POST /school-finance/me/reminders/email-drain`
+- `POST /school-finance/me/reminders/requeue-failed`
+- `POST /school-finance/me/reminders/requeue-exhausted` (requires `confirm` phrase)
+
+School finance payout endpoints (school role):
+
+- `GET /school-finance/me/withdrawals?status=requested|processing|paid|failed|canceled&limit=60`
+- `POST /school-finance/me/withdrawals`
+- `POST /school-finance/me/withdrawals/:payoutId/status`
+- `GET /school-finance/me/withdrawals/:payoutId/ledger`
+
+Authenticated admin payout endpoints (admin role via Supabase auth):
+
+- `GET /admin/school-finance/payouts?status=requested|processing|paid|failed|canceled&search=&page=1&limit=50`
+- `POST /admin/school-finance/payouts/:payoutId/status`
+- `GET /admin/school-finance/payouts/:payoutId/ledger`
+
+Account roles endpoints (requires `Authorization: Bearer <supabase_access_token>`):
+
+- `GET /account/roles/me`
+- `POST /account/roles/request`
+- `POST /account/roles/switch`
+- `POST /account/roles/deactivate`
+- `GET /account/roles/requests?status=pending|approved|rejected|canceled` (admin only)
+- `POST /account/roles/requests/:requestId/approve` (admin only)
+- `POST /account/roles/requests/:requestId/reject` (admin only)
+
 Student analytics endpoint:
 
 - `GET /student-analytics/me/performance` (requires `Authorization: Bearer <supabase_access_token>`)
@@ -101,6 +152,11 @@ Internal Django admin bridge (`X-Internal-Token` required):
 - `GET /internal/admin/health`
 - `GET /internal/admin/analytics/webhooks`
 - `GET /internal/admin/analytics/user-roles`
+- `GET /internal/admin/school-finance/payouts?status=requested|processing|paid|failed|canceled&search=&page=1&limit=50`
+- `POST /internal/admin/school-finance/payouts/:payoutId/status`
+- `GET /internal/admin/school-finance/payouts/:payoutId/ledger`
+
+The `/internal/admin/*` routes are service-to-service only and should not be called from browser clients.
 
 Quick check:
 

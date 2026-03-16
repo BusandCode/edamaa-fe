@@ -157,7 +157,7 @@ const requestWithAuth = async (endpoint: string, init?: RequestInit) => {
       ? networkError.message
       : 'Failed to fetch';
   throw new Error(
-    `${fallbackMessage}. Could not reach backend API on ${bases.join(', ')}. Ensure NestJS is running on http://127.0.0.1:3001.`
+    `${fallbackMessage}. Could not reach backend API on ${bases.join(', ')}. Start the API with "bash scripts/api-up.sh", then retry.`
   );
 };
 

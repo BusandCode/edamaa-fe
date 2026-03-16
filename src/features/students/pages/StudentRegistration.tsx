@@ -1,15 +1,41 @@
-import React, { type FormEvent } from 'react';
+import React, { useMemo, useState, type FormEvent } from 'react';
 import { IoMdCamera } from "react-icons/io";
 import Logo from '../../../components/common/Logo';
 import {languages} from '../../../components/ui/Language';
 import { useNavigate } from "react-router-dom";
 import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
-import { persistLocalDevAuthSession, persistSupabaseSession } from '../../../utils/authSession';
+import {
+  persistAccountRoleState,
+  persistKnownAccountRoleForEmail,
+  persistLocalDevAuthSession,
+  persistSupabaseSession,
+} from '../../../utils/authSession';
 import { getSupabaseBrowserClient, isSupabaseBrowserConfigured } from '../../../utils/supabaseClient';
 
 
 const StudentRegistration: React.FC = () => {
-  // const [dateLabel, setDateLabel] = useState('Date of Birth');
+  const [dateOfBirth, setDateOfBirth] = useState('');
+  const yearOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    return Array.from({ length: 101 }, (_, index) => currentYear - 80 + index);
+  }, []);
+  const monthOptions = useMemo(
+    () => [
+      { value: '01', label: 'Jan' },
+      { value: '02', label: 'Feb' },
+      { value: '03', label: 'Mar' },
+      { value: '04', label: 'Apr' },
+      { value: '05', label: 'May' },
+      { value: '06', label: 'Jun' },
+      { value: '07', label: 'Jul' },
+      { value: '08', label: 'Aug' },
+      { value: '09', label: 'Sep' },
+      { value: '10', label: 'Oct' },
+      { value: '11', label: 'Nov' },
+      { value: '12', label: 'Dec' },
+    ],
+    []
+  );
 
   const navigate = useNavigate();
 
@@ -64,6 +90,8 @@ const StudentRegistration: React.FC = () => {
         options: {
           data: {
             full_name: fullName,
+            role: 'student',
+            account_role: 'student',
           },
         },
       });
@@ -76,8 +104,18 @@ const StudentRegistration: React.FC = () => {
       persistSupabaseSession(data.session ?? null);
     } else if (import.meta.env.DEV && email) {
       // Keep local development smooth even before Supabase keys are configured.
-      persistLocalDevAuthSession(email);
+      persistLocalDevAuthSession(email, 'student', {
+        defaultRole: 'student',
+        activeRoles: ['student'],
+      });
     }
+
+    persistAccountRoleState({
+      defaultRole: 'student',
+      activeRoles: ['student'],
+      source: 'local-dev',
+    });
+    persistKnownAccountRoleForEmail(email, 'student');
 
     // Persist a stable student identity so messaging/call routing can target this student id.
     const currentIdentity = loadStudentIdentity();
@@ -165,7 +203,7 @@ const StudentRegistration: React.FC = () => {
             />
 
             {/* Fixed Date Field with Label */}
-            <div className="relative">
+            <div className="relative space-y-2">
                 <label
                   htmlFor="dob"
                   className="absolute left-4 -top-2 bg-white px-1 text-xs text-gray-500"
@@ -177,9 +215,59 @@ const StudentRegistration: React.FC = () => {
                   id="dob"
                   type="date"
                   name="dateOfBirth"
+                  value={dateOfBirth}
+                  onChange={(event) => setDateOfBirth(event.target.value)}
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg
                             focus:outline-none focus:border-[#3D08BA]"
                 />
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-semibold text-gray-500">Jump year:</label>
+                  <select
+                    value={dateOfBirth ? dateOfBirth.slice(0, 4) : ''}
+                    onChange={(event) => {
+                      const selectedYear = event.target.value;
+                      if (!selectedYear) {
+                        return;
+                      }
+                      setDateOfBirth((prev) => {
+                        const base = prev || `${new Date().getFullYear()}-01-01`;
+                        const [, month = '01', day = '01'] = base.split('-');
+                        return `${selectedYear}-${month}-${day}`;
+                      });
+                    }}
+                    className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                  >
+                    <option value="">Select year</option>
+                    {yearOptions.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
+                  <label className="text-xs font-semibold text-gray-500">Month:</label>
+                  <select
+                    value={dateOfBirth ? dateOfBirth.slice(5, 7) : ''}
+                    onChange={(event) => {
+                      const selectedMonth = event.target.value;
+                      if (!selectedMonth) {
+                        return;
+                      }
+                      setDateOfBirth((prev) => {
+                        const base = prev || `${new Date().getFullYear()}-01-01`;
+                        const [year = String(new Date().getFullYear()), , day = '01'] = base.split('-');
+                        return `${year}-${selectedMonth}-${day}`;
+                      });
+                    }}
+                    className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                  >
+                    <option value="">Select month</option>
+                    {monthOptions.map((month) => (
+                      <option key={month.value} value={month.value}>
+                        {month.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
 

@@ -17,6 +17,30 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) {
+            return undefined;
+          }
+          if (id.includes('pdfmake')) {
+            return 'pdf-export';
+          }
+          if (id.includes('html2canvas')) {
+            return 'capture-utils';
+          }
+          if (id.includes('react-icons')) {
+            return 'ui-icons';
+          }
+          if (id.includes('@supabase')) {
+            return 'supabase';
+          }
+          return undefined;
+        },
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': apiProxyConfig,

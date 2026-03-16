@@ -7,9 +7,16 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WEB_HOST="${WEB_HOST:-127.0.0.1}"
 WEB_PORT="${WEB_PORT:-5173}"
 VITE_STRICT_PORT="${VITE_STRICT_PORT:-1}"
+ENSURE_API="${ENSURE_API:-1}"
+API_HOST="${API_HOST:-127.0.0.1}"
+API_PORT="${API_PORT:-3001}"
+API_HEALTH_PATH="${API_HEALTH_PATH:-/auth/ready}"
+API_WATCHDOG="${API_WATCHDOG:-1}"
 LOG_DIR="${LOG_DIR:-/tmp}"
 WEB_LOG="${LOG_DIR}/edamaa-web.log"
 WEB_PID_FILE="${LOG_DIR}/edamaa-web.pid"
+API_WATCHDOG_LOG="${LOG_DIR}/edamaa-api-watchdog.log"
+API_WATCHDOG_PID_FILE="${LOG_DIR}/edamaa-api-watchdog.pid"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -22,9 +29,62 @@ require_cmd npm
 require_cmd curl
 require_cmd lsof
 
+wait_for_http_200() {
+  local name="$1"
+  local url="$2"
+  local retries="${3:-45}"
+  local sleep_seconds="${4:-1}"
+  local attempt=1
+
+  while [ "$attempt" -le "$retries" ]; do
+    local code
+    code="$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)"
+    if [ "$code" = "200" ]; then
+      return 0
+    fi
+    echo "Waiting for ${name} (attempt ${attempt}/${retries}, status=${code})"
+    attempt=$((attempt + 1))
+    sleep "$sleep_seconds"
+  done
+
+  return 1
+}
+
+if [ "$ENSURE_API" = "1" ]; then
+  API_HEALTH_URL="http://${API_HOST}:${API_PORT}${API_HEALTH_PATH}"
+  if ! wait_for_http_200 "backend API" "$API_HEALTH_URL" 2 1; then
+    echo "Backend API is not ready on ${API_HEALTH_URL}. Starting NestJS now..."
+    bash "$ROOT_DIR/scripts/api-up.sh"
+    if ! wait_for_http_200 "backend API" "$API_HEALTH_URL" 60 1; then
+      echo "Backend API did not become ready. See /tmp/edamaa-nestjs.log" >&2
+      exit 1
+    fi
+  fi
+fi
+
+start_api_watchdog() {
+  if [ "$API_WATCHDOG" != "1" ]; then
+    return
+  fi
+
+  if [ -f "$API_WATCHDOG_PID_FILE" ]; then
+    local existing_pid
+    existing_pid="$(cat "$API_WATCHDOG_PID_FILE")"
+    if [ -n "$existing_pid" ] && kill -0 "$existing_pid" >/dev/null 2>&1; then
+      return
+    fi
+    rm -f "$API_WATCHDOG_PID_FILE"
+  fi
+
+  nohup bash "$ROOT_DIR/scripts/api-watchdog.sh" >"$API_WATCHDOG_LOG" 2>&1 &
+  local watchdog_pid="$!"
+  echo "$watchdog_pid" >"$API_WATCHDOG_PID_FILE"
+}
+
 if lsof -iTCP:"$WEB_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   code="$(curl -s -o /dev/null -w '%{http_code}' "http://${WEB_HOST}:${WEB_PORT}" || true)"
   if [ "$code" = "200" ]; then
+    start_api_watchdog
     echo "Frontend already running: http://${WEB_HOST}:${WEB_PORT}"
     exit 0
   fi
@@ -45,7 +105,7 @@ if [ "$VITE_STRICT_PORT" = "1" ]; then
   vite_args+=(--strictPort)
 fi
 
-nohup npm run dev -- "${vite_args[@]}" >"$WEB_LOG" 2>&1 &
+nohup npm run dev:ui -- "${vite_args[@]}" >"$WEB_LOG" 2>&1 &
 WEB_PID="$!"
 echo "$WEB_PID" >"$WEB_PID_FILE"
 
@@ -72,6 +132,8 @@ if [ "$attempt" -gt "$max_attempts" ]; then
   tail -n 80 "$WEB_LOG" >&2 || true
   exit 1
 fi
+
+start_api_watchdog
 
 echo "Frontend is ready: http://${WEB_HOST}:${WEB_PORT}"
 echo "Log: ${WEB_LOG}"

@@ -218,6 +218,10 @@ export class ResourcesService implements OnModuleInit {
   }
 
   async onModuleInit() {
+    if (String(process.env.SKIP_PRISMA_CONNECT || '').trim() === '1') {
+      this.logger.warn('Skipping resource purchase hydrate (SKIP_PRISMA_CONNECT=1).');
+      return;
+    }
     await this.hydratePersistedPurchases();
   }
 
