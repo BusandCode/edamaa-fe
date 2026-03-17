@@ -5,6 +5,7 @@ import {
   CheckCircleIcon,
   ClipboardDocumentListIcon,
   ClockIcon,
+  MagnifyingGlassIcon,
   PencilSquareIcon,
   PlusIcon,
   SparklesIcon,
@@ -188,6 +189,22 @@ const formatRelativeTime = (value: string) => {
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 };
 
+const scrollToSection = (sectionId: string) => {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  const target = document.getElementById(sectionId);
+  if (!target) {
+    return;
+  }
+
+  target.scrollIntoView({
+    behavior: 'smooth',
+    block: 'start',
+  });
+};
+
 const SchoolAssignments = () => {
   const navigate = useNavigate();
   const [assignments, setAssignments] = useState<SchoolAssignment[]>([]);
@@ -317,6 +334,31 @@ const SchoolAssignments = () => {
         .includes(query);
     });
   }, [assignments, searchQuery, typeFilter]);
+
+  const filteredTaskSummary = useMemo(() => {
+    let homework = 0;
+    let classwork = 0;
+    let openNow = 0;
+
+    for (const assignment of filteredAssignments) {
+      if (assignment.type === 'assignment') {
+        homework += 1;
+      } else {
+        classwork += 1;
+      }
+
+      if (assignment.isReleased) {
+        openNow += 1;
+      }
+    }
+
+    return {
+      total: filteredAssignments.length,
+      homework,
+      classwork,
+      openNow,
+    };
+  }, [filteredAssignments]);
 
   const selectedAssignment = useMemo(
     () => assignments.find((assignment) => assignment.id === selectedAssignmentId) || null,
@@ -548,30 +590,84 @@ const SchoolAssignments = () => {
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(61,8,186,0.10),_transparent_35%),linear-gradient(180deg,#f8fafc_0%,#f3f4f6_100%)] pb-16">
-      <header className="sticky top-0 z-40 border-b border-white/70 bg-white/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => navigate('/school-dashboard')}
-              className="rounded-2xl border border-slate-200 bg-white p-2.5 text-slate-600 transition hover:border-[#3D08BA]/30 hover:text-[#3D08BA]"
-            >
-              <ArrowLeftIcon className="h-5 w-5" />
-            </button>
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#3D08BA]">School homework</p>
-              <h1 className="text-xl font-semibold text-slate-900">Assignments and classwork</h1>
-              <p className="text-sm text-slate-500">Create tasks, time their release, and review student submissions in one place.</p>
+      <header className="z-40 border-b border-white/70 bg-white/75 backdrop-blur-xl xl:sticky xl:top-0">
+        <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+          <div className="relative overflow-hidden rounded-[24px] border border-white/80 bg-[linear-gradient(135deg,_rgba(255,255,255,0.96),_rgba(248,250,252,0.96)_58%,_rgba(245,243,255,0.96))] px-4 py-3 shadow-[0_18px_50px_rgba(15,23,42,0.08)] ring-1 ring-slate-100/70 sm:px-5 sm:py-4">
+            <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-48 bg-[radial-gradient(circle_at_center,_rgba(61,8,186,0.10),_transparent_70%)] lg:block" />
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => navigate('/school-dashboard')}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/92 px-3.5 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600 transition hover:border-[#3D08BA]/25 hover:text-[#3D08BA]"
+                >
+                  <ArrowLeftIcon className="h-4 w-4" />
+                  Back
+                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => scrollToSection('assignment-updates')}
+                    className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/92 px-3.5 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
+                  >
+                    <SparklesIcon className="h-4 w-4" />
+                    Inbox
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openCreateModal}
+                    className="inline-flex items-center gap-2 rounded-full bg-[#3D08BA] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(61,8,186,0.22)] transition hover:bg-[#2D0690] hover:shadow-[0_20px_40px_rgba(61,8,186,0.28)]"
+                  >
+                    <PlusIcon className="h-5 w-5" />
+                    New task
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#3D08BA]">
+                  School homework workspace
+                </p>
+                <h1 className="text-xl font-semibold tracking-tight text-slate-950 sm:text-2xl">
+                  Assignments and classwork
+                </h1>
+                <p className="max-w-3xl text-sm leading-5 text-slate-600">
+                  Create tasks, decide when students see them, and keep grading moving from one workspace.
+                </p>
+              </div>
+
+              <div className="grid gap-2 rounded-[20px] border border-slate-200/80 bg-white/78 p-2 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-2xl px-3 py-2.5 transition hover:bg-slate-50/80">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Total tasks</p>
+                  <div className="mt-1 flex items-end justify-between gap-3">
+                    <p className="text-lg font-semibold text-slate-950">{summary.total}</p>
+                    <ClipboardDocumentListIcon className="h-4.5 w-4.5 text-slate-300" />
+                  </div>
+                </div>
+                <div className="rounded-2xl px-3 py-2.5 transition hover:bg-slate-50/80">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Open now</p>
+                  <div className="mt-1 flex items-end justify-between gap-3">
+                    <p className="text-lg font-semibold text-slate-950">{summary.active}</p>
+                    <CalendarDaysIcon className="h-4.5 w-4.5 text-slate-300" />
+                  </div>
+                </div>
+                <div className="rounded-2xl px-3 py-2.5 transition hover:bg-slate-50/80">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Awaiting review</p>
+                  <div className="mt-1 flex items-end justify-between gap-3">
+                    <p className="text-lg font-semibold text-slate-950">{summary.awaitingReview}</p>
+                    <UserGroupIcon className="h-4.5 w-4.5 text-slate-300" />
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-[#3D08BA]/10 bg-[#3D08BA]/5 px-3 py-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]/60">Unread updates</p>
+                  <div className="mt-1 flex items-end justify-between gap-3">
+                    <p className="text-lg font-semibold text-[#3D08BA]">{unreadNotificationCount}</p>
+                    <SparklesIcon className="h-4.5 w-4.5 text-[#3D08BA]/35" />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={openCreateModal}
-            className="inline-flex items-center gap-2 rounded-2xl bg-[#3D08BA] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_18px_40px_rgba(61,8,186,0.24)] transition hover:bg-[#2D0690]"
-          >
-            <PlusIcon className="h-5 w-5" />
-            New task
-          </button>
         </div>
       </header>
 
@@ -582,49 +678,35 @@ const SchoolAssignments = () => {
           </div>
         ) : null}
 
-        <section className="grid gap-4 md:grid-cols-3">
-          <article className="rounded-[28px] border border-white/80 bg-white/90 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)]">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Total tasks</p>
-            <p className="mt-3 text-3xl font-semibold text-slate-900">{summary.total}</p>
-            <p className="mt-2 text-sm text-slate-500">Every homework and classwork item created for your school.</p>
-          </article>
-          <article className="rounded-[28px] border border-white/80 bg-white/90 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)]">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Open now</p>
-            <p className="mt-3 text-3xl font-semibold text-slate-900">{summary.active}</p>
-            <p className="mt-2 text-sm text-slate-500">Tasks students can currently see and submit.</p>
-          </article>
-          <article className="rounded-[28px] border border-white/80 bg-white/90 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)]">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Awaiting review</p>
-            <p className="mt-3 text-3xl font-semibold text-slate-900">{summary.awaitingReview}</p>
-            <p className="mt-2 text-sm text-slate-500">Student submissions still waiting for a teacher score or note.</p>
-          </article>
-        </section>
-
-        <section className="rounded-[30px] border border-white/80 bg-white/90 p-4 shadow-[0_24px_60px_rgba(15,23,42,0.08)] sm:p-5">
+        <section
+          id="assignment-updates"
+          className="scroll-mt-36 relative overflow-hidden rounded-[30px] border border-white/80 bg-[linear-gradient(135deg,_rgba(255,255,255,0.95),_rgba(248,250,252,0.95)_58%,_rgba(245,243,255,0.94))] p-4 shadow-[0_24px_60px_rgba(15,23,42,0.08)] ring-1 ring-slate-100/70 sm:p-5"
+        >
+          <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-56 bg-[radial-gradient(circle_at_center,_rgba(61,8,186,0.08),_transparent_72%)] lg:block" />
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
+            <div className="relative">
               <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#3D08BA]">Homework inbox</p>
               <h2 className="mt-1 text-lg font-semibold text-slate-900">Submission updates</h2>
-              <p className="mt-1 text-sm text-slate-500">
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
                 New student submissions and late turn-ins appear here until you clear them.
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-semibold text-amber-700">
+            <div className="relative flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-[#3D08BA]/12 bg-[#3D08BA]/6 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]">
                 {unreadNotificationCount} unread
               </span>
               <button
                 type="button"
                 onClick={() => void handleMarkAllNotificationsRead()}
                 disabled={unreadNotificationCount === 0 || activeNotificationId === 'all'}
-                className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA] disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-2xl border border-slate-200 bg-white/92 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {activeNotificationId === 'all' ? 'Updating...' : 'Mark all read'}
               </button>
             </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="relative mt-4 inline-flex flex-wrap gap-2 rounded-full border border-slate-200/80 bg-white/82 p-1">
             {([
               { value: 'all', label: 'All updates' },
               { value: 'unread', label: 'Unread only' },
@@ -635,8 +717,8 @@ const SchoolAssignments = () => {
                 onClick={() => setNotificationFilter(option.value)}
                 className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${
                   notificationFilter === option.value
-                    ? 'bg-[#3D08BA] text-white'
-                    : 'border border-slate-200 bg-white text-slate-600 hover:border-[#3D08BA]/20 hover:text-[#3D08BA]'
+                    ? 'bg-[#3D08BA] text-white shadow-[0_10px_24px_rgba(61,8,186,0.20)]'
+                    : 'bg-transparent text-slate-600 hover:text-[#3D08BA]'
                 }`}
               >
                 {option.label}
@@ -646,31 +728,31 @@ const SchoolAssignments = () => {
 
           <div className="mt-4 space-y-3">
             {notificationsLoading ? (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+              <div className="rounded-[24px] border border-slate-200 bg-white/88 px-4 py-4 text-sm text-slate-500 shadow-[0_14px_32px_rgba(15,23,42,0.04)]">
                 Loading homework updates...
               </div>
             ) : notifications.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+              <div className="rounded-[24px] border border-dashed border-slate-300 bg-white/82 px-4 py-4 text-sm text-slate-500">
                 No submission updates yet. Student homework activity will appear here.
               </div>
             ) : visibleNotifications.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+              <div className="rounded-[24px] border border-dashed border-slate-300 bg-white/82 px-4 py-4 text-sm text-slate-500">
                 No homework updates match this filter.
               </div>
             ) : (
               visibleNotifications.map((notification) => (
                 <article
                   key={notification.id}
-                  className={`rounded-[24px] border p-4 transition ${
+                  className={`rounded-[24px] border p-4 shadow-[0_14px_32px_rgba(15,23,42,0.04)] transition ${
                     notification.isRead
-                      ? 'border-slate-200 bg-slate-50'
-                      : 'border-amber-200 bg-amber-50/70'
+                      ? 'border-slate-200 bg-white/84'
+                      : 'border-[#3D08BA]/14 bg-[#3D08BA]/6'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        {!notification.isRead ? <span className="h-2 w-2 rounded-full bg-amber-500" /> : null}
+                        {!notification.isRead ? <span className="h-2 w-2 rounded-full bg-[#3D08BA]" /> : null}
                         <p className="text-sm font-semibold text-slate-900">{notification.title}</p>
                         {notification.needsReview ? (
                           <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">
@@ -694,7 +776,7 @@ const SchoolAssignments = () => {
                       <button
                         type="button"
                         onClick={() => void openAssignmentFromNotification(notification)}
-                        className="rounded-2xl border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/10"
+                        className="rounded-2xl border border-[#3D08BA]/16 bg-[#3D08BA]/8 px-3 py-2 text-xs font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/12"
                       >
                         Open task
                       </button>
@@ -724,183 +806,274 @@ const SchoolAssignments = () => {
           </div>
         </section>
 
-        <section className="rounded-[30px] border border-white/80 bg-white/90 p-4 shadow-[0_24px_60px_rgba(15,23,42,0.08)] sm:p-5">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex flex-1 flex-col gap-3 sm:flex-row">
+        <section className="relative overflow-hidden rounded-[30px] border border-white/80 bg-[linear-gradient(135deg,_rgba(255,255,255,0.95),_rgba(248,250,252,0.95)_58%,_rgba(245,243,255,0.92))] p-4 shadow-[0_24px_60px_rgba(15,23,42,0.08)] ring-1 ring-slate-100/70 sm:p-5">
+          <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-64 bg-[radial-gradient(circle_at_center,_rgba(61,8,186,0.08),_transparent_72%)] lg:block" />
+          <div className="relative flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#3D08BA]">Task library</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-lg font-semibold text-slate-950">Manage homework and classwork</h2>
+                <span className="rounded-full border border-[#3D08BA]/12 bg-[#3D08BA]/6 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]">
+                  {filteredTaskSummary.total} visible
+                </span>
+              </div>
+              <p className="max-w-2xl text-sm leading-6 text-slate-500">
+                Search by subject or class lane, then switch between homework and classwork without leaving the page.
+              </p>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2 xl:min-w-[420px] xl:grid-cols-4">
+              <div className="rounded-[22px] border border-slate-200/80 bg-white/88 px-3 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Visible</p>
+                <p className="mt-1 text-base font-semibold text-slate-950">{filteredTaskSummary.total}</p>
+              </div>
+              <div className="rounded-[22px] border border-slate-200/80 bg-white/88 px-3 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Open now</p>
+                <p className="mt-1 text-base font-semibold text-slate-950">{filteredTaskSummary.openNow}</p>
+              </div>
+              <div className="rounded-[22px] border border-slate-200/80 bg-white/88 px-3 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Homework</p>
+                <p className="mt-1 text-base font-semibold text-slate-950">{filteredTaskSummary.homework}</p>
+              </div>
+              <div className="rounded-[22px] border border-[#3D08BA]/12 bg-[#3D08BA]/5 px-3 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]/60">Classwork</p>
+                <p className="mt-1 text-base font-semibold text-[#3D08BA]">{filteredTaskSummary.classwork}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="relative mt-5 flex flex-col gap-3 lg:flex-row lg:items-center">
+            <label className="relative flex-1">
+              <MagnifyingGlassIcon className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder="Search by title, subject, department, or class"
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                className="w-full rounded-[22px] border border-slate-200/90 bg-white/92 py-3 pl-12 pr-4 text-sm text-slate-700 outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
               />
-              <div className="flex gap-2">
-                {(['all', 'assignment', 'classwork'] as const).map((filter) => (
-                  <button
-                    key={filter}
-                    type="button"
-                    onClick={() => setTypeFilter(filter)}
-                    className={`rounded-2xl px-4 py-3 text-sm font-medium transition ${
-                      typeFilter === filter
-                        ? 'bg-[#3D08BA] text-white'
-                        : 'border border-slate-200 bg-white text-slate-600 hover:border-[#3D08BA]/25 hover:text-[#3D08BA]'
-                    }`}
-                  >
-                    {filter === 'all' ? 'All tasks' : filter === 'assignment' ? 'Homework' : 'Classwork'}
-                  </button>
-                ))}
-              </div>
+            </label>
+
+            <div className="inline-flex flex-wrap gap-2 rounded-full border border-slate-200/90 bg-white/88 p-1">
+              {(['all', 'assignment', 'classwork'] as const).map((filter) => (
+                <button
+                  key={filter}
+                  type="button"
+                  onClick={() => setTypeFilter(filter)}
+                  className={`rounded-full px-3.5 py-2 text-xs font-semibold transition ${
+                    typeFilter === filter
+                      ? 'bg-[#3D08BA] text-white shadow-[0_10px_24px_rgba(61,8,186,0.20)]'
+                      : 'bg-transparent text-slate-600 hover:text-[#3D08BA]'
+                  }`}
+                >
+                  {filter === 'all' ? 'All tasks' : filter === 'assignment' ? 'Homework' : 'Classwork'}
+                </button>
+              ))}
             </div>
           </div>
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[400px_minmax(0,1fr)]">
-          <div className="space-y-4">
-            {loading ? (
-              <div className="rounded-[28px] border border-white/80 bg-white/90 p-6 text-sm text-slate-500 shadow-[0_20px_50px_rgba(15,23,42,0.08)]">
-                Loading homework workspace...
+        <section className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+          <div className="overflow-hidden rounded-[30px] border border-white/80 bg-white/92 shadow-[0_24px_60px_rgba(15,23,42,0.08)] ring-1 ring-slate-100/70">
+            <div className="border-b border-slate-200/80 px-4 py-4 sm:px-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#3D08BA]">Task list</p>
+                  <h2 className="mt-1 text-base font-semibold text-slate-900">Visible assignments</h2>
+                </div>
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                  {filteredTaskSummary.total} tasks
+                </span>
               </div>
-            ) : filteredAssignments.length === 0 ? (
-              <div className="rounded-[28px] border border-dashed border-slate-300 bg-white/80 p-10 text-center shadow-[0_20px_50px_rgba(15,23,42,0.05)]">
-                <ClipboardDocumentListIcon className="mx-auto h-12 w-12 text-slate-300" />
-                <h2 className="mt-4 text-lg font-semibold text-slate-900">No tasks yet</h2>
-                <p className="mt-2 text-sm text-slate-500">Create the first homework or classwork for this class lane.</p>
-                <button
-                  type="button"
-                  onClick={openCreateModal}
-                  className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-[#3D08BA] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2D0690]"
-                >
-                  <PlusIcon className="h-5 w-5" />
-                  Create task
-                </button>
-              </div>
-            ) : (
-              filteredAssignments.map((assignment) => {
-                const selected = assignment.id === selectedAssignmentId;
-                return (
+            </div>
+
+            <div className="space-y-3 p-3 sm:p-4">
+              {loading ? (
+                <div className="rounded-[24px] border border-slate-200/80 bg-slate-50/80 p-5 text-sm text-slate-500">
+                  Loading homework workspace...
+                </div>
+              ) : filteredAssignments.length === 0 ? (
+                <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50/70 p-8 text-center">
+                  <ClipboardDocumentListIcon className="mx-auto h-11 w-11 text-slate-300" />
+                  <h2 className="mt-4 text-lg font-semibold text-slate-900">No tasks yet</h2>
+                  <p className="mt-2 text-sm text-slate-500">Create the first homework or classwork for this class lane.</p>
                   <button
-                    key={assignment.id}
                     type="button"
-                    onClick={() => setSelectedAssignmentId(assignment.id)}
-                    className={`w-full rounded-[28px] border p-5 text-left transition ${
-                      selected
-                        ? 'border-[#3D08BA]/30 bg-[#3D08BA]/5 shadow-[0_24px_60px_rgba(61,8,186,0.12)]'
-                        : 'border-white/80 bg-white/90 shadow-[0_20px_50px_rgba(15,23,42,0.08)] hover:border-[#3D08BA]/20'
-                    }`}
+                    onClick={openCreateModal}
+                    className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-[#3D08BA] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2D0690]"
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded-full border border-[#3D08BA]/20 bg-[#3D08BA]/8 px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA]">
-                            {assignment.type === 'assignment' ? 'Homework' : 'Classwork'}
-                          </span>
-                          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
-                            {getAssignmentStatusLabel(assignment)}
+                    <PlusIcon className="h-5 w-5" />
+                    Create task
+                  </button>
+                </div>
+              ) : (
+                filteredAssignments.map((assignment) => {
+                  const selected = assignment.id === selectedAssignmentId;
+                  return (
+                    <button
+                      key={assignment.id}
+                      type="button"
+                      onClick={() => setSelectedAssignmentId(assignment.id)}
+                      className={`group relative w-full overflow-hidden rounded-[24px] border p-4 text-left transition ${
+                        selected
+                          ? 'border-[#3D08BA]/25 bg-[linear-gradient(135deg,_rgba(61,8,186,0.08),_rgba(255,255,255,0.96)_55%)] shadow-[0_22px_50px_rgba(61,8,186,0.12)]'
+                          : 'border-slate-200/80 bg-white hover:border-[#3D08BA]/18 hover:shadow-[0_16px_36px_rgba(15,23,42,0.07)]'
+                      }`}
+                    >
+                      <span
+                        className={`absolute inset-y-4 left-0 w-1 rounded-full transition ${
+                          selected ? 'bg-[#3D08BA]' : 'bg-transparent group-hover:bg-[#3D08BA]/25'
+                        }`}
+                      />
+                      <div className="pl-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded-full border border-[#3D08BA]/18 bg-[#3D08BA]/7 px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA]">
+                                {assignment.type === 'assignment' ? 'Homework' : 'Classwork'}
+                              </span>
+                              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                                {getAssignmentStatusLabel(assignment)}
+                              </span>
+                            </div>
+                            <h2 className="mt-3 line-clamp-2 text-sm font-semibold text-slate-900 sm:text-[15px]">{assignment.title}</h2>
+                            <p className="mt-1 text-sm text-slate-500">
+                              {assignment.subject} • {assignment.department} • {assignment.classGroup}
+                            </p>
+                          </div>
+                          <span
+                            className={`inline-flex h-9 w-9 items-center justify-center rounded-2xl border ${
+                              selected
+                                ? 'border-[#3D08BA]/18 bg-[#3D08BA]/10 text-[#3D08BA]'
+                                : 'border-slate-200 bg-slate-50 text-slate-300'
+                            }`}
+                          >
+                            <SparklesIcon className="h-4.5 w-4.5" />
                           </span>
                         </div>
-                        <h2 className="mt-3 text-base font-semibold text-slate-900">{assignment.title}</h2>
-                        <p className="mt-1 text-sm text-slate-500">{assignment.subject} • {assignment.department} • {assignment.classGroup}</p>
+
+                        <p className="mt-3 line-clamp-2 text-sm leading-6 text-slate-600">{assignment.description}</p>
+
+                        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                          <div className="rounded-[18px] border border-slate-200/80 bg-white/90 px-3 py-2.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Due date</p>
+                            <p className="mt-1 text-xs font-medium text-slate-700">{formatDateTime(assignment.dueAt)}</p>
+                          </div>
+                          <div className="rounded-[18px] border border-slate-200/80 bg-white/90 px-3 py-2.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Submissions</p>
+                            <p className="mt-1 text-xs font-medium text-slate-700">
+                              {assignment.submissionsCount} total • {assignment.gradedCount} graded
+                            </p>
+                          </div>
+                        </div>
                       </div>
-                      <SparklesIcon className={`h-5 w-5 ${selected ? 'text-[#3D08BA]' : 'text-slate-300'}`} />
-                    </div>
-                    <p className="mt-3 line-clamp-2 text-sm leading-6 text-slate-600">{assignment.description}</p>
-                    <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-slate-500">
-                      <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
-                        <p className="font-semibold text-slate-700">Due</p>
-                        <p className="mt-1">{formatDateTime(assignment.dueAt)}</p>
-                      </div>
-                      <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
-                        <p className="font-semibold text-slate-700">Submissions</p>
-                        <p className="mt-1">{assignment.submissionsCount} total • {assignment.gradedCount} graded</p>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })
-            )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </div>
 
-          <div className="rounded-[32px] border border-white/80 bg-white/92 p-5 shadow-[0_24px_60px_rgba(15,23,42,0.08)] sm:p-6">
+          <div className="overflow-hidden rounded-[32px] border border-white/80 bg-white/95 shadow-[0_24px_60px_rgba(15,23,42,0.08)] ring-1 ring-slate-100/70">
             {!selectedAssignment ? (
-              <div className="flex h-full min-h-[420px] flex-col items-center justify-center text-center">
+              <div className="flex min-h-[460px] flex-col items-center justify-center px-6 py-10 text-center">
                 <ClipboardDocumentListIcon className="h-12 w-12 text-slate-300" />
                 <h2 className="mt-4 text-lg font-semibold text-slate-900">Select a task</h2>
-                <p className="mt-2 max-w-md text-sm text-slate-500">Choose any assignment on the left to review instructions, release settings, and student submissions.</p>
+                <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
+                  Choose any assignment on the left to review instructions, release settings, and student submissions.
+                </p>
               </div>
             ) : (
-              <div className="space-y-6">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full border border-[#3D08BA]/20 bg-[#3D08BA]/8 px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA]">
-                        {selectedAssignment.type === 'assignment' ? 'Homework' : 'Classwork'}
-                      </span>
-                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
-                        {getAssignmentStatusLabel(selectedAssignment)}
-                      </span>
+              <div>
+                <div className="relative overflow-hidden border-b border-slate-200/80 bg-[linear-gradient(135deg,_rgba(255,255,255,0.98),_rgba(248,250,252,0.96)_58%,_rgba(245,243,255,0.94))] px-5 py-5 sm:px-6">
+                  <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-64 bg-[radial-gradient(circle_at_center,_rgba(61,8,186,0.09),_transparent_72%)] lg:block" />
+                  <div className="relative flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-[#3D08BA]/18 bg-[#3D08BA]/7 px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA]">
+                          {selectedAssignment.type === 'assignment' ? 'Homework' : 'Classwork'}
+                        </span>
+                        <span className="rounded-full border border-slate-200 bg-white/92 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                          {getAssignmentStatusLabel(selectedAssignment)}
+                        </span>
+                      </div>
+
+                      <div>
+                        <h2 className="text-2xl font-semibold tracking-tight text-slate-950">{selectedAssignment.title}</h2>
+                        <p className="mt-2 text-sm text-slate-500">
+                          {selectedAssignment.subject} • {selectedAssignment.department} • {selectedAssignment.classGroup}
+                        </p>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-[22px] border border-slate-200/80 bg-white/92 px-4 py-3.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Release</p>
+                          <p className="mt-1.5 text-sm font-semibold leading-6 text-slate-900">
+                            {selectedAssignment.releaseMode === 'immediate'
+                              ? 'Visible immediately'
+                              : selectedAssignment.releaseMode === 'scheduled'
+                                ? `Opens ${formatDateTime(selectedAssignment.releaseAt)}`
+                                : selectedAssignment.sessionId
+                                  ? `Opens when ${selectedAssignment.linkedSessionStatus === 'completed' ? 'class has ended' : 'linked class ends'}`
+                                  : 'Waiting for linked class'}
+                          </p>
+                        </div>
+                        <div className="rounded-[22px] border border-slate-200/80 bg-white/92 px-4 py-3.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Due date</p>
+                          <p className="mt-1.5 text-sm font-semibold leading-6 text-slate-900">{formatDateTime(selectedAssignment.dueAt)}</p>
+                        </div>
+                        <div className="rounded-[22px] border border-[#3D08BA]/12 bg-[#3D08BA]/5 px-4 py-3.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]/60">Total marks</p>
+                          <p className="mt-1.5 text-sm font-semibold leading-6 text-[#3D08BA]">
+                            {selectedAssignment.type === 'classwork'
+                              ? selectedAssignment.questions.reduce((total, question) => total + question.points, 0)
+                              : selectedAssignment.points}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                    <h2 className="mt-3 text-2xl font-semibold text-slate-900">{selectedAssignment.title}</h2>
-                    <p className="mt-2 text-sm text-slate-500">{selectedAssignment.subject} • {selectedAssignment.department} • {selectedAssignment.classGroup}</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openEditModal(selectedAssignment)}
-                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
-                    >
-                      <PencilSquareIcon className="h-5 w-5" />
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleDeleteAssignment(selectedAssignment)}
-                      className="inline-flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-100"
-                    >
-                      <TrashIcon className="h-5 w-5" />
-                      Delete
-                    </button>
+
+                    <div className="relative flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(selectedAssignment)}
+                        className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white/95 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
+                      >
+                        <PencilSquareIcon className="h-5 w-5" />
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteAssignment(selectedAssignment)}
+                        className="inline-flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-100"
+                      >
+                        <TrashIcon className="h-5 w-5" />
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-3">
-                  <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Release</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900">
-                      {selectedAssignment.releaseMode === 'immediate'
-                        ? 'Visible immediately'
-                        : selectedAssignment.releaseMode === 'scheduled'
-                          ? `Opens ${formatDateTime(selectedAssignment.releaseAt)}`
-                          : selectedAssignment.sessionId
-                            ? `Opens when ${selectedAssignment.linkedSessionStatus === 'completed' ? 'class has ended' : 'linked class ends'}`
-                            : 'Waiting for linked class'}
-                    </p>
-                  </div>
-                  <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Due date</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900">{formatDateTime(selectedAssignment.dueAt)}</p>
-                  </div>
-                  <div className="rounded-[24px] border border-slate-200 bg-slate-50 px-4 py-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Total marks</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900">
-                      {selectedAssignment.type === 'classwork'
-                        ? selectedAssignment.questions.reduce((total, question) => total + question.points, 0)
-                        : selectedAssignment.points}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+                <div className="grid gap-4 p-5 sm:p-6 xl:grid-cols-[minmax(0,1fr)_320px]">
                   <div className="space-y-4">
-                    <section className="rounded-[26px] border border-slate-200 bg-white p-5">
-                      <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Task summary</h3>
-                      <p className="mt-3 text-sm leading-7 text-slate-600">{selectedAssignment.description}</p>
-                      <div className="mt-4 rounded-2xl border border-[#3D08BA]/15 bg-[#3D08BA]/5 p-4 text-sm leading-7 text-slate-700">
+                    <section className="rounded-[28px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_32px_rgba(15,23,42,0.04)]">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Task summary</p>
+                          <h3 className="mt-1 text-base font-semibold text-slate-900">Instructions for students</h3>
+                        </div>
+                        <p className="text-xs text-slate-400">Review what students see before they submit.</p>
+                      </div>
+
+                      <p className="mt-4 text-sm leading-7 text-slate-600">{selectedAssignment.description}</p>
+                      <div className="mt-4 rounded-[22px] border border-[#3D08BA]/14 bg-[linear-gradient(135deg,_rgba(61,8,186,0.08),_rgba(255,255,255,0.96))] p-4 text-sm leading-7 text-slate-700">
                         {selectedAssignment.content}
                       </div>
+
                       {selectedAssignment.checklist.length > 0 ? (
-                        <div className="mt-4">
-                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Student checklist</p>
-                          <ul className="mt-3 space-y-2 text-sm text-slate-600">
+                        <div className="mt-5 rounded-[22px] border border-slate-200/80 bg-slate-50/70 p-4">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Student checklist</p>
+                          <ul className="mt-3 space-y-2.5 text-sm text-slate-600">
                             {selectedAssignment.checklist.map((item) => (
                               <li key={`${selectedAssignment.id}-${item}`} className="flex items-start gap-2">
                                 <CheckCircleIcon className="mt-0.5 h-4 w-4 text-emerald-500" />
@@ -913,16 +1086,35 @@ const SchoolAssignments = () => {
                     </section>
 
                     {selectedAssignment.type === 'classwork' ? (
-                      <section className="rounded-[26px] border border-slate-200 bg-white p-5">
-                        <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Question set</h3>
+                      <section className="rounded-[28px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_32px_rgba(15,23,42,0.04)]">
+                        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Question set</p>
+                            <h3 className="mt-1 text-base font-semibold text-slate-900">Review marked answers</h3>
+                          </div>
+                          <p className="text-xs text-slate-400">{selectedAssignment.questions.length} questions</p>
+                        </div>
+
                         <div className="mt-4 space-y-3">
                           {selectedAssignment.questions.map((question, index) => (
-                            <article key={question.id || `${selectedAssignment.id}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                              <p className="text-sm font-semibold text-slate-900">Q{index + 1}. {question.prompt}</p>
+                            <article
+                              key={question.id || `${selectedAssignment.id}-${index}`}
+                              className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 p-4"
+                            >
+                              <p className="text-sm font-semibold leading-6 text-slate-900">
+                                Q{index + 1}. {question.prompt}
+                              </p>
                               <p className="mt-1 text-xs text-slate-500">{question.points} marks</p>
                               <ul className="mt-3 space-y-2 text-sm text-slate-600">
                                 {question.options.map((option) => (
-                                  <li key={option.id || option.text} className={`rounded-xl border px-3 py-2 ${option.id === question.correctOptionId ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white'}`}>
+                                  <li
+                                    key={option.id || option.text}
+                                    className={`rounded-xl border px-3 py-2 ${
+                                      option.id === question.correctOptionId
+                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                        : 'border-slate-200 bg-white'
+                                    }`}
+                                  >
                                     {option.text}
                                   </li>
                                 ))}
@@ -935,60 +1127,104 @@ const SchoolAssignments = () => {
                   </div>
 
                   <aside className="space-y-4">
-                    <section className="rounded-[26px] border border-slate-200 bg-slate-50 p-5">
-                      <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Submission progress</h3>
+                    <section className="rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,_rgba(248,250,252,0.95),_rgba(255,255,255,0.98))] p-5 shadow-[0_14px_32px_rgba(15,23,42,0.04)]">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Submission progress</p>
+                          <h3 className="mt-1 text-base font-semibold text-slate-900">Grading overview</h3>
+                        </div>
+                        <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                          {selectedAssignment.submissionsCount} total
+                        </span>
+                      </div>
+
                       <div className="mt-4 space-y-3 text-sm text-slate-600">
-                        <div className="flex items-center justify-between rounded-2xl border border-white bg-white px-4 py-3">
+                        <div className="flex items-center justify-between rounded-[20px] border border-white bg-white px-4 py-3">
                           <span>Students submitted</span>
                           <span className="font-semibold text-slate-900">{selectedAssignment.submissionsCount}</span>
                         </div>
-                        <div className="flex items-center justify-between rounded-2xl border border-white bg-white px-4 py-3">
+                        <div className="flex items-center justify-between rounded-[20px] border border-white bg-white px-4 py-3">
                           <span>Reviewed</span>
                           <span className="font-semibold text-slate-900">{selectedAssignment.gradedCount}</span>
                         </div>
-                        <div className="flex items-center justify-between rounded-2xl border border-white bg-white px-4 py-3">
+                        <div className="flex items-center justify-between rounded-[20px] border border-white bg-white px-4 py-3">
                           <span>Still waiting</span>
-                          <span className="font-semibold text-slate-900">{Math.max(0, selectedAssignment.submissionsCount - selectedAssignment.gradedCount)}</span>
+                          <span className="font-semibold text-slate-900">
+                            {Math.max(0, selectedAssignment.submissionsCount - selectedAssignment.gradedCount)}
+                          </span>
                         </div>
                       </div>
                     </section>
 
-                    <section className="rounded-[26px] border border-slate-200 bg-slate-50 p-5">
-                      <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Submissions</h3>
+                    <section className="rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,_rgba(248,250,252,0.95),_rgba(255,255,255,0.98))] p-5 shadow-[0_14px_32px_rgba(15,23,42,0.04)]">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Submissions</p>
+                          <h3 className="mt-1 text-base font-semibold text-slate-900">Student work queue</h3>
+                        </div>
+                        <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                          {submissions.length}
+                        </span>
+                      </div>
+
                       <div className="mt-4 space-y-3">
                         {submissionsLoading ? (
-                          <p className="text-sm text-slate-500">Loading student work...</p>
+                          <div className="rounded-[20px] border border-dashed border-slate-300 bg-white px-4 py-4 text-sm text-slate-500">
+                            Loading student work...
+                          </div>
                         ) : submissions.length === 0 ? (
-                          <p className="text-sm text-slate-500">No student has submitted this task yet.</p>
+                          <div className="rounded-[20px] border border-dashed border-slate-300 bg-white px-4 py-4 text-sm text-slate-500">
+                            No student has submitted this task yet.
+                          </div>
                         ) : (
                           submissions.map((submission) => (
-                            <article key={submission.id} className="rounded-2xl border border-white bg-white p-4 text-sm text-slate-600">
+                            <article
+                              key={submission.id}
+                              className="rounded-[22px] border border-white bg-white p-4 text-sm text-slate-600 shadow-[0_10px_22px_rgba(15,23,42,0.03)]"
+                            >
                               <div className="flex items-start justify-between gap-3">
-                                <div>
+                                <div className="min-w-0">
                                   <p className="font-semibold text-slate-900">{submission.studentName}</p>
-                                  <p className="mt-1 text-xs text-slate-500">Submitted {formatDateTime(submission.submittedAt)}{submission.lateSubmission ? ' • Late' : ''}</p>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    Submitted {formatDateTime(submission.submittedAt)}
+                                    {submission.lateSubmission ? ' • Late' : ''}
+                                  </p>
                                 </div>
-                                <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${submission.status === 'graded' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                <span
+                                  className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                                    submission.status === 'graded' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                                  }`}
+                                >
                                   {submission.status === 'graded' ? 'Graded' : 'Needs review'}
                                 </span>
                               </div>
+
                               {submission.submissionNote ? (
-                                <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">{submission.submissionNote}</p>
+                                <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                                  {submission.submissionNote}
+                                </p>
                               ) : null}
+
                               {submission.submissionFiles && submission.submissionFiles.length > 0 ? (
                                 <div className="mt-3 flex flex-wrap gap-2">
                                   {submission.submissionFiles.map((file) => (
-                                    <span key={`${submission.id}-${file.name}-${file.sizeBytes}`} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                                    <span
+                                      key={`${submission.id}-${file.name}-${file.sizeBytes}`}
+                                      className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600"
+                                    >
                                       {file.name}
                                     </span>
                                   ))}
                                 </div>
                               ) : null}
+
                               {submission.questionResults && submission.questionResults.length > 0 ? (
                                 <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                                  {submission.questionResults.filter((result) => result.isCorrect).length} / {submission.questionResults.length} questions correct
+                                  {submission.questionResults.filter((result) => result.isCorrect).length} / {submission.questionResults.length}{' '}
+                                  questions correct
                                 </div>
                               ) : null}
+
                               <div className="mt-4 flex items-center justify-between gap-3">
                                 <div>
                                   <p className="text-xs text-slate-500">Score</p>
