@@ -20,6 +20,10 @@ import {
   joinCsvRow,
   schoolReportStyles,
 } from '../../../utils/exportFiles';
+import {
+  fetchStudentExams,
+  type SchoolExam,
+} from '../../schools/utils/examsApi';
 import { loadStudentIdentity } from '../utils/studentIdentity';
 
 type WeeklyMetric = {
@@ -58,17 +62,38 @@ type OverallMetrics = {
 type ReportSnapshot = {
   studentName: string;
   generatedAt: string;
+  academicProfile: string;
   overallScore: number;
   completionRate: number;
   onTimeRate: number;
   averageStudyHours: number;
   trendDelta: number;
   attendanceRate: number;
+  publishedResultsCount: number;
+  awaitingReleaseCount: number;
+  latestPublishedAt: string | null;
   strongestSubjects: SubjectMetric[];
   riskSubjects: SubjectMetric[];
   weeklyMetrics: WeeklyMetric[];
   subjectMetrics: SubjectMetric[];
+  resultLedgerEntries: ResultLedgerEntry[];
   recommendations: string[];
+};
+
+type ResultLedgerEntry = {
+  examId: string;
+  title: string;
+  subject: string;
+  department: string;
+  classGroup: string;
+  publishedAt: string;
+  score: number;
+  maxScore: number;
+  percentage: number;
+  level: 'primary' | 'secondary' | 'tertiary';
+  gradingScheme: string;
+  gradeLabel: string;
+  gradePoint: string | null;
 };
 
 type PerformanceApiResponse = {
@@ -137,6 +162,150 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 const formatPercent = (value: number) => `${Math.round(value)}%`;
 
 const formatTrend = (value: number) => `${value >= 0 ? '+' : ''}${round(value)}%`;
+
+const formatDateTime = (value: string | null | undefined, variant: 'compact' | 'full' = 'compact') => {
+  if (!value) {
+    return 'Not available';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return 'Invalid date';
+  }
+
+  return parsed.toLocaleString([], {
+    weekday: variant === 'full' ? 'short' : undefined,
+    day: 'numeric',
+    month: 'short',
+    year: variant === 'full' ? 'numeric' : undefined,
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+};
+
+const resolveEducationLevel = (
+  schoolLevel: ReturnType<typeof loadStudentIdentity>['schoolLevel'],
+  classGroup: string
+): 'primary' | 'secondary' | 'tertiary' => {
+  if (schoolLevel === 'primary' || schoolLevel === 'secondary' || schoolLevel === 'tertiary') {
+    return schoolLevel;
+  }
+
+  const normalized = classGroup.trim().toLowerCase();
+  if (/(nursery|creche|kg|primary|basic)/.test(normalized)) {
+    return 'primary';
+  }
+  if (/(nd|hnd|poly|university|college|100|200|300|400|500|600|level)/.test(normalized)) {
+    return 'tertiary';
+  }
+  return 'secondary';
+};
+
+const resolveGradeLabel = (
+  level: 'primary' | 'secondary' | 'tertiary',
+  score: number,
+  maxScore: number
+) => {
+  const percentage = maxScore > 0 ? (score / maxScore) * 100 : 0;
+  if (level === 'tertiary') {
+    if (percentage >= 70) return 'A';
+    if (percentage >= 60) return 'B';
+    if (percentage >= 50) return 'C';
+    if (percentage >= 45) return 'D';
+    if (percentage >= 40) return 'E';
+    return 'F';
+  }
+
+  if (level === 'primary') {
+    if (percentage >= 80) return 'Distinction';
+    if (percentage >= 70) return 'Excellent';
+    if (percentage >= 60) return 'Very Good';
+    if (percentage >= 50) return 'Good';
+    if (percentage >= 40) return 'Pass';
+    return 'Needs Improvement';
+  }
+
+  if (percentage >= 70) return 'A';
+  if (percentage >= 60) return 'B';
+  if (percentage >= 50) return 'C';
+  if (percentage >= 45) return 'D';
+  if (percentage >= 40) return 'E';
+  return 'F';
+};
+
+const resolveGradeLabelWithScheme = (
+  level: 'primary' | 'secondary' | 'tertiary',
+  scheme: string,
+  score: number,
+  maxScore: number
+) => {
+  if (level === 'secondary' && scheme === 'waec') {
+    const percentage = maxScore > 0 ? (score / maxScore) * 100 : 0;
+    if (percentage >= 75) return 'A1';
+    if (percentage >= 70) return 'B2';
+    if (percentage >= 65) return 'B3';
+    if (percentage >= 60) return 'C4';
+    if (percentage >= 55) return 'C5';
+    if (percentage >= 50) return 'C6';
+    if (percentage >= 45) return 'D7';
+    if (percentage >= 40) return 'E8';
+    return 'F9';
+  }
+
+  if (level === 'primary' && scheme === 'letter') {
+    return resolveGradeLabel('secondary', score, maxScore);
+  }
+
+  return resolveGradeLabel(level, score, maxScore);
+};
+
+const computeGradePoint = (score: number, maxScore: number, scheme: string) => {
+  if (maxScore <= 0) {
+    return null;
+  }
+
+  const scale = scheme === 'cgpa-4' ? 4 : 5;
+  return `${((score / maxScore) * scale).toFixed(2)}`;
+};
+
+const formatGradingSchemeLabel = (
+  level: 'primary' | 'secondary' | 'tertiary',
+  scheme: string
+) => {
+  if (level === 'secondary' && scheme === 'waec') {
+    return 'WAEC grading';
+  }
+  if (level === 'tertiary' && scheme === 'cgpa-4') {
+    return '4-point GPA';
+  }
+  if (level === 'tertiary' && scheme === 'cgpa-5') {
+    return '5-point GPA';
+  }
+  if (level === 'primary' && scheme === 'letter') {
+    return 'Letter grade scale';
+  }
+  return 'Standard grading';
+};
+
+const resolveGradingScheme = (
+  exam: SchoolExam,
+  level: 'primary' | 'secondary' | 'tertiary'
+) => {
+  const schemeMap = exam.gradingScheme;
+  if (schemeMap) {
+    if (level === 'primary' && schemeMap.primary) return schemeMap.primary;
+    if (level === 'secondary' && schemeMap.secondary) return schemeMap.secondary;
+    if (level === 'tertiary' && schemeMap.tertiary) return schemeMap.tertiary;
+  }
+
+  if (level === 'secondary') {
+    return 'waec';
+  }
+  if (level === 'tertiary') {
+    return 'cgpa-5';
+  }
+  return 'standard';
+};
 
 const getStatusLabel = (score: number) => {
   if (score >= 90) {
@@ -221,16 +390,21 @@ const buildReportText = (params: ReportSnapshot) => {
   const {
     studentName,
     generatedAt,
+    academicProfile,
     overallScore,
     completionRate,
     onTimeRate,
     averageStudyHours,
     trendDelta,
     attendanceRate,
+    publishedResultsCount,
+    awaitingReleaseCount,
+    latestPublishedAt,
     strongestSubjects,
     riskSubjects,
     weeklyMetrics,
     subjectMetrics,
+    resultLedgerEntries,
     recommendations,
   } = params;
 
@@ -238,6 +412,7 @@ const buildReportText = (params: ReportSnapshot) => {
     'EDAMAA STUDENT PERFORMANCE REPORT',
     '=================================',
     `Student: ${studentName}`,
+    `Academic profile: ${academicProfile}`,
     `Generated: ${generatedAt}`,
     '',
     'EXECUTIVE SUMMARY',
@@ -248,6 +423,9 @@ const buildReportText = (params: ReportSnapshot) => {
     `Attendance rate: ${formatPercent(attendanceRate)}`,
     `Average weekly study: ${round(averageStudyHours)} hrs`,
     `12-week trend: ${formatTrend(trendDelta)}`,
+    `Published exam results: ${publishedResultsCount}`,
+    `Awaiting release: ${awaitingReleaseCount}`,
+    `Latest published result: ${formatDateTime(latestPublishedAt, 'full')}`,
     '',
     'WEEKLY TREND',
     '------------',
@@ -266,6 +444,20 @@ const buildReportText = (params: ReportSnapshot) => {
       `${subject.subject}: Score ${subject.averageScore}% | Completion ${subject.completionRate}% | On-time ${subject.onTimeRate}% | Attempts ${subject.attempts} | Trend ${formatTrend(subject.trend)}`
     );
   });
+
+  lines.push('', 'PUBLISHED RESULT LEDGER', '-----------------------');
+
+  if (resultLedgerEntries.length === 0) {
+    lines.push('No published exam results available for the current class profile.');
+  } else {
+    resultLedgerEntries.forEach((entry) => {
+      lines.push(
+        `${entry.title} (${entry.subject}) | ${entry.score}/${entry.maxScore} | ${Math.round(entry.percentage)}% | ${entry.gradeLabel}${
+          entry.gradePoint ? ` | ${entry.gradePoint}` : ''
+        } | Released ${formatDateTime(entry.publishedAt, 'full')}`
+      );
+    });
+  }
 
   lines.push('', 'KEY INSIGHTS', '------------');
 
@@ -288,22 +480,28 @@ const buildReportCsv = (params: ReportSnapshot) => {
   const {
     studentName,
     generatedAt,
+    academicProfile,
     overallScore,
     completionRate,
     onTimeRate,
     averageStudyHours,
     trendDelta,
     attendanceRate,
+    publishedResultsCount,
+    awaitingReleaseCount,
+    latestPublishedAt,
     strongestSubjects,
     riskSubjects,
     weeklyMetrics,
     subjectMetrics,
+    resultLedgerEntries,
     recommendations,
   } = params;
 
   const lines: string[] = [
     joinCsvRow(['Section', 'Metric', 'Value']),
     joinCsvRow(['Student', 'Name', studentName]),
+    joinCsvRow(['Student', 'Academic Profile', academicProfile]),
     joinCsvRow(['Student', 'Generated At', generatedAt]),
     joinCsvRow(['Executive Summary', 'Overall Score (%)', round(overallScore)]),
     joinCsvRow(['Executive Summary', 'Completion Rate (%)', round(completionRate)]),
@@ -311,6 +509,9 @@ const buildReportCsv = (params: ReportSnapshot) => {
     joinCsvRow(['Executive Summary', 'Attendance Rate (%)', round(attendanceRate)]),
     joinCsvRow(['Executive Summary', 'Average Weekly Study (hrs)', round(averageStudyHours)]),
     joinCsvRow(['Executive Summary', '12-Week Trend Delta (%)', round(trendDelta)]),
+    joinCsvRow(['Executive Summary', 'Published Results', publishedResultsCount]),
+    joinCsvRow(['Executive Summary', 'Awaiting Release', awaitingReleaseCount]),
+    joinCsvRow(['Executive Summary', 'Latest Published Result', formatDateTime(latestPublishedAt, 'full')]),
     '',
     joinCsvRow(['Weekly Trend']),
     joinCsvRow(['Week', 'Score (%)', 'Completion (%)', 'Study Hours']),
@@ -338,6 +539,42 @@ const buildReportCsv = (params: ReportSnapshot) => {
       ])
     );
   });
+
+  lines.push(
+    '',
+    joinCsvRow(['Published Result Ledger']),
+    joinCsvRow([
+      'Exam',
+      'Subject',
+      'Class Lane',
+      'Released',
+      'Score',
+      'Percentage',
+      'Grade',
+      'Grade Point',
+      'Grading Scheme',
+    ])
+  );
+
+  if (resultLedgerEntries.length === 0) {
+    lines.push(joinCsvRow(['No published results', '', '', '', '', '', '', '', '']));
+  } else {
+    resultLedgerEntries.forEach((entry) => {
+      lines.push(
+        joinCsvRow([
+          entry.title,
+          entry.subject,
+          [entry.department, entry.classGroup].filter(Boolean).join(' • '),
+          formatDateTime(entry.publishedAt, 'full'),
+          `${entry.score}/${entry.maxScore}`,
+          Math.round(entry.percentage),
+          entry.gradeLabel,
+          entry.gradePoint || '--',
+          formatGradingSchemeLabel(entry.level, entry.gradingScheme),
+        ])
+      );
+    });
+  }
 
   lines.push(
     '',
@@ -506,8 +743,23 @@ const Performancestats = () => {
   const [recommendations, setRecommendations] = useState<string[]>(FALLBACK_RECOMMENDATIONS);
   const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(false);
   const [analyticsNotice, setAnalyticsNotice] = useState('Syncing your latest performance insights...');
+  const [isResultLedgerLoading, setIsResultLedgerLoading] = useState(false);
+  const [resultLedgerNotice, setResultLedgerNotice] = useState('');
+  const [resultLedgerEntries, setResultLedgerEntries] = useState<ResultLedgerEntry[]>([]);
+  const [awaitingReleaseCount, setAwaitingReleaseCount] = useState(0);
 
   const studentIdentity = useMemo(() => loadStudentIdentity(), []);
+  const normalizedDepartment = useMemo(() => studentIdentity.department?.trim() || '', [studentIdentity.department]);
+  const normalizedClassGroup = useMemo(() => studentIdentity.classGroup?.trim() || '', [studentIdentity.classGroup]);
+  const academicProfile = useMemo(() => {
+    const segments = [
+      studentIdentity.schoolLevel ? `${studentIdentity.schoolLevel} level` : '',
+      normalizedDepartment,
+      normalizedClassGroup,
+    ].filter(Boolean);
+
+    return segments.length > 0 ? segments.join(' • ') : 'Academic profile pending';
+  }, [normalizedClassGroup, normalizedDepartment, studentIdentity.schoolLevel]);
 
   const studentName = useMemo(() => {
     if (typeof window === 'undefined') {
@@ -687,6 +939,107 @@ const Performancestats = () => {
     };
   }, [learnerKey]);
 
+  useEffect(() => {
+    let active = true;
+
+    const loadResultLedger = async () => {
+      if (!normalizedDepartment || !normalizedClassGroup) {
+        setResultLedgerEntries([]);
+        setAwaitingReleaseCount(0);
+        setResultLedgerNotice('Add your department and class in your profile to unlock your published result ledger.');
+        setIsResultLedgerLoading(false);
+        return;
+      }
+
+      setIsResultLedgerLoading(true);
+      try {
+        const payload = await fetchStudentExams({
+          department: normalizedDepartment,
+          classGroup: normalizedClassGroup,
+        });
+
+        if (!active) {
+          return;
+        }
+
+        const examLookup = (Array.isArray(payload.exams) ? payload.exams : []).reduce<Record<string, SchoolExam>>(
+          (collection, exam) => {
+            collection[exam.id] = exam;
+            return collection;
+          },
+          {}
+        );
+
+        const submissions = Array.isArray(payload.submissions) ? payload.submissions : [];
+        const nextLedgerEntries = submissions
+          .flatMap((submission) => {
+            if (submission.status !== 'published' || typeof submission.score !== 'number') {
+              return [];
+            }
+
+            const exam = examLookup[submission.examId];
+            if (!exam) {
+              return [];
+            }
+
+            const level = resolveEducationLevel(studentIdentity.schoolLevel, exam.classGroup);
+            const gradingScheme = resolveGradingScheme(exam, level);
+            const percentage = submission.maxScore > 0 ? (submission.score / submission.maxScore) * 100 : 0;
+
+            return [
+              {
+                examId: exam.id,
+                title: exam.title,
+                subject: exam.subject,
+                department: exam.department,
+                classGroup: exam.classGroup,
+                publishedAt: submission.publishedAt || submission.gradedAt || submission.submittedAt,
+                score: submission.score,
+                maxScore: submission.maxScore,
+                percentage,
+                level,
+                gradingScheme,
+                gradeLabel: resolveGradeLabelWithScheme(level, gradingScheme, submission.score, submission.maxScore),
+                gradePoint:
+                  level === 'tertiary' ? computeGradePoint(submission.score, submission.maxScore, gradingScheme) : null,
+              },
+            ];
+          })
+          .sort((left, right) => new Date(right.publishedAt).getTime() - new Date(left.publishedAt).getTime());
+
+        setResultLedgerEntries(nextLedgerEntries);
+        setAwaitingReleaseCount(
+          submissions.filter((submission) => submission.status === 'submitted' || submission.status === 'graded').length
+        );
+        setResultLedgerNotice(
+          nextLedgerEntries.length === 0
+            ? 'No published exam results yet for your current class profile.'
+            : ''
+        );
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        const message =
+          error instanceof Error ? error.message : 'Could not load your published result ledger right now.';
+        setResultLedgerEntries([]);
+        setAwaitingReleaseCount(0);
+        setResultLedgerNotice(message);
+      } finally {
+        if (active) {
+          setIsResultLedgerLoading(false);
+        }
+      }
+    };
+
+    void loadResultLedger();
+
+    return () => {
+      active = false;
+    };
+  }, [normalizedClassGroup, normalizedDepartment, studentIdentity.schoolLevel]);
+
   const strongestSubjects = useMemo(
     () => [...subjectMetrics].sort((left, right) => right.averageScore - left.averageScore).slice(0, 2),
     [subjectMetrics]
@@ -709,21 +1062,61 @@ const Performancestats = () => {
     };
   }, [weeklyMetrics]);
 
+  const resultLedgerSnapshot = useMemo(() => {
+    const publishedResultsCount = resultLedgerEntries.length;
+    const averagePercentage =
+      publishedResultsCount > 0
+        ? resultLedgerEntries.reduce((total, entry) => total + entry.percentage, 0) / publishedResultsCount
+        : null;
+    const bestResult = [...resultLedgerEntries].sort((left, right) => right.percentage - left.percentage)[0] || null;
+    const latestPublishedAt = resultLedgerEntries[0]?.publishedAt || null;
+    const groupedBySubject = resultLedgerEntries.reduce<Record<string, { total: number; count: number }>>(
+      (collection, entry) => {
+        if (!collection[entry.subject]) {
+          collection[entry.subject] = { total: 0, count: 0 };
+        }
+        collection[entry.subject].total += entry.percentage;
+        collection[entry.subject].count += 1;
+        return collection;
+      },
+      {}
+    );
+    const strongestLedgerSubject = Object.entries(groupedBySubject)
+      .map(([subject, summary]) => ({
+        subject,
+        average: summary.total / Math.max(1, summary.count),
+      }))
+      .sort((left, right) => right.average - left.average)[0] || null;
+
+    return {
+      publishedResultsCount,
+      averagePercentage,
+      bestResult,
+      latestPublishedAt,
+      strongestLedgerSubject,
+    };
+  }, [resultLedgerEntries]);
+
   const buildReportSnapshot = () => {
     const generatedAt = new Date().toLocaleString();
     return {
       studentName,
       generatedAt,
+      academicProfile,
       overallScore: overallMetrics.overallScore,
       completionRate: overallMetrics.completionRate,
       onTimeRate: overallMetrics.onTimeRate,
       averageStudyHours: overallMetrics.averageStudyHours,
       trendDelta: overallMetrics.trendDelta,
       attendanceRate: overallMetrics.attendanceRate,
+      publishedResultsCount: resultLedgerSnapshot.publishedResultsCount,
+      awaitingReleaseCount,
+      latestPublishedAt: resultLedgerSnapshot.latestPublishedAt,
       strongestSubjects,
       riskSubjects,
       weeklyMetrics,
       subjectMetrics,
+      resultLedgerEntries,
       recommendations,
     };
   };
@@ -1034,6 +1427,146 @@ const Performancestats = () => {
               <p className="text-xs text-gray-500">Avg study / week</p>
               <p className="mt-1 text-2xl font-bold text-gray-900">{overallMetrics.averageStudyHours}h</p>
             </article>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">Result ledger</p>
+              <h2 className="mt-1 text-xl font-semibold text-gray-900">Published exam results</h2>
+              <p className="mt-1 text-sm text-gray-600">
+                Released scores tied to your saved academic profile, with quick access back to the full exam result.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700">
+                {academicProfile}
+              </span>
+              <button
+                type="button"
+                onClick={() => navigate('/student-exams')}
+                className="inline-flex items-center rounded-lg border border-[#3D08BA]/20 px-3 py-2 text-sm font-semibold text-[#3D08BA] transition-colors hover:bg-[#3D08BA]/5"
+              >
+                Open exam centre
+              </button>
+            </div>
+          </div>
+
+          {resultLedgerNotice && (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+              {resultLedgerNotice}
+            </div>
+          )}
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <article className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs text-gray-500">Published results</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{resultLedgerSnapshot.publishedResultsCount}</p>
+            </article>
+            <article className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs text-gray-500">Average released score</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">
+                {resultLedgerSnapshot.averagePercentage === null
+                  ? '--'
+                  : `${Math.round(resultLedgerSnapshot.averagePercentage)}%`}
+              </p>
+            </article>
+            <article className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs text-gray-500">Best subject</p>
+              <p className="mt-1 text-lg font-bold text-gray-900">
+                {resultLedgerSnapshot.strongestLedgerSubject?.subject || '--'}
+              </p>
+              <p className="mt-1 text-xs text-gray-500">
+                {resultLedgerSnapshot.strongestLedgerSubject
+                  ? `${Math.round(resultLedgerSnapshot.strongestLedgerSubject.average)}% average`
+                  : 'Waiting for released results'}
+              </p>
+            </article>
+            <article className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs text-gray-500">Awaiting release</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{awaitingReleaseCount}</p>
+              <p className="mt-1 text-xs text-gray-500">
+                {resultLedgerSnapshot.latestPublishedAt
+                  ? `Latest release ${formatDateTime(resultLedgerSnapshot.latestPublishedAt, 'compact')}`
+                  : 'No released result yet'}
+              </p>
+            </article>
+          </div>
+
+          <div className="mt-5 overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-xs uppercase tracking-wide text-gray-500">
+                  <th className="px-2 py-2 font-semibold">Assessment</th>
+                  <th className="px-2 py-2 font-semibold">Released</th>
+                  <th className="px-2 py-2 font-semibold">Score</th>
+                  <th className="px-2 py-2 font-semibold">Grade</th>
+                  <th className="px-2 py-2 font-semibold">Scheme</th>
+                  <th className="px-2 py-2 font-semibold">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {isResultLedgerLoading && (
+                  <tr>
+                    <td colSpan={6} className="px-2 py-4 text-sm text-gray-500">
+                      Loading published result ledger...
+                    </td>
+                  </tr>
+                )}
+
+                {!isResultLedgerLoading && resultLedgerEntries.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-2 py-4 text-sm text-gray-500">
+                      No published results available for this student profile yet.
+                    </td>
+                  </tr>
+                )}
+
+                {!isResultLedgerLoading &&
+                  resultLedgerEntries.map((entry) => (
+                    <tr key={entry.examId} className="border-b border-gray-100 last:border-b-0">
+                      <td className="px-2 py-3">
+                        <p className="font-semibold text-gray-900">{entry.title}</p>
+                        <p className="mt-1 text-xs text-gray-500">
+                          {entry.subject} • {[entry.department, entry.classGroup].filter(Boolean).join(' • ')}
+                        </p>
+                      </td>
+                      <td className="px-2 py-3 text-gray-700">{formatDateTime(entry.publishedAt, 'compact')}</td>
+                      <td className="px-2 py-3">
+                        <p className="font-semibold text-gray-900">
+                          {entry.score}/{entry.maxScore}
+                        </p>
+                        <p className="text-xs text-gray-500">{Math.round(entry.percentage)}%</p>
+                      </td>
+                      <td className="px-2 py-3">
+                        <p className="font-semibold text-gray-900">{entry.gradeLabel}</p>
+                        <p className="text-xs text-gray-500">{entry.gradePoint || 'No grade point'}</p>
+                      </td>
+                      <td className="px-2 py-3 text-gray-700">
+                        {formatGradingSchemeLabel(entry.level, entry.gradingScheme)}
+                      </td>
+                      <td className="px-2 py-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const params = new URLSearchParams({
+                              examId: entry.examId,
+                              department: entry.department,
+                              classGroup: entry.classGroup,
+                              view: 'result',
+                            });
+                            navigate(`/student-exams?${params.toString()}`);
+                          }}
+                          className="inline-flex items-center rounded-lg border border-[#3D08BA]/20 px-3 py-2 text-xs font-semibold text-[#3D08BA] transition-colors hover:bg-[#3D08BA]/5"
+                        >
+                          Open result
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
           </div>
         </section>
 

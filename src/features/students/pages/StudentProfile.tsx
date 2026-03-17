@@ -10,12 +10,18 @@ interface StudentProfileProps {
     email: string;
     bio: string; 
     profileImage: string | null;
+    schoolLevel: '' | 'primary' | 'secondary' | 'tertiary';
+    department: string;
+    classGroup: string;
   }) => void;
   initialName?: string;
   initialUsername?: string;
   initialEmail?: string;
   initialBio?: string;
   initialProfileImage?: string | null;
+  initialSchoolLevel?: '' | 'primary' | 'secondary' | 'tertiary';
+  initialDepartment?: string;
+  initialClassGroup?: string;
 }
 
 const StudentProfile: React.FC<StudentProfileProps> = ({ 
@@ -25,14 +31,20 @@ const StudentProfile: React.FC<StudentProfileProps> = ({
   initialUsername = 'Andrewtoks',
   initialEmail = 'adetokunboandrew@example.com',
   initialBio = 'Computer Science student passionate about learning',
-  initialProfileImage = null
+  initialProfileImage = null,
+  initialSchoolLevel = '',
+  initialDepartment = '',
+  initialClassGroup = '',
 }) => {
   const [profile, setProfile] = useState({
     name: initialName,
     username: initialUsername,
     email: initialEmail,
     bio: initialBio,
-    profileImage: initialProfileImage
+    profileImage: initialProfileImage,
+    schoolLevel: initialSchoolLevel,
+    department: initialDepartment,
+    classGroup: initialClassGroup,
   });
 
   const [isEditing, setIsEditing] = useState({
@@ -49,9 +61,21 @@ const StudentProfile: React.FC<StudentProfileProps> = ({
       username: initialUsername,
       email: initialEmail,
       bio: initialBio,
-      profileImage: initialProfileImage
+      profileImage: initialProfileImage,
+      schoolLevel: initialSchoolLevel,
+      department: initialDepartment,
+      classGroup: initialClassGroup,
     });
-  }, [initialName, initialUsername, initialEmail, initialBio, initialProfileImage]);
+  }, [
+    initialName,
+    initialUsername,
+    initialEmail,
+    initialBio,
+    initialProfileImage,
+    initialSchoolLevel,
+    initialDepartment,
+    initialClassGroup,
+  ]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -84,7 +108,10 @@ const StudentProfile: React.FC<StudentProfileProps> = ({
         username: profile.username,
         email: profile.email,
         bio: profile.bio,
-        profileImage: profile.profileImage
+        profileImage: profile.profileImage,
+        schoolLevel: profile.schoolLevel,
+        department: profile.department,
+        classGroup: profile.classGroup,
       });
     }
     // Close the modal
@@ -276,6 +303,59 @@ const StudentProfile: React.FC<StudentProfileProps> = ({
               <p className='mt-1 text-[10px] sm:text-xs text-gray-500 text-right'>
                 {profile.bio.length}/150 characters
               </p>
+            </div>
+
+            <div className='rounded-2xl border border-purple-100 bg-purple-50/40 p-4 sm:p-5'>
+              <div className='mb-3'>
+                <h2 className='text-sm sm:text-base font-semibold text-gray-900'>Academic profile</h2>
+                <p className='mt-1 text-[11px] sm:text-xs text-gray-500'>
+                  Save your class details once so exams and performance dashboards can load correctly.
+                </p>
+              </div>
+
+              <div className='grid gap-4 sm:grid-cols-2'>
+                <div className='sm:col-span-2'>
+                  <label className='mb-1.5 block text-xs sm:text-sm font-semibold text-gray-700'>
+                    School level
+                  </label>
+                  <select
+                    value={profile.schoolLevel}
+                    onChange={(event) => handleInputChange('schoolLevel', event.target.value)}
+                    className='w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:border-[#3D08BA] focus:outline-none'
+                  >
+                    <option value=''>Select school level</option>
+                    <option value='primary'>Primary school</option>
+                    <option value='secondary'>Secondary school</option>
+                    <option value='tertiary'>Tertiary institution</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className='mb-1.5 block text-xs sm:text-sm font-semibold text-gray-700'>
+                    Department / Arm
+                  </label>
+                  <input
+                    type='text'
+                    value={profile.department}
+                    onChange={(event) => handleInputChange('department', event.target.value)}
+                    placeholder='Science, Commercial, Upper Basic'
+                    className='w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:border-[#3D08BA] focus:outline-none'
+                  />
+                </div>
+
+                <div>
+                  <label className='mb-1.5 block text-xs sm:text-sm font-semibold text-gray-700'>
+                    Class / Level
+                  </label>
+                  <input
+                    type='text'
+                    value={profile.classGroup}
+                    onChange={(event) => handleInputChange('classGroup', event.target.value)}
+                    placeholder='SS2, JSS3, Primary 5, 200L'
+                    className='w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-900 focus:border-[#3D08BA] focus:outline-none'
+                  />
+                </div>
+              </div>
             </div>
 
             {/* Save Button */}

@@ -25,7 +25,7 @@ import {
   type StudentExamAttempt,
   type StudentExamSubmissionSummary,
 } from '../../schools/utils/examsApi';
-import { loadStudentIdentity } from '../utils/studentIdentity';
+import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
 
 type ExamAnswer = {
   questionId: string;
@@ -371,8 +371,8 @@ const StudentExams = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const studentIdentity = useMemo(() => loadStudentIdentity(), []);
-  const [department, setDepartment] = useState('');
-  const [classGroup, setClassGroup] = useState('');
+  const [department, setDepartment] = useState(studentIdentity.department || '');
+  const [classGroup, setClassGroup] = useState(studentIdentity.classGroup || '');
   const [exams, setExams] = useState<SchoolExam[]>([]);
   const [examAttempts, setExamAttempts] = useState<StudentExamAttempt[]>([]);
   const [examSubmissionStates, setExamSubmissionStates] = useState<StudentExamSubmissionSummary[]>([]);
@@ -555,6 +555,13 @@ const StudentExams = () => {
       setClassGroup(resultRequestParams.classGroup);
     }
   }, [resultRequestParams.department, resultRequestParams.classGroup, department, classGroup]);
+
+  useEffect(() => {
+    saveStudentIdentity({
+      department,
+      classGroup,
+    });
+  }, [classGroup, department]);
 
   useEffect(() => {
     if (

@@ -9,9 +9,12 @@ import {
   PlusIcon,
   Cog6ToothIcon,
   AcademicCapIcon,
+  ChartBarIcon,
   CheckCircleIcon,
+  ClockIcon,
   HomeIcon,
   QuestionMarkCircleIcon,
+  TrophyIcon,
   ArrowRightOnRectangleIcon,
 } from '@heroicons/react/24/outline';
 import { BellIcon as BellSolidIcon } from '@heroicons/react/24/solid';
@@ -23,14 +26,15 @@ import { useNotificationCount } from '../../hooks/useNotificationCount';
 // Import modular components
 import UpcomingClasses from '../components/UpcomingClasses';
 import RecentActivity from '../components/RecentActivity';
-import PerformanceStats from '../components/PerformanceStats';
+import PerformanceStats, { type StatCard } from '../components/PerformanceStats';
 import Announcements from '../components/Announcements';
 import QuickAccessGrid from "../components/QuickAccess";
-import ProgressOverview from '../components/ProgressOverview';
+import ProgressOverview, { type SubjectProgress } from '../components/ProgressOverview';
 import {
   loadStudentIdentity,
   saveStudentIdentity,
   type StudentIdentity,
+  type StudentSchoolLevel,
 } from '../utils/studentIdentity';
 import { signOutEverywhere } from '../../../utils/signOut';
 import {
@@ -44,7 +48,10 @@ import {
 } from '../../schools/utils/schoolScheduleApi';
 import {
   archiveStudentExamNotification,
+  fetchStudentExams,
   markStudentExamNotificationAsRead,
+  type SchoolExam,
+  type StudentExamSubmissionSummary,
 } from '../../schools/utils/examsApi';
 
 type StudentSchoolInvoiceStatus =
@@ -170,6 +177,25 @@ type StudentAttendanceSnapshot = {
   attendanceRate: number;
   audienceLabel: string;
 };
+
+type StudentPublishedResultEntry = {
+  exam: SchoolExam;
+  submission: StudentExamSubmissionSummary;
+  percentage: number | null;
+  publishedAt: string;
+};
+
+type AcademicSnapshot = {
+  averageScore: number | null;
+  publishedResultsCount: number;
+  awaitingReleaseCount: number;
+  bestSubject: string | null;
+  bestSubjectAverage: number | null;
+};
+
+const normalizeAcademicValue = (value: string) => String(value || '').trim();
+
+const clampPercentage = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 
 const normalizeAttendanceName = (value: string) =>
   String(value || '')
@@ -485,6 +511,11 @@ const StudentDashboard = () => {
   const [name, setName] = useState(initialStudentIdentity.name);
   const [username, setUsername] = useState('andrew123');
   const [email, setEmail] = useState('andrew@example.com');
+  const [schoolLevel, setSchoolLevel] = useState<StudentSchoolLevel>(
+    initialStudentIdentity.schoolLevel || ''
+  );
+  const [department, setDepartment] = useState(initialStudentIdentity.department || '');
+  const [classGroup, setClassGroup] = useState(initialStudentIdentity.classGroup || '');
   const [description, setDescription] = useState(
     'I am here to learn, unlearn and relearn'
   );
@@ -494,6 +525,10 @@ const StudentDashboard = () => {
   const [activeSchoolInvoiceId, setActiveSchoolInvoiceId] = useState('');
   const [resultNotifications, setResultNotifications] = useState<DashboardNotification[]>([]);
   const [activeResultNotificationId, setActiveResultNotificationId] = useState('');
+  const [publishedResults, setPublishedResults] = useState<StudentPublishedResultEntry[]>([]);
+  const [academicSubmissionStates, setAcademicSubmissionStates] = useState<StudentExamSubmissionSummary[]>([]);
+  const [isAcademicLoading, setIsAcademicLoading] = useState(false);
+  const [academicNotice, setAcademicNotice] = useState<string | null>(null);
   const outstandingSchoolInvoices = useMemo(
     () =>
       schoolInvoices.filter(
@@ -505,8 +540,14 @@ const StudentDashboard = () => {
     [schoolInvoices]
   );
   const dashboardStudentIdentity = useMemo(
-    () => ({ ...initialStudentIdentity, name }),
-    [initialStudentIdentity, name]
+    () => ({
+      ...initialStudentIdentity,
+      name,
+      schoolLevel,
+      department,
+      classGroup,
+    }),
+    [classGroup, department, initialStudentIdentity, name, schoolLevel]
   );
 
   // Use the notification count hook for real-time sync
@@ -517,18 +558,263 @@ const StudentDashboard = () => {
     [resultNotifications]
   );
 
+  useEffect(() => {
+    const normalizedDepartment = normalizeAcademicValue(department);
+    const normalizedClassGroup = normalizeAcademicValue(classGroup);
+
+    if (!normalizedDepartment || !normalizedClassGroup) {
+      setPublishedResults([]);
+      setAcademicSubmissionStates([]);
+      setAcademicNotice('Add your department and class in your profile to unlock your academic summary.');
+      setIsAcademicLoading(false);
+      return;
+    }
+
+    let active = true;
+
+    const loadAcademicResults = async () => {
+      setIsAcademicLoading(true);
+      try {
+        const payload = await fetchStudentExams({
+          department: normalizedDepartment,
+          classGroup: normalizedClassGroup,
+        });
+        if (!active) {
+          return;
+        }
+
+        const exams = Array.isArray(payload.exams) ? payload.exams : [];
+        const submissions = Array.isArray(payload.submissions) ? payload.submissions : [];
+        const examLookup = exams.reduce<Record<string, SchoolExam>>((collection, exam) => {
+          collection[exam.id] = exam;
+          return collection;
+        }, {});
+
+        const nextPublishedResults = submissions
+          .flatMap((submission) => {
+            if (submission.status !== 'published') {
+              return [];
+            }
+
+            const exam = examLookup[submission.examId];
+            if (!exam) {
+              return [];
+            }
+
+            return [
+              {
+                exam,
+                submission,
+                percentage:
+                  typeof submission.score === 'number' && submission.maxScore > 0
+                    ? (submission.score / submission.maxScore) * 100
+                    : null,
+                publishedAt:
+                  submission.publishedAt || submission.gradedAt || submission.submittedAt || exam.startAt,
+              },
+            ];
+          })
+          .sort((left, right) => new Date(right.publishedAt).getTime() - new Date(left.publishedAt).getTime());
+
+        setPublishedResults(nextPublishedResults);
+        setAcademicSubmissionStates(submissions);
+        setAcademicNotice(
+          nextPublishedResults.length === 0
+            ? 'No published exam results yet for your current class profile.'
+            : null
+        );
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        const message =
+          error instanceof Error ? error.message : 'Could not load your academic summary right now.';
+        setPublishedResults([]);
+        setAcademicSubmissionStates([]);
+        setAcademicNotice(message);
+      } finally {
+        if (active) {
+          setIsAcademicLoading(false);
+        }
+      }
+    };
+
+    void loadAcademicResults();
+    return () => {
+      active = false;
+    };
+  }, [classGroup, department]);
+
+  const academicSnapshot = useMemo<AcademicSnapshot>(() => {
+    const awaitingReleaseCount = academicSubmissionStates.filter(
+      (submission) => submission.status === 'submitted' || submission.status === 'graded'
+    ).length;
+    const averageScore =
+      publishedResults.length > 0
+        ? publishedResults.reduce((total, item) => total + (item.percentage || 0), 0) /
+          publishedResults.length
+        : null;
+
+    const subjectSummary = publishedResults.reduce<
+      Record<string, { total: number; count: number }>
+    >((collection, item) => {
+      const key = item.exam.subject;
+      if (!collection[key]) {
+        collection[key] = { total: 0, count: 0 };
+      }
+      collection[key].total += item.percentage || 0;
+      collection[key].count += 1;
+      return collection;
+    }, {});
+
+    const bestSubjectEntry = Object.entries(subjectSummary)
+      .map(([subject, summary]) => ({
+        subject,
+        average: summary.count > 0 ? summary.total / summary.count : 0,
+      }))
+      .sort((left, right) => right.average - left.average)[0];
+
+    return {
+      averageScore,
+      publishedResultsCount: publishedResults.length,
+      awaitingReleaseCount,
+      bestSubject: bestSubjectEntry?.subject || null,
+      bestSubjectAverage: bestSubjectEntry?.average ?? null,
+    };
+  }, [academicSubmissionStates, publishedResults]);
+
+  const performanceStats = useMemo<StatCard[]>(() => {
+    return [
+      {
+        id: 'average-score',
+        label: 'Average result',
+        value:
+          academicSnapshot.averageScore === null
+            ? '--'
+            : `${clampPercentage(academicSnapshot.averageScore)}%`,
+        change:
+          publishedResults.length > 0
+            ? `${publishedResults.length} published result${publishedResults.length === 1 ? '' : 's'} tracked`
+            : 'Waiting for your first published result',
+        trend:
+          academicSnapshot.averageScore !== null && academicSnapshot.averageScore >= 60
+            ? 'up'
+            : 'neutral',
+        icon: ChartBarIcon,
+        color: 'text-blue-600',
+        bgColor: 'bg-blue-50',
+      },
+      {
+        id: 'published-results',
+        label: 'Published results',
+        value: String(academicSnapshot.publishedResultsCount),
+        change: 'Results already released to you',
+        trend: academicSnapshot.publishedResultsCount > 0 ? 'up' : 'neutral',
+        icon: CheckCircleIcon,
+        color: 'text-emerald-600',
+        bgColor: 'bg-emerald-50',
+      },
+      {
+        id: 'best-subject',
+        label: 'Best subject',
+        value: academicSnapshot.bestSubject || '--',
+        change:
+          academicSnapshot.bestSubjectAverage === null
+            ? 'Best subject will appear after results are released'
+            : `${clampPercentage(academicSnapshot.bestSubjectAverage)}% average`,
+        trend: academicSnapshot.bestSubjectAverage !== null ? 'up' : 'neutral',
+        icon: TrophyIcon,
+        color: 'text-purple-600',
+        bgColor: 'bg-purple-50',
+      },
+      {
+        id: 'awaiting-release',
+        label: 'Awaiting release',
+        value: String(academicSnapshot.awaitingReleaseCount),
+        change:
+          academicSnapshot.awaitingReleaseCount > 0
+            ? 'Still with your school for review/release'
+            : 'Nothing pending at the moment',
+        trend: academicSnapshot.awaitingReleaseCount > 0 ? 'neutral' : 'up',
+        icon: ClockIcon,
+        color: 'text-amber-600',
+        bgColor: 'bg-amber-50',
+      },
+    ];
+  }, [academicSnapshot, publishedResults.length]);
+
+  const subjectPerformance = useMemo<SubjectProgress[]>(() => {
+    const colors = ['bg-blue-500', 'bg-[#3D08BA]', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500'];
+    const grouped = publishedResults.reduce<
+      Record<
+        string,
+        {
+          totalPercentage: number;
+          count: number;
+          latestTitle: string;
+          latestPublishedAt: string;
+        }
+      >
+    >((collection, item) => {
+      const key = item.exam.subject;
+      const current = collection[key] || {
+        totalPercentage: 0,
+        count: 0,
+        latestTitle: item.exam.title,
+        latestPublishedAt: item.publishedAt,
+      };
+      current.totalPercentage += item.percentage || 0;
+      current.count += 1;
+      if (new Date(item.publishedAt).getTime() > new Date(current.latestPublishedAt).getTime()) {
+        current.latestPublishedAt = item.publishedAt;
+        current.latestTitle = item.exam.title;
+      }
+      collection[key] = current;
+      return collection;
+    }, {});
+
+    return Object.entries(grouped)
+      .map(([subject, summary], index) => {
+        const average = summary.count > 0 ? summary.totalPercentage / summary.count : 0;
+        return {
+          id: subject,
+          subject,
+          progress: clampPercentage(average),
+          totalItems: summary.count,
+          completedItems: summary.count,
+          color: colors[index % colors.length],
+          nextLabel: summary.latestTitle,
+          summaryLabel: `${summary.count} published assessment${summary.count === 1 ? '' : 's'} recorded`,
+        };
+      })
+      .sort((left, right) => right.progress - left.progress)
+      .slice(0, 5);
+  }, [publishedResults]);
+
   const handleProfileUpdate = (updatedProfile: {
     name: string;
     username: string;
     email: string;
     bio: string;
     profileImage: string | null;
+    schoolLevel: StudentSchoolLevel;
+    department: string;
+    classGroup: string;
   }) => {
     setName(updatedProfile.name);
     setUsername(updatedProfile.username);
     setEmail(updatedProfile.email);
     setDescription(updatedProfile.bio);
-    saveStudentIdentity({ name: updatedProfile.name });
+    setSchoolLevel(updatedProfile.schoolLevel);
+    setDepartment(updatedProfile.department);
+    setClassGroup(updatedProfile.classGroup);
+    saveStudentIdentity({
+      name: updatedProfile.name,
+      schoolLevel: updatedProfile.schoolLevel,
+      department: updatedProfile.department,
+      classGroup: updatedProfile.classGroup,
+    });
     // setProfileSrc(updatedProfile.profileImage);
   };
 
@@ -933,6 +1219,17 @@ const StudentDashboard = () => {
               <p className="text-[10px] sm:text-xs text-gray-500 mt-1">
                 @{username}
               </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <span className="inline-flex items-center rounded-full bg-[#3D08BA]/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#3D08BA]">
+                  {schoolLevel ? `${schoolLevel} level` : 'Level pending'}
+                </span>
+                <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-[10px] font-semibold text-gray-600">
+                  {department || 'Department pending'}
+                </span>
+                <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-[10px] font-semibold text-gray-600">
+                  {classGroup || 'Class pending'}
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -1020,7 +1317,17 @@ const StudentDashboard = () => {
             />
 
             {/* Performance Stats */}
-            <PerformanceStats />
+            <PerformanceStats
+              stats={performanceStats}
+              isLoading={isAcademicLoading}
+              notice={academicNotice}
+              title="Academic snapshot"
+              subtitle={
+                department && classGroup
+                  ? `${department} • ${classGroup}`
+                  : 'Save your academic profile to unlock real result reporting.'
+              }
+            />
 
             {/* Quick Access Grid */}
             <QuickAccessGrid
@@ -1132,7 +1439,20 @@ const StudentDashboard = () => {
             <UpcomingClasses />
 
             {/* Progress Overview */}
-            <ProgressOverview />
+            <ProgressOverview
+              subjects={subjectPerformance}
+              isLoading={isAcademicLoading}
+              title="Subject performance"
+              subtitle="Published exam results grouped by subject."
+              actionLabel="Open exams"
+              onAction={handleExamsClick}
+              emptyMessage={
+                academicNotice ||
+                (department && classGroup
+                  ? 'Published subject performance will appear here after your school releases results.'
+                  : 'Set your department and class in your profile to unlock subject performance.')
+              }
+            />
 
             {/* Recent Activity */}
             <RecentActivity />
@@ -1275,6 +1595,9 @@ const StudentDashboard = () => {
               initialEmail={email}
               initialBio={description}
               initialProfileImage={profileSrc}
+              initialSchoolLevel={schoolLevel}
+              initialDepartment={department}
+              initialClassGroup={classGroup}
             />
           </div>
         </div>

@@ -56,6 +56,9 @@ const StudentRegistration: React.FC = () => {
     const phone = String(formData.get('phone') || '').trim();
     const password = String(formData.get('password') || '');
     const confirmPassword = String(formData.get('confirmPassword') || '');
+    const schoolLevel = String(formData.get('schoolLevel') || '').trim().toLowerCase();
+    const department = String(formData.get('department') || '').trim();
+    const classGroup = String(formData.get('classGroup') || '').trim();
 
     if (!fullName) {
       alert('Please enter your full name so we can personalize your account.');
@@ -123,6 +126,12 @@ const StudentRegistration: React.FC = () => {
       id: currentIdentity.id,
       name: fullName || currentIdentity.name,
       phone: phone || currentIdentity.phone,
+      schoolLevel:
+        schoolLevel === 'primary' || schoolLevel === 'secondary' || schoolLevel === 'tertiary'
+          ? schoolLevel
+          : '',
+      department,
+      classGroup,
     });
     window.localStorage.setItem('edamaa_student_display_name', fullName || currentIdentity.name);
     
@@ -185,6 +194,31 @@ const StudentRegistration: React.FC = () => {
               type="tel"
               name="phone"
               placeholder="Phone Number(Optional)"
+              className='w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#3D08BA] transition-colors'
+            />
+
+            <select
+              name="schoolLevel"
+              defaultValue=""
+              className='w-full px-4 py-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:border-[#3D08BA] transition-colors'
+            >
+              <option value="">Select school level</option>
+              <option value="primary">Primary school</option>
+              <option value="secondary">Secondary school</option>
+              <option value="tertiary">Tertiary institution</option>
+            </select>
+
+            <input
+              type="text"
+              name="department"
+              placeholder="Department / Arm (e.g. Science, Upper Basic)"
+              className='w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#3D08BA] transition-colors'
+            />
+
+            <input
+              type="text"
+              name="classGroup"
+              placeholder="Class / Level (e.g. SS2, JSS3, 200L)"
               className='w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#3D08BA] transition-colors'
             />
 

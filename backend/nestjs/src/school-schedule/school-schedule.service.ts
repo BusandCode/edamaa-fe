@@ -2387,7 +2387,7 @@ export class SchoolScheduleService {
       .catch((error) => {
         if (this.isPrismaUnavailableError(error)) {
           return this.updateFallbackSession(session.schoolUserId, session.publicId, {
-            metadata: nextMetadata,
+            metadata: nextMetadata as Prisma.JsonValue,
           });
         }
         throw error;
@@ -2845,7 +2845,7 @@ export class SchoolScheduleService {
   }
 
   private withTeacherAccessMetadata(
-    metadata: Prisma.JsonValue | null | undefined,
+    metadata: Prisma.JsonValue | Prisma.InputJsonValue | null | undefined,
     teacherAccess: SessionTeacherAccess
   ): Prisma.InputJsonValue {
     const metadataObject = this.readJsonObject(metadata) || {};
@@ -2856,7 +2856,7 @@ export class SchoolScheduleService {
   }
 
   private withAttendanceWindowMetadata(
-    metadata: Prisma.JsonValue | null | undefined,
+    metadata: Prisma.JsonValue | Prisma.InputJsonValue | null | undefined,
     attendanceWindow: SessionAttendanceWindowState
   ): Prisma.InputJsonValue {
     const metadataObject = this.readJsonObject(metadata) || {};
