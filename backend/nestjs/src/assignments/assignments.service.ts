@@ -83,9 +83,37 @@ type AssignmentSubmission = {
   questionResults?: QuestionResult[];
 };
 
+type SchoolAssignmentNotificationRead = {
+  schoolUserId: string;
+  notificationId: string;
+  readAt: string;
+};
+
+type SchoolAssignmentNotificationArchive = {
+  schoolUserId: string;
+  notificationId: string;
+  archivedAt: string;
+};
+
+type StudentAssignmentNotificationRead = {
+  studentId: string;
+  notificationId: string;
+  readAt: string;
+};
+
+type StudentAssignmentNotificationArchive = {
+  studentId: string;
+  notificationId: string;
+  archivedAt: string;
+};
+
 type AssignmentsState = {
   assignments: AssignmentRecord[];
   submissions: AssignmentSubmission[];
+  schoolNotificationReads: SchoolAssignmentNotificationRead[];
+  schoolNotificationArchives: SchoolAssignmentNotificationArchive[];
+  studentNotificationReads: StudentAssignmentNotificationRead[];
+  studentNotificationArchives: StudentAssignmentNotificationArchive[];
 };
 
 type FallbackScheduleSessionRecord = {
@@ -256,6 +284,329 @@ export class AssignmentsService {
     };
   }
 
+  listSchoolAssignmentNotifications(authUser: AuthUserContext) {
+    const schoolUserId = this.resolveSchoolUserId(authUser);
+    const state = this.loadState();
+    const readIds = this.getSchoolAssignmentNotificationReadIds(state, schoolUserId);
+    const archivedIds = this.getSchoolAssignmentNotificationArchiveIds(state, schoolUserId);
+
+    const notifications = state.submissions
+      .map((submission) => {
+        const assignment = state.assignments.find((item) => item.id === submission.assignmentId);
+        if (!assignment || assignment.schoolUserId !== schoolUserId) {
+          return null;
+        }
+
+        const notificationId = this.buildSchoolAssignmentNotificationId(submission.id);
+        if (archivedIds.has(notificationId)) {
+          return null;
+        }
+
+        const needsReview = assignment.type === 'assignment' && submission.status !== 'graded';
+        const isLate = submission.lateSubmission;
+        const title = needsReview
+          ? `${submission.studentName} submitted ${assignment.title}`
+          : `${submission.studentName} completed ${assignment.title}`;
+        const message = needsReview
+          ? `${submission.studentName} turned in ${assignment.subject} homework for ${assignment.classGroup}. Review and grade it${isLate ? ' (late submission).' : '.'}`
+          : `${submission.studentName} submitted ${assignment.subject} ${assignment.type === 'classwork' ? 'classwork' : 'task'}${typeof submission.score === 'number' ? ` and scored ${submission.score}/${submission.maxScore}` : ''}${isLate ? ' after the due time.' : '.'}`;
+
+        return {
+          id: notificationId,
+          assignmentId: assignment.id,
+          submissionId: submission.id,
+          title,
+          message,
+          createdAt: submission.submittedAt,
+          isRead: readIds.has(notificationId),
+          needsReview,
+          isLate,
+          studentName: submission.studentName,
+        };
+      })
+      .filter((notification): notification is NonNullable<typeof notification> => Boolean(notification))
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .slice(0, 12);
+
+    return {
+      unreadCount: notifications.filter((notification) => !notification.isRead).length,
+      notifications,
+    };
+  }
+
+  markSchoolAssignmentNotificationAsRead(authUser: AuthUserContext, notificationId: string) {
+    const schoolUserId = this.resolveSchoolUserId(authUser);
+    const normalizedNotificationId = this.normalizeRequiredText(notificationId, 'Notification ID');
+    const payload = this.listSchoolAssignmentNotifications(authUser);
+    const exists = payload.notifications.some((notification) => notification.id === normalizedNotificationId);
+
+    if (!exists) {
+      throw new NotFoundException('Notification was not found for this school.');
+    }
+
+    const state = this.loadState();
+    const alreadyRead = state.schoolNotificationReads.some(
+      (entry) => entry.schoolUserId === schoolUserId && entry.notificationId === normalizedNotificationId
+    );
+
+    if (!alreadyRead) {
+      state.schoolNotificationReads.unshift({
+        schoolUserId,
+        notificationId: normalizedNotificationId,
+        readAt: new Date().toISOString(),
+      });
+      this.saveState(state);
+    }
+
+    const nextPayload = this.listSchoolAssignmentNotifications(authUser);
+    return {
+      notificationId: normalizedNotificationId,
+      unreadCount: nextPayload.unreadCount,
+    };
+  }
+
+  markAllSchoolAssignmentNotificationsAsRead(authUser: AuthUserContext) {
+    const schoolUserId = this.resolveSchoolUserId(authUser);
+    const state = this.loadState();
+    const payload = this.listSchoolAssignmentNotifications(authUser);
+    const readIds = this.getSchoolAssignmentNotificationReadIds(state, schoolUserId);
+    let updated = 0;
+
+    payload.notifications.forEach((notification) => {
+      if (readIds.has(notification.id)) {
+        return;
+      }
+
+      state.schoolNotificationReads.unshift({
+        schoolUserId,
+        notificationId: notification.id,
+        readAt: new Date().toISOString(),
+      });
+      updated += 1;
+    });
+
+    if (updated > 0) {
+      this.saveState(state);
+    }
+
+    return {
+      updated,
+      unreadCount: 0,
+    };
+  }
+
+  archiveSchoolAssignmentNotification(authUser: AuthUserContext, notificationId: string) {
+    const schoolUserId = this.resolveSchoolUserId(authUser);
+    const normalizedNotificationId = this.normalizeRequiredText(notificationId, 'Notification ID');
+    const payload = this.listSchoolAssignmentNotifications(authUser);
+    const exists = payload.notifications.some((notification) => notification.id === normalizedNotificationId);
+
+    if (!exists) {
+      throw new NotFoundException('Notification was not found for this school.');
+    }
+
+    const state = this.loadState();
+    const alreadyArchived = state.schoolNotificationArchives.some(
+      (entry) => entry.schoolUserId === schoolUserId && entry.notificationId === normalizedNotificationId
+    );
+
+    if (!alreadyArchived) {
+      state.schoolNotificationArchives.unshift({
+        schoolUserId,
+        notificationId: normalizedNotificationId,
+        archivedAt: new Date().toISOString(),
+      });
+      this.saveState(state);
+    }
+
+    const nextPayload = this.listSchoolAssignmentNotifications(authUser);
+    return {
+      notificationId: normalizedNotificationId,
+      unreadCount: nextPayload.unreadCount,
+      archived: true as const,
+    };
+  }
+
+  async listStudentAssignmentNotifications(authUser: AuthUserContext, query: Record<string, string>) {
+    this.assertStudentRole(authUser);
+    const department = this.normalizeRequiredText(query.department, 'Department');
+    const classGroup = this.normalizeRequiredText(query.classGroup, 'Class');
+    const studentId = this.resolveStudentId(authUser, query.studentId);
+    const state = this.loadState();
+    const readIds = this.getStudentAssignmentNotificationReadIds(state, studentId);
+    const archivedIds = this.getStudentAssignmentNotificationArchiveIds(state, studentId);
+
+    const releaseNotifications = await Promise.all(
+      state.assignments
+        .filter((assignment) => assignment.department === department && assignment.classGroup === classGroup)
+        .map(async (assignment) => {
+          const released = await this.resolveAssignmentReleased(assignment);
+          if (!released) {
+            return null;
+          }
+
+          const notificationId = this.buildStudentAssignmentReleaseNotificationId(assignment.id);
+          if (archivedIds.has(notificationId)) {
+            return null;
+          }
+
+          return {
+            id: notificationId,
+            kind: 'released' as const,
+            assignmentId: assignment.id,
+            title: `${assignment.type === 'assignment' ? 'New homework' : 'New classwork'}: ${assignment.title}`,
+            message: `${assignment.subject} task for ${assignment.classGroup} is now open. Due ${new Date(assignment.dueAt).toLocaleString()}.`,
+            createdAt: await this.resolveAssignmentNotificationCreatedAt(assignment),
+            isRead: readIds.has(notificationId),
+            department: assignment.department,
+            classGroup: assignment.classGroup,
+            sessionId: assignment.sessionId,
+          };
+        })
+    );
+
+    const gradedNotifications = state.submissions
+      .filter((submission) => submission.studentId === studentId && submission.status === 'graded')
+      .map((submission) => {
+        const assignment = state.assignments.find((item) => item.id === submission.assignmentId);
+        if (!assignment || assignment.department !== department || assignment.classGroup !== classGroup) {
+          return null;
+        }
+
+        const notificationId = this.buildStudentAssignmentGradeNotificationId(submission.id);
+        if (archivedIds.has(notificationId)) {
+          return null;
+        }
+
+        return {
+          id: notificationId,
+          kind: 'graded' as const,
+          assignmentId: assignment.id,
+          title: `${assignment.title} has been scored`,
+          message:
+            typeof submission.score === 'number'
+              ? `Your ${assignment.subject} ${assignment.type === 'classwork' ? 'classwork' : 'homework'} is ready. Score: ${submission.score}/${submission.maxScore}.`
+              : `Your ${assignment.subject} ${assignment.type === 'classwork' ? 'classwork' : 'homework'} has been reviewed.`,
+          createdAt: submission.gradedAt || submission.submittedAt,
+          isRead: readIds.has(notificationId),
+          department: assignment.department,
+          classGroup: assignment.classGroup,
+          sessionId: assignment.sessionId,
+        };
+      })
+      .filter((notification): notification is NonNullable<typeof notification> => Boolean(notification));
+
+    const notifications = [
+      ...releaseNotifications.filter(
+        (notification): notification is NonNullable<typeof notification> => Boolean(notification)
+      ),
+      ...gradedNotifications,
+    ]
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .slice(0, 12);
+
+    return {
+      unreadCount: notifications.filter((notification) => !notification.isRead).length,
+      notifications,
+    };
+  }
+
+  async markStudentAssignmentNotificationAsRead(authUser: AuthUserContext, notificationId: string, body: Record<string, unknown>) {
+    this.assertStudentRole(authUser);
+    const studentId = this.resolveStudentId(authUser, body.studentId);
+    const normalizedNotificationId = this.normalizeRequiredText(notificationId, 'Notification ID');
+    const payload = await this.listStudentAssignmentNotifications(authUser, this.normalizeStudentNotificationQuery(body));
+    const exists = payload.notifications.some((notification) => notification.id === normalizedNotificationId);
+
+    if (!exists) {
+      throw new NotFoundException('Notification was not found for this student.');
+    }
+
+    const state = this.loadState();
+    const alreadyRead = state.studentNotificationReads.some(
+      (entry) => entry.studentId === studentId && entry.notificationId === normalizedNotificationId
+    );
+
+    if (!alreadyRead) {
+      state.studentNotificationReads.unshift({
+        studentId,
+        notificationId: normalizedNotificationId,
+        readAt: new Date().toISOString(),
+      });
+      this.saveState(state);
+    }
+
+    const nextPayload = await this.listStudentAssignmentNotifications(authUser, this.normalizeStudentNotificationQuery(body));
+    return {
+      notificationId: normalizedNotificationId,
+      unreadCount: nextPayload.unreadCount,
+    };
+  }
+
+  async markAllStudentAssignmentNotificationsAsRead(authUser: AuthUserContext, body: Record<string, unknown>) {
+    this.assertStudentRole(authUser);
+    const studentId = this.resolveStudentId(authUser, body.studentId);
+    const state = this.loadState();
+    const payload = await this.listStudentAssignmentNotifications(authUser, this.normalizeStudentNotificationQuery(body));
+    const readIds = this.getStudentAssignmentNotificationReadIds(state, studentId);
+    let updated = 0;
+
+    payload.notifications.forEach((notification) => {
+      if (readIds.has(notification.id)) {
+        return;
+      }
+
+      state.studentNotificationReads.unshift({
+        studentId,
+        notificationId: notification.id,
+        readAt: new Date().toISOString(),
+      });
+      updated += 1;
+    });
+
+    if (updated > 0) {
+      this.saveState(state);
+    }
+
+    return {
+      updated,
+      unreadCount: 0,
+    };
+  }
+
+  async archiveStudentAssignmentNotification(authUser: AuthUserContext, notificationId: string, body: Record<string, unknown>) {
+    this.assertStudentRole(authUser);
+    const studentId = this.resolveStudentId(authUser, body.studentId);
+    const normalizedNotificationId = this.normalizeRequiredText(notificationId, 'Notification ID');
+    const payload = await this.listStudentAssignmentNotifications(authUser, this.normalizeStudentNotificationQuery(body));
+    const exists = payload.notifications.some((notification) => notification.id === normalizedNotificationId);
+
+    if (!exists) {
+      throw new NotFoundException('Notification was not found for this student.');
+    }
+
+    const state = this.loadState();
+    const alreadyArchived = state.studentNotificationArchives.some(
+      (entry) => entry.studentId === studentId && entry.notificationId === normalizedNotificationId
+    );
+
+    if (!alreadyArchived) {
+      state.studentNotificationArchives.unshift({
+        studentId,
+        notificationId: normalizedNotificationId,
+        archivedAt: new Date().toISOString(),
+      });
+      this.saveState(state);
+    }
+
+    const nextPayload = await this.listStudentAssignmentNotifications(authUser, this.normalizeStudentNotificationQuery(body));
+    return {
+      notificationId: normalizedNotificationId,
+      unreadCount: nextPayload.unreadCount,
+      archived: true as const,
+    };
+  }
+
   async listStudentAssignments(authUser: AuthUserContext, query: Record<string, string>) {
     this.assertStudentRole(authUser);
     const department = this.normalizeRequiredText(query.department, 'Department');
@@ -388,6 +739,10 @@ export class AssignmentsService {
       return {
         assignments: [],
         submissions: [],
+        schoolNotificationReads: [],
+        schoolNotificationArchives: [],
+        studentNotificationReads: [],
+        studentNotificationArchives: [],
       };
     }
 
@@ -397,11 +752,19 @@ export class AssignmentsService {
       return {
         assignments: Array.isArray(parsed.assignments) ? parsed.assignments : [],
         submissions: Array.isArray(parsed.submissions) ? parsed.submissions : [],
+        schoolNotificationReads: Array.isArray(parsed.schoolNotificationReads) ? parsed.schoolNotificationReads : [],
+        schoolNotificationArchives: Array.isArray(parsed.schoolNotificationArchives) ? parsed.schoolNotificationArchives : [],
+        studentNotificationReads: Array.isArray(parsed.studentNotificationReads) ? parsed.studentNotificationReads : [],
+        studentNotificationArchives: Array.isArray(parsed.studentNotificationArchives) ? parsed.studentNotificationArchives : [],
       };
     } catch {
       return {
         assignments: [],
         submissions: [],
+        schoolNotificationReads: [],
+        schoolNotificationArchives: [],
+        studentNotificationReads: [],
+        studentNotificationArchives: [],
       };
     }
   }
@@ -448,6 +811,58 @@ export class AssignmentsService {
   private resolveStudentName(authUser: AuthUserContext, input?: unknown) {
     const fallback = typeof input === 'string' ? input.trim() : '';
     return authUser.name || fallback || 'Student';
+  }
+
+  private normalizeStudentNotificationQuery(input: Record<string, unknown>) {
+    return {
+      department: this.normalizeRequiredText(input.department, 'Department'),
+      classGroup: this.normalizeRequiredText(input.classGroup, 'Class'),
+      studentId: typeof input.studentId === 'string' || typeof input.studentId === 'number' ? String(input.studentId) : '',
+    };
+  }
+
+  private buildSchoolAssignmentNotificationId(submissionId: string) {
+    return `school-submission:${submissionId}`;
+  }
+
+  private buildStudentAssignmentReleaseNotificationId(assignmentId: string) {
+    return `student-release:${assignmentId}`;
+  }
+
+  private buildStudentAssignmentGradeNotificationId(submissionId: string) {
+    return `student-graded:${submissionId}`;
+  }
+
+  private getSchoolAssignmentNotificationReadIds(state: AssignmentsState, schoolUserId: string) {
+    return new Set(
+      state.schoolNotificationReads
+        .filter((entry) => entry.schoolUserId === schoolUserId)
+        .map((entry) => entry.notificationId)
+    );
+  }
+
+  private getSchoolAssignmentNotificationArchiveIds(state: AssignmentsState, schoolUserId: string) {
+    return new Set(
+      state.schoolNotificationArchives
+        .filter((entry) => entry.schoolUserId === schoolUserId)
+        .map((entry) => entry.notificationId)
+    );
+  }
+
+  private getStudentAssignmentNotificationReadIds(state: AssignmentsState, studentId: string) {
+    return new Set(
+      state.studentNotificationReads
+        .filter((entry) => entry.studentId === studentId)
+        .map((entry) => entry.notificationId)
+    );
+  }
+
+  private getStudentAssignmentNotificationArchiveIds(state: AssignmentsState, studentId: string) {
+    return new Set(
+      state.studentNotificationArchives
+        .filter((entry) => entry.studentId === studentId)
+        .map((entry) => entry.notificationId)
+    );
   }
 
   private normalizeRequiredText(value: unknown, label: string) {
@@ -671,10 +1086,35 @@ export class AssignmentsService {
     return (await this.lookupSessionStatus(assignment.sessionId)) === 'completed';
   }
 
+  private async resolveAssignmentNotificationCreatedAt(assignment: AssignmentRecord) {
+    if (assignment.releaseMode === 'immediate') {
+      return assignment.createdAt;
+    }
+
+    if (assignment.releaseMode === 'scheduled') {
+      return assignment.releaseAt || assignment.createdAt;
+    }
+
+    if (!assignment.sessionId) {
+      return assignment.updatedAt;
+    }
+
+    const timing = await this.lookupSessionTiming(assignment.sessionId);
+    return timing?.endAt.toISOString() || assignment.updatedAt;
+  }
+
   private async lookupSessionStatus(sessionPublicId: string): Promise<'upcoming' | 'live' | 'completed' | null> {
-    const fromDb = await this.lookupSessionTimingFromDatabase(sessionPublicId);
+    const fromDb = await this.lookupSessionTiming(sessionPublicId);
     if (fromDb) {
       return this.resolveSessionStatus(fromDb.startAt, fromDb.endAt);
+    }
+    return null;
+  }
+
+  private async lookupSessionTiming(sessionPublicId: string) {
+    const fromDb = await this.lookupSessionTimingFromDatabase(sessionPublicId);
+    if (fromDb) {
+      return fromDb;
     }
 
     if (!existsSync(this.fallbackSchedulePath)) {
@@ -689,7 +1129,10 @@ export class AssignmentsService {
       if (!target) {
         return null;
       }
-      return this.resolveSessionStatus(new Date(target.startAt), new Date(target.endAt));
+      return {
+        startAt: new Date(target.startAt),
+        endAt: new Date(target.endAt),
+      };
     } catch {
       return null;
     }

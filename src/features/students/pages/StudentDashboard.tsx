@@ -89,7 +89,7 @@ type DashboardNotification = {
   time?: string;
   isRead?: boolean;
   createdAt?: string;
-  source?: 'seed' | 'schedule' | 'local' | 'exam';
+  source?: 'seed' | 'schedule' | 'local' | 'exam' | 'assignment';
   examId?: string;
   examDepartment?: string;
   examClassGroup?: string;

@@ -209,8 +209,17 @@ const Assignments = () => {
   const [searchParams] = useSearchParams();
   const studentIdentity = useMemo(() => loadStudentIdentity(), []);
   const sessionFilter = useMemo(() => String(searchParams.get('sessionId') || '').trim(), [searchParams]);
-  const [department, setDepartment] = useState(studentIdentity.department || '');
-  const [classGroup, setClassGroup] = useState(studentIdentity.classGroup || '');
+  const assignmentFilter = useMemo(() => String(searchParams.get('assignmentId') || '').trim(), [searchParams]);
+  const linkedDepartment = useMemo(
+    () => String(searchParams.get('department') || '').trim(),
+    [searchParams]
+  );
+  const linkedClassGroup = useMemo(
+    () => String(searchParams.get('classGroup') || '').trim(),
+    [searchParams]
+  );
+  const [department, setDepartment] = useState(linkedDepartment || studentIdentity.department || '');
+  const [classGroup, setClassGroup] = useState(linkedClassGroup || studentIdentity.classGroup || '');
   const [assessments, setAssessments] = useState<StudentAssignment[]>([]);
   const [submissionsByAssignmentId, setSubmissionsByAssignmentId] = useState<Record<string, AssignmentSubmission>>({});
   const [loading, setLoading] = useState(false);
@@ -243,6 +252,15 @@ const Assignments = () => {
   }, [department, classGroup]);
 
   useEffect(() => {
+    if (linkedDepartment) {
+      setDepartment(linkedDepartment);
+    }
+    if (linkedClassGroup) {
+      setClassGroup(linkedClassGroup);
+    }
+  }, [linkedClassGroup, linkedDepartment]);
+
+  useEffect(() => {
     if (!department || !classGroup) {
       setAssessments([]);
       setSubmissionsByAssignmentId({});
@@ -271,9 +289,11 @@ const Assignments = () => {
           }, {})
         );
         setSelectedAssessmentId((current) =>
-          current && payload.assignments.some((assignment) => assignment.id === current)
-            ? current
-            : payload.assignments[0]?.id || null
+          assignmentFilter && payload.assignments.some((assignment) => assignment.id === assignmentFilter)
+            ? assignmentFilter
+            : current && payload.assignments.some((assignment) => assignment.id === current)
+              ? current
+              : payload.assignments[0]?.id || null
         );
         setNotice(payload.assignments.length === 0 ? 'No homework has been posted for this class yet.' : '');
       } catch (error) {
@@ -294,7 +314,7 @@ const Assignments = () => {
     return () => {
       cancelled = true;
     };
-  }, [classGroup, department, studentIdentity.id]);
+  }, [assignmentFilter, classGroup, department, studentIdentity.id]);
 
   const runtimeAssessments = useMemo<RuntimeAssessment[]>(() => {
     return assessments.map((assessment) => {
@@ -334,10 +354,11 @@ const Assignments = () => {
       }
 
       const matchesSession = !sessionFilter || assessment.sessionId === sessionFilter;
+      const matchesAssignment = !assignmentFilter || assessment.id === assignmentFilter;
 
-      return matchesSearch && matchesSubject && matchesTab && matchesSession;
+      return matchesSearch && matchesSubject && matchesTab && matchesSession && matchesAssignment;
     });
-  }, [activeTab, runtimeAssessments, searchQuery, selectedSubject, sessionFilter]);
+  }, [activeTab, assignmentFilter, runtimeAssessments, searchQuery, selectedSubject, sessionFilter]);
 
   const stats = useMemo(() => {
     return {
@@ -580,11 +601,15 @@ const Assignments = () => {
           </div>
         </section>
 
-        {sessionFilter ? (
+        {sessionFilter || assignmentFilter ? (
           <section className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-            <p className="font-medium">Showing tasks linked to this live class.</p>
+            <p className="font-medium">
+              {assignmentFilter ? 'Showing the task from your notification.' : 'Showing tasks linked to this live class.'}
+            </p>
             <p className="mt-1 text-emerald-700">
-              This filtered view came from the live classroom so you can focus on work for the current session.
+              {assignmentFilter
+                ? 'This filtered view opened from your notification so you can focus on the exact homework or classwork item.'
+                : 'This filtered view came from the live classroom so you can focus on work for the current session.'}
             </p>
           </section>
         ) : null}

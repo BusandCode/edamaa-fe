@@ -42,9 +42,80 @@ export class AssignmentsController {
     return this.assignmentsService.gradeSchoolAssignmentSubmission(this.getAuthUser(request), body);
   }
 
+  @Get('school-assignments/notifications')
+  listSchoolAssignmentNotifications(@Req() request: Request) {
+    return this.assignmentsService.listSchoolAssignmentNotifications(this.getAuthUser(request));
+  }
+
+  @Post('school-assignments/notifications/:notificationId/read')
+  markSchoolAssignmentNotificationAsRead(
+    @Req() request: Request,
+    @Param('notificationId') notificationId: string
+  ) {
+    return this.assignmentsService.markSchoolAssignmentNotificationAsRead(
+      this.getAuthUser(request),
+      notificationId
+    );
+  }
+
+  @Post('school-assignments/notifications/read-all')
+  markAllSchoolAssignmentNotificationsAsRead(@Req() request: Request) {
+    return this.assignmentsService.markAllSchoolAssignmentNotificationsAsRead(this.getAuthUser(request));
+  }
+
+  @Delete('school-assignments/notifications/:notificationId')
+  archiveSchoolAssignmentNotification(
+    @Req() request: Request,
+    @Param('notificationId') notificationId: string
+  ) {
+    return this.assignmentsService.archiveSchoolAssignmentNotification(
+      this.getAuthUser(request),
+      notificationId
+    );
+  }
+
   @Get('student-assignments')
   listStudentAssignments(@Req() request: Request, @Query() query: Record<string, string>) {
     return this.assignmentsService.listStudentAssignments(this.getAuthUser(request), query);
+  }
+
+  @Get('student-assignments/notifications')
+  listStudentAssignmentNotifications(@Req() request: Request, @Query() query: Record<string, string>) {
+    return this.assignmentsService.listStudentAssignmentNotifications(this.getAuthUser(request), query);
+  }
+
+  @Post('student-assignments/notifications/:notificationId/read')
+  markStudentAssignmentNotificationAsRead(
+    @Req() request: Request,
+    @Param('notificationId') notificationId: string,
+    @Body() body: Record<string, unknown>
+  ) {
+    return this.assignmentsService.markStudentAssignmentNotificationAsRead(
+      this.getAuthUser(request),
+      notificationId,
+      body
+    );
+  }
+
+  @Post('student-assignments/notifications/read-all')
+  markAllStudentAssignmentNotificationsAsRead(@Req() request: Request, @Body() body: Record<string, unknown>) {
+    return this.assignmentsService.markAllStudentAssignmentNotificationsAsRead(
+      this.getAuthUser(request),
+      body
+    );
+  }
+
+  @Delete('student-assignments/notifications/:notificationId')
+  archiveStudentAssignmentNotification(
+    @Req() request: Request,
+    @Param('notificationId') notificationId: string,
+    @Body() body: Record<string, unknown>
+  ) {
+    return this.assignmentsService.archiveStudentAssignmentNotification(
+      this.getAuthUser(request),
+      notificationId,
+      body
+    );
   }
 
   @Post('student-assignments/submit')

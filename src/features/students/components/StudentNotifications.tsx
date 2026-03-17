@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   BellIcon,
@@ -19,12 +19,20 @@ import {
   type SchoolScheduleNotification,
 } from '../../schools/utils/schoolScheduleApi';
 import {
+  archiveStudentAssignmentNotification,
+  fetchStudentAssignmentNotifications,
+  markAllStudentAssignmentNotificationsAsRead,
+  markStudentAssignmentNotificationAsRead,
+  type StudentAssignmentNotification,
+} from '../../schools/utils/assignmentsApi';
+import {
   archiveStudentExamNotification,
   fetchStudentExamNotifications,
   markAllStudentExamNotificationsAsRead,
   markStudentExamNotificationAsRead,
   type StudentExamNotification,
 } from '../../schools/utils/examsApi';
+import { loadStudentIdentity } from '../utils/studentIdentity';
 
 export interface Notification {
   id: string;
@@ -35,17 +43,23 @@ export interface Notification {
   isRead: boolean;
   priority: 'high' | 'medium' | 'low';
   createdAt?: string;
-  source?: 'seed' | 'schedule' | 'local' | 'exam';
+  source?: 'seed' | 'schedule' | 'local' | 'exam' | 'assignment';
   scheduleKind?: SchoolScheduleNotification['kind'];
   scheduleSessionId?: string;
   scheduleAction?: SchoolScheduleNotification['action'];
   examId?: string;
   examDepartment?: string;
   examClassGroup?: string;
+  assignmentId?: string;
+  assignmentDepartment?: string;
+  assignmentClassGroup?: string;
+  assignmentSessionId?: string | null;
+  assignmentKind?: StudentAssignmentNotification['kind'];
 }
 
 const SCHEDULE_NOTIFICATION_PREFIX = 'schedule:';
 const EXAM_NOTIFICATION_PREFIX = 'exam:';
+const ASSIGNMENT_NOTIFICATION_PREFIX = 'assignment:';
 
 const toScheduleLocalId = (notificationId: string) =>
   `${SCHEDULE_NOTIFICATION_PREFIX}${String(notificationId || '').trim()}`;
@@ -64,6 +78,15 @@ const isExamLocalId = (notificationId: string) =>
 
 const fromExamLocalId = (notificationId: string) =>
   String(notificationId || '').slice(EXAM_NOTIFICATION_PREFIX.length);
+
+const toAssignmentLocalId = (notificationId: string) =>
+  `${ASSIGNMENT_NOTIFICATION_PREFIX}${String(notificationId || '').trim()}`;
+
+const isAssignmentLocalId = (notificationId: string) =>
+  String(notificationId || '').startsWith(ASSIGNMENT_NOTIFICATION_PREFIX);
+
+const fromAssignmentLocalId = (notificationId: string) =>
+  String(notificationId || '').slice(ASSIGNMENT_NOTIFICATION_PREFIX.length);
 
 const mergeNotifications = (existing: Notification[], incoming: Notification[]) => {
   const map = new Map<string, Notification>();
@@ -136,6 +159,23 @@ const mapExamNotificationToLocal = (notification: StudentExamNotification): Noti
   examId: notification.examId,
   examDepartment: notification.department,
   examClassGroup: notification.classGroup,
+});
+
+const mapAssignmentNotificationToLocal = (notification: StudentAssignmentNotification): Notification => ({
+  id: toAssignmentLocalId(notification.id),
+  type: notification.kind === 'graded' ? 'grade' : 'assignment',
+  title: notification.title,
+  message: notification.message,
+  time: formatRelativeLabel(notification.createdAt),
+  isRead: notification.isRead,
+  priority: notification.isRead ? 'low' : 'medium',
+  createdAt: notification.createdAt,
+  source: 'assignment',
+  assignmentId: notification.assignmentId,
+  assignmentDepartment: notification.department,
+  assignmentClassGroup: notification.classGroup,
+  assignmentSessionId: notification.sessionId,
+  assignmentKind: notification.kind,
 });
 
 // Initial notifications data
@@ -234,6 +274,7 @@ interface StudentNotificationsProps {
 
 const StudentNotifications = ({ onUnreadCountChange }: StudentNotificationsProps) => {
   const navigate = useNavigate();
+  const studentIdentity = useMemo(() => loadStudentIdentity(), []);
   const [activeTab, setActiveTab] = useState<'all' | 'unread'>('all');
   
   // Initialize from localStorage or use initial data
@@ -269,9 +310,16 @@ const StudentNotifications = ({ onUnreadCountChange }: StudentNotificationsProps
     const syncNotifications = async () => {
       setIsSyncingSchedule(true);
       try {
-        const [schedulePayload, examPayload] = await Promise.all([
+        const [schedulePayload, examPayload, assignmentPayload] = await Promise.all([
           fetchSchoolScheduleNotifications().catch(() => null),
           fetchStudentExamNotifications().catch(() => null),
+          studentIdentity.department && studentIdentity.classGroup
+            ? fetchStudentAssignmentNotifications({
+                department: studentIdentity.department,
+                classGroup: studentIdentity.classGroup,
+                studentId: studentIdentity.id,
+              }).catch(() => null)
+            : Promise.resolve(null),
         ]);
 
         if (cancelled) {
@@ -284,9 +332,12 @@ const StudentNotifications = ({ onUnreadCountChange }: StudentNotificationsProps
         const examNotifications = examPayload
           ? examPayload.notifications.map(mapExamNotificationToLocal)
           : [];
+        const assignmentNotifications = assignmentPayload
+          ? assignmentPayload.notifications.map(mapAssignmentNotificationToLocal)
+          : [];
 
         setNotifications((previous) =>
-          mergeNotifications(previous, [...scheduleNotifications, ...examNotifications])
+          mergeNotifications(previous, [...scheduleNotifications, ...examNotifications, ...assignmentNotifications])
         );
       } catch {
         // Leave existing local notifications as-is if remote feeds are unavailable.
@@ -302,7 +353,7 @@ const StudentNotifications = ({ onUnreadCountChange }: StudentNotificationsProps
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [studentIdentity.classGroup, studentIdentity.department, studentIdentity.id]);
 
   // Update localStorage and notify parent when notifications change
   useEffect(() => {
@@ -363,6 +414,17 @@ const StudentNotifications = ({ onUnreadCountChange }: StudentNotificationsProps
         await markSchoolScheduleNotificationAsRead(fromScheduleLocalId(id));
       } else if (isExamLocalId(id)) {
         await markStudentExamNotificationAsRead(fromExamLocalId(id));
+      } else if (
+        isAssignmentLocalId(id) &&
+        studentIdentity.department &&
+        studentIdentity.classGroup
+      ) {
+        await markStudentAssignmentNotificationAsRead({
+          notificationId: fromAssignmentLocalId(id),
+          department: studentIdentity.department,
+          classGroup: studentIdentity.classGroup,
+          studentId: studentIdentity.id,
+        });
       }
     } catch {
       // Keep optimistic local read state to avoid a disruptive UX.
@@ -380,8 +442,11 @@ const StudentNotifications = ({ onUnreadCountChange }: StudentNotificationsProps
     const hasUnreadExamNotifications = notifications.some(
       (notification) => !notification.isRead && isExamLocalId(notification.id)
     );
+    const hasUnreadAssignmentNotifications = notifications.some(
+      (notification) => !notification.isRead && isAssignmentLocalId(notification.id)
+    );
 
-    if (!hasUnreadScheduleNotifications && !hasUnreadExamNotifications) {
+    if (!hasUnreadScheduleNotifications && !hasUnreadExamNotifications && !hasUnreadAssignmentNotifications) {
       return;
     }
 
@@ -390,6 +455,13 @@ const StudentNotifications = ({ onUnreadCountChange }: StudentNotificationsProps
       await Promise.all([
         hasUnreadScheduleNotifications ? markAllSchoolScheduleNotificationsAsRead() : Promise.resolve(),
         hasUnreadExamNotifications ? markAllStudentExamNotificationsAsRead() : Promise.resolve(),
+        hasUnreadAssignmentNotifications && studentIdentity.department && studentIdentity.classGroup
+          ? markAllStudentAssignmentNotificationsAsRead({
+              department: studentIdentity.department,
+              classGroup: studentIdentity.classGroup,
+              studentId: studentIdentity.id,
+            })
+          : Promise.resolve(),
       ]);
     } catch {
       // Keep optimistic local read state to avoid a disruptive UX.
@@ -441,6 +513,10 @@ const StudentNotifications = ({ onUnreadCountChange }: StudentNotificationsProps
     notification.source === 'exam' &&
     Boolean(notification.examId && notification.examDepartment && notification.examClassGroup);
 
+  const canOpenAssignmentNotification = (notification: Notification) =>
+    notification.source === 'assignment' &&
+    Boolean(notification.assignmentId && notification.assignmentDepartment && notification.assignmentClassGroup);
+
   const acceptTeacherClassInvite = async (notification: Notification) => {
     if (!canAcceptTeacherClassInvite(notification) || !notification.scheduleAction) {
       return;
@@ -484,6 +560,21 @@ const StudentNotifications = ({ onUnreadCountChange }: StudentNotificationsProps
     });
     void markAsRead(notification.id);
     navigate(`/student-exams?${params.toString()}`);
+  };
+
+  const openAssignmentNotification = (notification: Notification) => {
+    if (!canOpenAssignmentNotification(notification)) {
+      return;
+    }
+
+    const params = new URLSearchParams({
+      assignmentId: notification.assignmentId || '',
+      department: notification.assignmentDepartment || '',
+      classGroup: notification.assignmentClassGroup || '',
+      ...(notification.assignmentSessionId ? { sessionId: notification.assignmentSessionId } : {}),
+    });
+    void markAsRead(notification.id);
+    navigate(`/assignments?${params.toString()}`);
   };
 
   const filteredNotifications = activeTab === 'unread' 
@@ -668,6 +759,17 @@ const StudentNotifications = ({ onUnreadCountChange }: StudentNotificationsProps
                         </div>
                       )}
 
+                      {canOpenAssignmentNotification(notification) && (
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                          <p className="font-semibold">
+                            {notification.assignmentKind === 'graded' ? 'Assignment score ready' : 'Assignment now open'}
+                          </p>
+                          <p className="mt-1">
+                            Open the exact homework or classwork item directly from this notification.
+                          </p>
+                        </div>
+                      )}
+
                       <div className="flex gap-2">
                       <button
                         onClick={async (e) => {
@@ -675,6 +777,21 @@ const StudentNotifications = ({ onUnreadCountChange }: StudentNotificationsProps
                           if (isExamLocalId(notification.id)) {
                             try {
                               await archiveStudentExamNotification(fromExamLocalId(notification.id));
+                            } catch {
+                              // Keep local deletion to avoid a disruptive UX.
+                            }
+                          } else if (
+                            isAssignmentLocalId(notification.id) &&
+                            studentIdentity.department &&
+                            studentIdentity.classGroup
+                          ) {
+                            try {
+                              await archiveStudentAssignmentNotification({
+                                notificationId: fromAssignmentLocalId(notification.id),
+                                department: studentIdentity.department,
+                                classGroup: studentIdentity.classGroup,
+                                studentId: studentIdentity.id,
+                              });
                             } catch {
                               // Keep local deletion to avoid a disruptive UX.
                             }
@@ -711,6 +828,18 @@ const StudentNotifications = ({ onUnreadCountChange }: StudentNotificationsProps
                         >
                           <CheckCircleIcon className="w-4 h-4" />
                           Open result
+                        </button>
+                      )}
+                      {canOpenAssignmentNotification(notification) && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openAssignmentNotification(notification);
+                          }}
+                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 rounded-lg font-medium text-sm hover:bg-emerald-100 transition-colors"
+                        >
+                          <CheckCircleIcon className="w-4 h-4" />
+                          Open task
                         </button>
                       )}
                       {!notification.isRead && (

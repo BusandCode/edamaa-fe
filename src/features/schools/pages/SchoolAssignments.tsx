@@ -14,7 +14,10 @@ import {
 } from '@heroicons/react/24/outline';
 import { useNavigate } from 'react-router-dom';
 import {
+  archiveSchoolAssignmentNotification,
+  fetchSchoolAssignmentNotifications,
   type AssignmentQuestionInput,
+  type SchoolAssignmentNotification,
   type AssignmentSubmission,
   type AssignmentType,
   type AssignmentReleaseMode,
@@ -24,6 +27,8 @@ import {
   fetchSchoolAssignmentSubmissions,
   fetchSchoolAssignments,
   gradeSchoolAssignmentSubmission,
+  markAllSchoolAssignmentNotificationsAsRead,
+  markSchoolAssignmentNotificationAsRead,
   updateSchoolAssignment,
 } from '../utils/assignmentsApi';
 import { fetchSchoolScheduleSessions, type SchoolScheduleSession } from '../utils/schoolScheduleApi';
@@ -163,6 +168,26 @@ const getAssignmentStatusLabel = (assignment: Pick<SchoolAssignment, 'isReleased
   return 'Draft';
 };
 
+const formatRelativeTime = (value: string) => {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) {
+    return 'Recently';
+  }
+  const diffMinutes = Math.max(0, Math.round((Date.now() - timestamp) / 60000));
+  if (diffMinutes < 1) {
+    return 'Just now';
+  }
+  if (diffMinutes < 60) {
+    return `${diffMinutes} min ago`;
+  }
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours} hr ago`;
+  }
+  const diffDays = Math.round(diffHours / 24);
+  return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+};
+
 const SchoolAssignments = () => {
   const navigate = useNavigate();
   const [assignments, setAssignments] = useState<SchoolAssignment[]>([]);
@@ -184,6 +209,23 @@ const SchoolAssignments = () => {
   const [gradeSaving, setGradeSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | AssignmentType>('all');
+  const [notifications, setNotifications] = useState<SchoolAssignmentNotification[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationFilter, setNotificationFilter] = useState<'all' | 'unread'>('all');
+  const [activeNotificationId, setActiveNotificationId] = useState<string | 'all' | null>(null);
+
+  const loadNotifications = async () => {
+    setNotificationsLoading(true);
+    try {
+      const payload = await fetchSchoolAssignmentNotifications();
+      setNotifications(payload.notifications);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not load homework updates.');
+      setNotifications([]);
+    } finally {
+      setNotificationsLoading(false);
+    }
+  };
 
   const loadAssignments = async (preferredId?: string | null) => {
     setLoading(true);
@@ -214,6 +256,18 @@ const SchoolAssignments = () => {
 
   useEffect(() => {
     void loadAssignments();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadNotifications().catch(() => {
+      if (cancelled) {
+        return;
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -268,6 +322,19 @@ const SchoolAssignments = () => {
     () => assignments.find((assignment) => assignment.id === selectedAssignmentId) || null,
     [assignments, selectedAssignmentId]
   );
+
+  const unreadNotificationCount = useMemo(
+    () => notifications.filter((notification) => !notification.isRead).length,
+    [notifications]
+  );
+
+  const visibleNotifications = useMemo(() => {
+    const scoped =
+      notificationFilter === 'unread'
+        ? notifications.filter((notification) => !notification.isRead)
+        : notifications;
+    return scoped.slice(0, 4);
+  }, [notificationFilter, notifications]);
 
   const openCreateModal = () => {
     setEditorMode('create');
@@ -372,6 +439,65 @@ const SchoolAssignments = () => {
     }
   };
 
+  const openAssignmentFromNotification = async (notification: SchoolAssignmentNotification) => {
+    setSelectedAssignmentId(notification.assignmentId);
+    if (!notification.isRead) {
+      setActiveNotificationId(notification.id);
+      try {
+        await markSchoolAssignmentNotificationAsRead(notification.id);
+        setNotifications((previous) =>
+          previous.map((item) => (item.id === notification.id ? { ...item, isRead: true } : item))
+        );
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : 'Could not update this homework alert.');
+      } finally {
+        setActiveNotificationId(null);
+      }
+    }
+  };
+
+  const handleMarkNotificationRead = async (notificationId: string) => {
+    setActiveNotificationId(notificationId);
+    try {
+      await markSchoolAssignmentNotificationAsRead(notificationId);
+      setNotifications((previous) =>
+        previous.map((item) => (item.id === notificationId ? { ...item, isRead: true } : item))
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not mark this homework alert as read.');
+    } finally {
+      setActiveNotificationId(null);
+    }
+  };
+
+  const handleArchiveNotification = async (notificationId: string) => {
+    setActiveNotificationId(notificationId);
+    try {
+      await archiveSchoolAssignmentNotification(notificationId);
+      setNotifications((previous) => previous.filter((item) => item.id !== notificationId));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not remove this homework alert.');
+    } finally {
+      setActiveNotificationId(null);
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    if (unreadNotificationCount === 0) {
+      return;
+    }
+
+    setActiveNotificationId('all');
+    try {
+      await markAllSchoolAssignmentNotificationsAsRead();
+      setNotifications((previous) => previous.map((item) => ({ ...item, isRead: true })));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not mark homework alerts as read.');
+    } finally {
+      setActiveNotificationId(null);
+    }
+  };
+
   const openGradeModal = (submission: AssignmentSubmission) => {
     setGradeTarget(submission);
     setGradeScore(submission.score != null ? String(submission.score) : '');
@@ -402,6 +528,7 @@ const SchoolAssignments = () => {
         setSubmissions(payload.submissions);
       }
       await loadAssignments(selectedAssignmentId);
+      await loadNotifications();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not save grade.');
     } finally {
@@ -471,6 +598,130 @@ const SchoolAssignments = () => {
             <p className="mt-3 text-3xl font-semibold text-slate-900">{summary.awaitingReview}</p>
             <p className="mt-2 text-sm text-slate-500">Student submissions still waiting for a teacher score or note.</p>
           </article>
+        </section>
+
+        <section className="rounded-[30px] border border-white/80 bg-white/90 p-4 shadow-[0_24px_60px_rgba(15,23,42,0.08)] sm:p-5">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#3D08BA]">Homework inbox</p>
+              <h2 className="mt-1 text-lg font-semibold text-slate-900">Submission updates</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                New student submissions and late turn-ins appear here until you clear them.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-semibold text-amber-700">
+                {unreadNotificationCount} unread
+              </span>
+              <button
+                type="button"
+                onClick={() => void handleMarkAllNotificationsRead()}
+                disabled={unreadNotificationCount === 0 || activeNotificationId === 'all'}
+                className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {activeNotificationId === 'all' ? 'Updating...' : 'Mark all read'}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            {([
+              { value: 'all', label: 'All updates' },
+              { value: 'unread', label: 'Unread only' },
+            ] as const).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setNotificationFilter(option.value)}
+                className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${
+                  notificationFilter === option.value
+                    ? 'bg-[#3D08BA] text-white'
+                    : 'border border-slate-200 bg-white text-slate-600 hover:border-[#3D08BA]/20 hover:text-[#3D08BA]'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-4 space-y-3">
+            {notificationsLoading ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+                Loading homework updates...
+              </div>
+            ) : notifications.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+                No submission updates yet. Student homework activity will appear here.
+              </div>
+            ) : visibleNotifications.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+                No homework updates match this filter.
+              </div>
+            ) : (
+              visibleNotifications.map((notification) => (
+                <article
+                  key={notification.id}
+                  className={`rounded-[24px] border p-4 transition ${
+                    notification.isRead
+                      ? 'border-slate-200 bg-slate-50'
+                      : 'border-amber-200 bg-amber-50/70'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {!notification.isRead ? <span className="h-2 w-2 rounded-full bg-amber-500" /> : null}
+                        <p className="text-sm font-semibold text-slate-900">{notification.title}</p>
+                        {notification.needsReview ? (
+                          <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">
+                            Needs review
+                          </span>
+                        ) : (
+                          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                            Auto-scored
+                          </span>
+                        )}
+                        {notification.isLate ? (
+                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                            Late
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">{notification.message}</p>
+                      <p className="mt-2 text-[11px] text-slate-400">{formatRelativeTime(notification.createdAt)}</p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void openAssignmentFromNotification(notification)}
+                        className="rounded-2xl border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/10"
+                      >
+                        Open task
+                      </button>
+                      {!notification.isRead ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleMarkNotificationRead(notification.id)}
+                          disabled={activeNotificationId === notification.id}
+                          className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {activeNotificationId === notification.id ? 'Updating...' : 'Mark read'}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => void handleArchiveNotification(notification.id)}
+                        disabled={activeNotificationId === notification.id}
+                        className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
         </section>
 
         <section className="rounded-[30px] border border-white/80 bg-white/90 p-4 shadow-[0_24px_60px_rgba(15,23,42,0.08)] sm:p-5">

@@ -80,6 +80,32 @@ export type AssignmentSubmission = {
 
 export type StudentAssignment = Omit<SchoolAssignment, 'submissionsCount' | 'gradedCount'>;
 
+export type SchoolAssignmentNotification = {
+  id: string;
+  assignmentId: string;
+  submissionId: string;
+  title: string;
+  message: string;
+  createdAt: string;
+  isRead: boolean;
+  needsReview: boolean;
+  isLate: boolean;
+  studentName: string;
+};
+
+export type StudentAssignmentNotification = {
+  id: string;
+  kind: 'released' | 'graded';
+  assignmentId: string;
+  title: string;
+  message: string;
+  createdAt: string;
+  isRead: boolean;
+  department: string;
+  classGroup: string;
+  sessionId: string | null;
+};
+
 export type CreateSchoolAssignmentInput = {
   title: string;
   subject: string;
@@ -269,6 +295,49 @@ export const gradeSchoolAssignmentSubmission = async (input: {
   }>;
 };
 
+export const fetchSchoolAssignmentNotifications = async () => {
+  const response = await requestWithAuth('/school-assignments/notifications', undefined, 'school');
+  return response.json() as Promise<{
+    unreadCount: number;
+    notifications: SchoolAssignmentNotification[];
+  }>;
+};
+
+export const markSchoolAssignmentNotificationAsRead = async (notificationId: string) => {
+  const response = await requestWithAuth(
+    `/school-assignments/notifications/${encodeURIComponent(notificationId)}/read`,
+    {
+      method: 'POST',
+      body: JSON.stringify({}),
+    },
+    'school'
+  );
+  return response.json() as Promise<{ notificationId: string; unreadCount: number }>;
+};
+
+export const markAllSchoolAssignmentNotificationsAsRead = async () => {
+  const response = await requestWithAuth(
+    '/school-assignments/notifications/read-all',
+    {
+      method: 'POST',
+      body: JSON.stringify({}),
+    },
+    'school'
+  );
+  return response.json() as Promise<{ updated: number; unreadCount: number }>;
+};
+
+export const archiveSchoolAssignmentNotification = async (notificationId: string) => {
+  const response = await requestWithAuth(
+    `/school-assignments/notifications/${encodeURIComponent(notificationId)}`,
+    {
+      method: 'DELETE',
+    },
+    'school'
+  );
+  return response.json() as Promise<{ notificationId: string; unreadCount: number; archived: true }>;
+};
+
 export const fetchStudentAssignments = async (params: {
   department: string;
   classGroup: string;
@@ -284,6 +353,89 @@ export const fetchStudentAssignments = async (params: {
     assignments: StudentAssignment[];
     submissions: AssignmentSubmission[];
   }>;
+};
+
+export const fetchStudentAssignmentNotifications = async (params: {
+  department: string;
+  classGroup: string;
+  studentId?: string | number;
+}) => {
+  const query = new URLSearchParams({
+    department: params.department,
+    classGroup: params.classGroup,
+    ...(params.studentId ? { studentId: String(params.studentId) } : {}),
+  });
+  const response = await requestWithAuth(
+    `/student-assignments/notifications?${query.toString()}`,
+    undefined,
+    'student'
+  );
+  return response.json() as Promise<{
+    unreadCount: number;
+    notifications: StudentAssignmentNotification[];
+  }>;
+};
+
+export const markStudentAssignmentNotificationAsRead = async (input: {
+  notificationId: string;
+  department: string;
+  classGroup: string;
+  studentId?: string | number;
+}) => {
+  const response = await requestWithAuth(
+    `/student-assignments/notifications/${encodeURIComponent(input.notificationId)}/read`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        department: input.department,
+        classGroup: input.classGroup,
+        ...(input.studentId ? { studentId: String(input.studentId) } : {}),
+      }),
+    },
+    'student'
+  );
+  return response.json() as Promise<{ notificationId: string; unreadCount: number }>;
+};
+
+export const markAllStudentAssignmentNotificationsAsRead = async (input: {
+  department: string;
+  classGroup: string;
+  studentId?: string | number;
+}) => {
+  const response = await requestWithAuth(
+    '/student-assignments/notifications/read-all',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        department: input.department,
+        classGroup: input.classGroup,
+        ...(input.studentId ? { studentId: String(input.studentId) } : {}),
+      }),
+    },
+    'student'
+  );
+  return response.json() as Promise<{ updated: number; unreadCount: number }>;
+};
+
+export const archiveStudentAssignmentNotification = async (input: {
+  notificationId: string;
+  department: string;
+  classGroup: string;
+  studentId?: string | number;
+}) => {
+  const response = await requestWithAuth(
+    `/student-assignments/notifications/${encodeURIComponent(input.notificationId)}`,
+    {
+      method: 'DELETE',
+      body: JSON.stringify({
+        department: input.department,
+        classGroup: input.classGroup,
+        ...(input.studentId ? { studentId: String(input.studentId) } : {}),
+      }),
+    },
+    'student'
+  );
+  return response.json() as Promise<{ notificationId: string; unreadCount: number; archived: true }>;
 };
 
 export const submitStudentAssignment = async (input: SubmitStudentAssignmentInput) => {

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
+import { fetchStudentAssignmentNotifications } from '../schools/utils/assignmentsApi';
 import { fetchSchoolScheduleNotifications } from '../schools/utils/schoolScheduleApi';
 import { fetchStudentExamNotifications } from '../schools/utils/examsApi';
+import { loadStudentIdentity } from '../students/utils/studentIdentity';
 
 type LocalNotification = {
   id: string;
@@ -11,7 +13,7 @@ type LocalNotification = {
   type?: 'assignment' | 'grade' | 'announcement' | 'reminder' | 'achievement';
   priority?: 'high' | 'medium' | 'low';
   createdAt?: string;
-  source?: 'seed' | 'schedule' | 'local' | 'exam';
+  source?: 'seed' | 'schedule' | 'local' | 'exam' | 'assignment';
 };
 
 const readLocalNotifications = (): LocalNotification[] => {
@@ -87,9 +89,17 @@ export const useNotificationCount = () => {
 
     const syncScheduleNotifications = async () => {
       try {
-        const [schedulePayload, examPayload] = await Promise.all([
+        const studentIdentity = loadStudentIdentity();
+        const [schedulePayload, examPayload, assignmentPayload] = await Promise.all([
           fetchSchoolScheduleNotifications().catch(() => null),
           fetchStudentExamNotifications().catch(() => null),
+          studentIdentity.department && studentIdentity.classGroup
+            ? fetchStudentAssignmentNotifications({
+                department: studentIdentity.department,
+                classGroup: studentIdentity.classGroup,
+                studentId: studentIdentity.id,
+              }).catch(() => null)
+            : Promise.resolve(null),
         ]);
         const existing = readLocalNotifications();
         const byId = new Map(existing.map((notification) => [notification.id, notification]));
@@ -119,6 +129,20 @@ export const useNotificationCount = () => {
             priority: notification.isRead ? 'low' : 'medium',
             createdAt: notification.createdAt,
             source: 'exam',
+          });
+        });
+
+        assignmentPayload?.notifications.forEach((notification) => {
+          byId.set(`assignment:${notification.id}`, {
+            id: `assignment:${notification.id}`,
+            type: notification.kind === 'graded' ? 'grade' : 'assignment',
+            title: notification.title,
+            message: notification.message,
+            time: formatRelativeLabel(notification.createdAt),
+            isRead: notification.isRead,
+            priority: notification.isRead ? 'low' : 'medium',
+            createdAt: notification.createdAt,
+            source: 'assignment',
           });
         });
 
