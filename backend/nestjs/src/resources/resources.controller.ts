@@ -1,8 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -94,9 +96,46 @@ export class ResourcesController {
     );
   }
 
+  @Patch('me/items/:resourceId')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: {
+        fileSize: 25 * 1024 * 1024,
+      },
+    })
+  )
+  updateResource(
+    @Req() request: Request,
+    @Param('resourceId') resourceId: string,
+    @Body() body: UploadResourceBody,
+    @UploadedFile() uploadedFile: any
+  ) {
+    return this.resourcesService.updateResourceForAuthUser(
+      this.getAuthUser(request),
+      resourceId,
+      {
+        title: body.title,
+        description: body.description,
+        subject: body.subject,
+        type: body.type,
+        category: body.category,
+        pricingType: body.pricingType,
+        price: body.price,
+        uploaderRole: body.uploaderRole,
+        instructorName: body.instructorName,
+      },
+      uploadedFile
+    );
+  }
+
   @Post('me/items/:resourceId/purchase')
   purchaseResource(@Req() request: Request, @Param('resourceId') resourceId: string) {
     return this.resourcesService.purchaseResourceForAuthUser(this.getAuthUser(request), resourceId);
+  }
+
+  @Delete('me/items/:resourceId')
+  deleteResource(@Req() request: Request, @Param('resourceId') resourceId: string) {
+    return this.resourcesService.deleteResourceForAuthUser(this.getAuthUser(request), resourceId);
   }
 
   @Get('me/items/:resourceId/download')

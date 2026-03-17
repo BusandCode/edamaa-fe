@@ -402,6 +402,102 @@ export class ResourcesService implements OnModuleInit {
     };
   }
 
+  updateResourceForAuthUser(
+    authUser: AuthUser,
+    resourceId: string,
+    input: UploadResourceInput,
+    uploadedFile?: any
+  ) {
+    const email = this.requireEmail(authUser);
+    const normalizedResourceId = String(resourceId || '').trim();
+
+    if (!normalizedResourceId) {
+      throw new BadRequestException('Resource id is required.');
+    }
+
+    const resource = this.resources.find((item) => item.id === normalizedResourceId);
+    if (!resource) {
+      throw new NotFoundException('Resource could not be found.');
+    }
+
+    if (resource.uploaderEmail !== email) {
+      throw new ForbiddenException('You can only update materials uploaded from your account.');
+    }
+
+    const nextTitle = this.normalizeUpdatedRequiredText(
+      input.title,
+      resource.title,
+      'Please add a clear resource title.',
+      120
+    );
+    const nextSubject = this.normalizeUpdatedRequiredText(
+      input.subject,
+      resource.subject,
+      'Please add a subject for this resource.',
+      80
+    );
+    const nextType = this.resolveUpdatedResourceType(input.type, resource.type, uploadedFile);
+    const nextDescription =
+      input.description === undefined
+        ? resource.description
+        : this.normalizeOptionalText(input.description, 500) || this.defaultDescriptionForType(nextType);
+    const nextCategory =
+      input.category === undefined ? resource.category : this.normalizeResourceCategory(input.category);
+    const nextPricingType =
+      input.pricingType === undefined ? resource.pricingType : this.normalizePricingType(input.pricingType);
+    const nextPriceMinor = this.resolveUpdatedPriceMinor(input.price, nextPricingType, resource.priceMinor);
+    const nextUploaderName =
+      input.instructorName === undefined
+        ? resource.uploaderName
+        : this.normalizeOptionalText(input.instructorName, 80) ||
+          authUser.name ||
+          this.defaultNameFromEmail(email);
+
+    const validatedFile = this.validateOptionalUploadedFile(uploadedFile);
+
+    resource.title = nextTitle;
+    resource.subject = nextSubject;
+    resource.description =
+      nextDescription || this.defaultDescriptionForType(nextType);
+    resource.category = nextCategory;
+    resource.pricingType = nextPricingType;
+    resource.priceMinor = nextPriceMinor;
+    resource.uploaderName = String(nextUploaderName || resource.uploaderName).trim();
+    resource.type = nextType;
+
+    if (validatedFile) {
+      const nextMimeType =
+        String(validatedFile.mimetype || 'application/octet-stream').trim() ||
+        'application/octet-stream';
+      const nextFileName =
+        sanitizeFileName(String(validatedFile.originalname || resource.fileName || 'resource-file')) ||
+        resource.fileName ||
+        'resource-file';
+
+      resource.fileName = nextFileName;
+      resource.mimeType = nextMimeType;
+      resource.fileSizeBytes = Number(validatedFile.size || validatedFile.buffer.length || 0);
+      this.filesByResourceId.set(resource.id, {
+        fileName: nextFileName,
+        mimeType: nextMimeType,
+        bytes: Buffer.from(validatedFile.buffer),
+      });
+    }
+
+    const notification = this.createUpdatedNotificationForResource(resource);
+    this.notifications.unshift(notification);
+
+    return {
+      resource: this.toResourceResponse(resource, email),
+      notification: this.toNotificationResponse(notification, false),
+      message: `${resource.title} has been updated in the student library.`,
+      dataQuality: {
+        degraded: false,
+        source: 'memory' as const,
+      },
+    };
+  }
+
   getResourceDownloadForAuthUser(authUser: AuthUser, resourceId: string) {
     const email = this.requireEmail(authUser);
     const normalizedResourceId = String(resourceId || '').trim();
@@ -483,6 +579,56 @@ export class ResourcesService implements OnModuleInit {
       purchasedAt: purchase.createdAt.toISOString(),
       amountPaid: this.toNaira(resource.priceMinor || 0),
       resource: this.toResourceResponse(resource, email),
+    };
+  }
+
+  deleteResourceForAuthUser(authUser: AuthUser, resourceId: string) {
+    const email = this.requireEmail(authUser);
+    const normalizedResourceId = String(resourceId || '').trim();
+
+    if (!normalizedResourceId) {
+      throw new BadRequestException('Resource id is required.');
+    }
+
+    const resourceIndex = this.resources.findIndex((item) => item.id === normalizedResourceId);
+    if (resourceIndex < 0) {
+      throw new NotFoundException('Resource could not be found.');
+    }
+
+    const resource = this.resources[resourceIndex];
+    if (resource.uploaderEmail !== email) {
+      throw new ForbiddenException('You can only remove materials uploaded from your account.');
+    }
+
+    this.resources.splice(resourceIndex, 1);
+    this.filesByResourceId.delete(resource.id);
+    this.purchasedEmailsByResourceId.delete(resource.id);
+
+    for (let index = this.purchases.length - 1; index >= 0; index -= 1) {
+      if (this.purchases[index]?.resourceId === resource.id) {
+        this.purchases.splice(index, 1);
+      }
+    }
+
+    for (let index = this.notifications.length - 1; index >= 0; index -= 1) {
+      if (this.notifications[index]?.resourceId === resource.id) {
+        this.notifications.splice(index, 1);
+      }
+    }
+
+    this.readNotificationIdsByEmail.forEach((readIds) => {
+      Array.from(readIds).forEach((notificationId) => {
+        const stillExists = this.notifications.some((notification) => notification.id === notificationId);
+        if (!stillExists) {
+          readIds.delete(notificationId);
+        }
+      });
+    });
+
+    return {
+      deleted: true,
+      resourceId: resource.id,
+      message: `${resource.title} has been removed from the student library.`,
     };
   }
 
@@ -607,6 +753,18 @@ export class ResourcesService implements OnModuleInit {
     return normalized;
   }
 
+  private normalizeUpdatedRequiredText(
+    value: string | undefined,
+    fallback: string,
+    errorMessage: string,
+    maxLength: number
+  ) {
+    if (value === undefined) {
+      return fallback;
+    }
+    return this.normalizeRequiredText(value, errorMessage, maxLength);
+  }
+
   private normalizeOptionalText(value: string | undefined, maxLength: number) {
     const normalized = String(value || '').replace(/\s+/g, ' ').trim();
     if (!normalized) {
@@ -637,6 +795,20 @@ export class ResourcesService implements OnModuleInit {
     }
 
     return detectResourceTypeFromMime(mimeType);
+  }
+
+  private resolveUpdatedResourceType(
+    value: string | undefined,
+    currentType: ResourceType,
+    uploadedFile?: any
+  ) {
+    if (value !== undefined) {
+      return this.normalizeResourceType(value, String(uploadedFile?.mimetype || ''));
+    }
+    if (uploadedFile?.mimetype) {
+      return this.normalizeResourceType(undefined, String(uploadedFile.mimetype || ''));
+    }
+    return currentType;
   }
 
   private normalizeResourceCategory(value: string | undefined): ResourceCategory {
@@ -697,6 +869,45 @@ export class ResourcesService implements OnModuleInit {
     return Math.round(numeric * 100);
   }
 
+  private resolveUpdatedPriceMinor(
+    value: string | number | undefined,
+    pricingType: ResourcePricingType,
+    fallback: number | null
+  ) {
+    if (pricingType === 'free') {
+      return null;
+    }
+
+    if (value === undefined || value === null || String(value).trim() === '') {
+      if (fallback !== null) {
+        return fallback;
+      }
+      throw new BadRequestException('Set a valid paid price before publishing this resource.');
+    }
+
+    return this.parsePriceMinor(value, pricingType);
+  }
+
+  private validateOptionalUploadedFile(uploadedFile: any) {
+    if (!uploadedFile) {
+      return null;
+    }
+
+    if (!uploadedFile.buffer || !Buffer.isBuffer(uploadedFile.buffer)) {
+      throw new BadRequestException('Uploaded file is invalid. Please re-attach and try again.');
+    }
+
+    const size = Number(uploadedFile.size || uploadedFile.buffer.length || 0);
+    if (size <= 0) {
+      throw new BadRequestException('Uploaded file is empty. Please choose a valid file.');
+    }
+    if (size > MAX_UPLOAD_SIZE_BYTES) {
+      throw new BadRequestException('File is too large. Keep uploads below 25MB for now.');
+    }
+
+    return uploadedFile;
+  }
+
   private getPurchasedEmails(resourceId: string) {
     const existing = this.purchasedEmailsByResourceId.get(resourceId);
     if (existing) {
@@ -753,6 +964,17 @@ export class ResourcesService implements OnModuleInit {
       resourceId: resource.id,
       title,
       message,
+      priority: resource.category === 'assignment' || resource.category === 'classwork' ? 'high' : 'medium',
+      createdAt: new Date(),
+    };
+  }
+
+  private createUpdatedNotificationForResource(resource: ResourceRecord): ResourceNotificationRecord {
+    return {
+      id: makeId('resnote'),
+      resourceId: resource.id,
+      title: 'Resource updated',
+      message: `${resource.uploaderName} updated "${resource.title}" for ${resource.subject}.`,
       priority: resource.category === 'assignment' || resource.category === 'classwork' ? 'high' : 'medium',
       createdAt: new Date(),
     };

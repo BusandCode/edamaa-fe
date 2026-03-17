@@ -1433,7 +1433,7 @@ const SchoolDashboard = () => {
   };
 
   const handleResourceUploadClick = () => {
-    navigate('/resources?actor=school&mode=upload');
+    navigate('/school-resources?mode=upload');
   };
 
   const handleOpenInternalAdmin = async () => {
@@ -1579,7 +1579,7 @@ const SchoolDashboard = () => {
                 </p>
                 <div className='flex flex-wrap items-center gap-2'>
                   <IconActionButton
-                    label='Upload Resources'
+                    label='Study Materials'
                     icon={FaUpload}
                     onClick={handleResourceUploadClick}
                   />
@@ -1606,7 +1606,7 @@ const SchoolDashboard = () => {
                 </p>
                 <div className='flex flex-wrap items-center gap-2'>
                   <IconActionButton
-                    label='Upload Resources'
+                    label='Study Materials'
                     icon={FaUpload}
                     onClick={handleResourceUploadClick}
                   />
@@ -1714,7 +1714,7 @@ const SchoolDashboard = () => {
             <QuickActionButton icon={FaFileAlt} label="Exams" onClick={handleExamManagementClick} />
             <QuickActionButton icon={FaFileAlt} label="Homework" onClick={handleAssignmentsClick} />
             <QuickActionButton icon={FaVideo} label="Live Classes" badge="8" onClick={handleLiveClassesClick} />
-            <QuickActionButton icon={FaFileAlt} label="Upload Resources" onClick={handleResourceUploadClick} />
+            <QuickActionButton icon={FaFileAlt} label="Study Materials" onClick={handleResourceUploadClick} />
           </div>
           <div className='mt-3 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700'>
             Use <span className='font-semibold'>Schedule</span> for your internal school teachers. Use{' '}
