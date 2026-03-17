@@ -34,7 +34,9 @@ import {
   type SchoolScheduleAttendanceResponse,
 } from '../../schools/utils/schoolScheduleApi';
 import {
+  createSchoolAssignment,
   fetchSchoolAssignments,
+  type CreateSchoolAssignmentInput,
   fetchStudentAssignments,
   type SchoolAssignment,
   type StudentAssignment,
@@ -44,6 +46,10 @@ import {
   type TeachingActor,
 } from '../../subscriptions/utils/teachingSubscriptionApi';
 import { loadStudentIdentity } from '../utils/studentIdentity';
+import {
+  fetchSchoolScheduleSessions,
+  type SchoolScheduleSession,
+} from '../../schools/utils/schoolScheduleApi';
 
 type ClassLevel = 'Beginner' | 'Intermediate' | 'Advanced';
 type RoomRole = 'teacher' | 'student';
@@ -241,6 +247,18 @@ type LiveLinkedAssignment = Pick<
   | 'sessionId'
 >;
 
+type LiveLinkedAssignmentDraft = {
+  title: string;
+  subject: string;
+  department: string;
+  classGroup: string;
+  dueAt: string;
+  points: number;
+  description: string;
+  content: string;
+  checklistText: string;
+};
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '');
 
 const RTC_CONFIGURATION: RTCConfiguration = buildRtcConfiguration();
@@ -259,6 +277,38 @@ const formatLiveDateTime = (value: string | null | undefined) => {
     hour: '2-digit',
     minute: '2-digit',
   });
+};
+
+const toDateTimeLocalValue = (value: string | Date | null | undefined) => {
+  if (!value) {
+    return '';
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+  const offset = parsed.getTimezoneOffset();
+  return new Date(parsed.getTime() - offset * 60_000).toISOString().slice(0, 16);
+};
+
+const buildLiveLinkedAssignmentDraft = (
+  liveClass: ClassDetails,
+  session: SchoolScheduleSession | null
+): LiveLinkedAssignmentDraft => {
+  const dueBase = session?.endAt ? new Date(session.endAt) : new Date();
+  dueBase.setDate(dueBase.getDate() + 2);
+
+  return {
+    title: `${liveClass.subject} follow-up homework`,
+    subject: session?.subject || liveClass.subject,
+    department: session?.department || '',
+    classGroup: session?.classGroup || '',
+    dueAt: toDateTimeLocalValue(dueBase),
+    points: 20,
+    description: `Follow-up task for ${session?.title || liveClass.name}.`,
+    content: '',
+    checklistText: '',
+  };
 };
 
 const AVATAR_GRADIENTS: Array<[string, string]> = [
@@ -518,6 +568,11 @@ const LiveClassroom = () => {
   const schoolSupportId = useMemo(() => `school-${liveClass.id}`, [liveClass.id]);
   const schoolSupportName = useMemo(() => `${liveClass.subject} School Support`, [liveClass.subject]);
   const channelName = useMemo(() => `live-class:${liveClass.id}`, [liveClass.id]);
+  const hasSchoolAuthSession = useMemo(
+    () => teacherActor === 'school' && hasPersistedAuthSession(),
+    [teacherActor]
+  );
+  const canManageLinkedAssignments = isTeacher && hasSchoolAuthSession && Boolean(liveClass.id);
 
   const clientIdRef = useRef(`client-${Date.now()}-${Math.floor(Math.random() * 100000)}`);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -633,6 +688,13 @@ const LiveClassroom = () => {
   const [isSchoolAttendanceLoading, setIsSchoolAttendanceLoading] = useState(false);
   const [attendanceActionState, setAttendanceActionState] = useState<'open' | 'close' | 'check_in' | null>(null);
   const isSchoolAttendanceClass = teacherActor === 'school' && Boolean(liveClass.id);
+  const [linkedAssignmentSession, setLinkedAssignmentSession] = useState<SchoolScheduleSession | null>(null);
+  const [isLinkedAssignmentSessionLoading, setIsLinkedAssignmentSessionLoading] = useState(false);
+  const [isLinkedAssignmentComposerOpen, setIsLinkedAssignmentComposerOpen] = useState(false);
+  const [isLinkedAssignmentSaving, setIsLinkedAssignmentSaving] = useState(false);
+  const [linkedAssignmentDraft, setLinkedAssignmentDraft] = useState<LiveLinkedAssignmentDraft>(() =>
+    buildLiveLinkedAssignmentDraft(liveClass, null)
+  );
 
   useEffect(() => {
     if (isTeacher || !liveClass.id) {
@@ -667,6 +729,41 @@ const LiveClassroom = () => {
       });
     };
   }, [attendanceParticipantId, attendanceParticipantName, isTeacher, liveClass.id]);
+
+  useEffect(() => {
+    if (!canManageLinkedAssignments) {
+      setLinkedAssignmentSession(null);
+      setIsLinkedAssignmentSessionLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadCurrentScheduleSession = async () => {
+      setIsLinkedAssignmentSessionLoading(true);
+      try {
+        const payload = await fetchSchoolScheduleSessions({ status: 'all' });
+        if (!cancelled) {
+          setLinkedAssignmentSession(
+            payload.sessions.find((session) => session.id === liveClass.id) || null
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setLinkedAssignmentSession(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLinkedAssignmentSessionLoading(false);
+        }
+      }
+    };
+
+    void loadCurrentScheduleSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canManageLinkedAssignments, liveClass.id]);
   const [isTeacherSubscriptionChecking, setIsTeacherSubscriptionChecking] = useState(isTeacher);
   const [isTeacherSubscriptionLocked, setIsTeacherSubscriptionLocked] = useState(false);
   const [teacherSubscriptionLockReason, setTeacherSubscriptionLockReason] = useState('');
@@ -1076,69 +1173,48 @@ const LiveClassroom = () => {
 
   const [linkedPostClassAssignments, setLinkedPostClassAssignments] = useState<LiveLinkedAssignment[]>([]);
   const [isLinkedAssignmentsLoading, setIsLinkedAssignmentsLoading] = useState(false);
-
-  useEffect(() => {
+  const loadLinkedAssignments = useCallback(async () => {
     if (teacherActor !== 'school' || !liveClass.id) {
       setLinkedPostClassAssignments([]);
       return;
     }
 
-    let cancelled = false;
-    const loadLinkedAssignments = async () => {
-      setIsLinkedAssignmentsLoading(true);
-      try {
-        if (isTeacher) {
-          if (!hasPersistedAuthSession()) {
-            if (!cancelled) {
-              setLinkedPostClassAssignments([]);
-            }
-            return;
-          }
-
-          const payload = await fetchSchoolAssignments();
-          if (!cancelled) {
-            setLinkedPostClassAssignments(
-              payload.assignments.filter((assignment) => assignment.sessionId === liveClass.id)
-            );
-          }
-          return;
-        }
-
-        if (!studentIdentity.department || !studentIdentity.classGroup) {
-          if (!cancelled) {
-            setLinkedPostClassAssignments([]);
-          }
-          return;
-        }
-
-        const payload = await fetchStudentAssignments({
-          department: studentIdentity.department,
-          classGroup: studentIdentity.classGroup,
-          studentId: studentIdentity.id,
-        });
-
-        if (!cancelled) {
-          setLinkedPostClassAssignments(
-            payload.assignments.filter((assignment) => assignment.sessionId === liveClass.id)
-          );
-        }
-      } catch {
-        if (!cancelled) {
+    setIsLinkedAssignmentsLoading(true);
+    try {
+      if (isTeacher) {
+        if (!hasSchoolAuthSession) {
           setLinkedPostClassAssignments([]);
+          return;
         }
-      } finally {
-        if (!cancelled) {
-          setIsLinkedAssignmentsLoading(false);
-        }
+
+        const payload = await fetchSchoolAssignments();
+        setLinkedPostClassAssignments(
+          payload.assignments.filter((assignment) => assignment.sessionId === liveClass.id)
+        );
+        return;
       }
-    };
 
-    void loadLinkedAssignments();
+      if (!studentIdentity.department || !studentIdentity.classGroup) {
+        setLinkedPostClassAssignments([]);
+        return;
+      }
 
-    return () => {
-      cancelled = true;
-    };
+      const payload = await fetchStudentAssignments({
+        department: studentIdentity.department,
+        classGroup: studentIdentity.classGroup,
+        studentId: studentIdentity.id,
+      });
+
+      setLinkedPostClassAssignments(
+        payload.assignments.filter((assignment) => assignment.sessionId === liveClass.id)
+      );
+    } catch {
+      setLinkedPostClassAssignments([]);
+    } finally {
+      setIsLinkedAssignmentsLoading(false);
+    }
   }, [
+    hasSchoolAuthSession,
     isTeacher,
     liveClass.id,
     studentIdentity.classGroup,
@@ -1146,6 +1222,87 @@ const LiveClassroom = () => {
     studentIdentity.id,
     teacherActor,
   ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      await loadLinkedAssignments();
+    };
+
+    void run().catch(() => {
+      if (!cancelled) {
+        setLinkedPostClassAssignments([]);
+        setIsLinkedAssignmentsLoading(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadLinkedAssignments]);
+
+  const openLinkedAssignmentComposer = useCallback(() => {
+    setLinkedAssignmentDraft(buildLiveLinkedAssignmentDraft(liveClass, linkedAssignmentSession));
+    setIsLinkedAssignmentComposerOpen(true);
+  }, [linkedAssignmentSession, liveClass]);
+
+  const closeLinkedAssignmentComposer = useCallback(() => {
+    setIsLinkedAssignmentComposerOpen(false);
+    setIsLinkedAssignmentSaving(false);
+  }, []);
+
+  const handleCreateLinkedAssignment = useCallback(async () => {
+    const payload: CreateSchoolAssignmentInput = {
+      title: linkedAssignmentDraft.title.trim(),
+      subject: linkedAssignmentDraft.subject.trim(),
+      department: linkedAssignmentDraft.department.trim(),
+      classGroup: linkedAssignmentDraft.classGroup.trim(),
+      description: linkedAssignmentDraft.description.trim(),
+      content: linkedAssignmentDraft.content.trim(),
+      checklist: linkedAssignmentDraft.checklistText
+        .split('\n')
+        .map((item) => item.trim())
+        .filter(Boolean),
+      type: 'assignment',
+      deliveryMode: 'virtual',
+      releaseMode: 'on_class_end',
+      dueAt: linkedAssignmentDraft.dueAt,
+      points: Math.max(1, Number(linkedAssignmentDraft.points) || 0),
+      sessionId: liveClass.id || null,
+      attachments: 0,
+    };
+
+    if (
+      !payload.title ||
+      !payload.subject ||
+      !payload.department ||
+      !payload.classGroup ||
+      !payload.description ||
+      !payload.content ||
+      !payload.dueAt ||
+      !payload.sessionId
+    ) {
+      pushNotice('Add the class, due date, summary, and homework instructions before creating this task.', 'warning');
+      return;
+    }
+
+    setIsLinkedAssignmentSaving(true);
+    try {
+      const response = await createSchoolAssignment(payload);
+      setLinkedPostClassAssignments(
+        response.assignments.filter((assignment) => assignment.sessionId === liveClass.id)
+      );
+      setIsLinkedAssignmentComposerOpen(false);
+      pushNotice('Linked homework created for this class.', 'success');
+    } catch (error) {
+      pushNotice(
+        error instanceof Error ? error.message : 'Could not create linked homework right now.',
+        'error'
+      );
+    } finally {
+      setIsLinkedAssignmentSaving(false);
+    }
+  }, [linkedAssignmentDraft, liveClass.id, pushNotice]);
 
   const releasedLinkedAssignments = useMemo(
     () => linkedPostClassAssignments.filter((assignment) => assignment.isReleased),
@@ -3527,6 +3684,215 @@ const LiveClassroom = () => {
         </div>
       )}
 
+      {isTeacher && isLinkedAssignmentComposerOpen && (
+        <div className="fixed inset-0 z-[68] flex items-center justify-center bg-black/70 px-4 py-6">
+          <div className="w-full max-w-3xl overflow-hidden rounded-[28px] border border-white/15 bg-[#0f1735] text-white shadow-[0_28px_80px_rgba(0,0,0,0.45)]">
+            <div className="border-b border-white/10 px-5 py-4 sm:px-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-200/80">
+                    Linked homework
+                  </p>
+                  <h2 className="mt-1 text-xl font-semibold text-white">Create post-class task</h2>
+                  <p className="mt-2 text-sm text-white/70">
+                    This homework is tied to <span className="font-semibold text-white">{liveClass.name}</span> and will open when this class session ends.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeLinkedAssignmentComposer}
+                  className="rounded-full border border-white/15 bg-white/5 p-2 text-white/70 transition hover:bg-white/10 hover:text-white"
+                  aria-label="Close linked homework composer"
+                >
+                  <XMarkIcon className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-0 lg:grid-cols-[minmax(0,1.25fr)_320px]">
+              <div className="space-y-4 px-5 py-5 sm:px-6">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-white/85">Task title</span>
+                    <input
+                      value={linkedAssignmentDraft.title}
+                      onChange={(event) =>
+                        setLinkedAssignmentDraft((current) => ({ ...current, title: event.target.value }))
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-emerald-300/35 focus:bg-white/10"
+                      placeholder="e.g. Fractions follow-up homework"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-white/85">Subject</span>
+                    <input
+                      value={linkedAssignmentDraft.subject}
+                      onChange={(event) =>
+                        setLinkedAssignmentDraft((current) => ({ ...current, subject: event.target.value }))
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-emerald-300/35 focus:bg-white/10"
+                      placeholder="Subject"
+                    />
+                  </label>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-white/85">Department</span>
+                    <input
+                      value={linkedAssignmentDraft.department}
+                      onChange={(event) =>
+                        setLinkedAssignmentDraft((current) => ({ ...current, department: event.target.value }))
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-emerald-300/35 focus:bg-white/10"
+                      placeholder={isLinkedAssignmentSessionLoading ? 'Loading class details...' : 'e.g. Science'}
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-white/85">Class</span>
+                    <input
+                      value={linkedAssignmentDraft.classGroup}
+                      onChange={(event) =>
+                        setLinkedAssignmentDraft((current) => ({ ...current, classGroup: event.target.value }))
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-emerald-300/35 focus:bg-white/10"
+                      placeholder={isLinkedAssignmentSessionLoading ? 'Loading class details...' : 'e.g. JSS 2A'}
+                    />
+                  </label>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-white/85">Due date and time</span>
+                    <input
+                      type="datetime-local"
+                      value={linkedAssignmentDraft.dueAt}
+                      onChange={(event) =>
+                        setLinkedAssignmentDraft((current) => ({ ...current, dueAt: event.target.value }))
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-300/35 focus:bg-white/10"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-white/85">Marks</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={linkedAssignmentDraft.points}
+                      onChange={(event) =>
+                        setLinkedAssignmentDraft((current) => ({
+                          ...current,
+                          points: Math.max(1, Number(event.target.value) || 0),
+                        }))
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-300/35 focus:bg-white/10"
+                    />
+                  </label>
+                </div>
+
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-white/85">Short summary</span>
+                  <textarea
+                    rows={3}
+                    value={linkedAssignmentDraft.description}
+                    onChange={(event) =>
+                      setLinkedAssignmentDraft((current) => ({ ...current, description: event.target.value }))
+                    }
+                    className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-emerald-300/35 focus:bg-white/10"
+                    placeholder="Tell students what this homework is about."
+                  />
+                </label>
+
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-white/85">Homework instructions</span>
+                  <textarea
+                    rows={6}
+                    value={linkedAssignmentDraft.content}
+                    onChange={(event) =>
+                      setLinkedAssignmentDraft((current) => ({ ...current, content: event.target.value }))
+                    }
+                    className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-emerald-300/35 focus:bg-white/10"
+                    placeholder="Explain what students should do after class."
+                  />
+                </label>
+
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-white/85">Checklist</span>
+                  <textarea
+                    rows={4}
+                    value={linkedAssignmentDraft.checklistText}
+                    onChange={(event) =>
+                      setLinkedAssignmentDraft((current) => ({ ...current, checklistText: event.target.value }))
+                    }
+                    className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-emerald-300/35 focus:bg-white/10"
+                    placeholder={'One item per line, for example:\nShow your working\nUpload one PDF'}
+                  />
+                </label>
+              </div>
+
+              <aside className="border-t border-white/10 bg-white/[0.03] px-5 py-5 lg:border-l lg:border-t-0 sm:px-6">
+                <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-200/75">
+                    Release preview
+                  </p>
+                  <h3 className="mt-3 text-lg font-semibold text-white">
+                    {linkedAssignmentDraft.title || 'Homework title'}
+                  </h3>
+                  <p className="mt-2 text-sm text-white/65">
+                    {[linkedAssignmentDraft.subject || 'Subject', linkedAssignmentDraft.department || 'Department', linkedAssignmentDraft.classGroup || 'Class'].join(' • ')}
+                  </p>
+
+                  <div className="mt-4 space-y-3 text-sm text-white/75">
+                    <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                      <p className="font-medium text-white">Session link</p>
+                      <p className="mt-1 text-white/65">{liveClass.name}</p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                      <p className="font-medium text-white">When students see it</p>
+                      <p className="mt-1 text-white/65">
+                        {linkedAssignmentSession?.status === 'completed'
+                          ? 'This class already ended, so students can see it as soon as you create it.'
+                          : 'Students will see this automatically when the current class ends.'}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                      <p className="font-medium text-white">Due</p>
+                      <p className="mt-1 text-white/65">
+                        {linkedAssignmentDraft.dueAt
+                          ? formatLiveDateTime(new Date(linkedAssignmentDraft.dueAt).toISOString())
+                          : 'Choose a due date'}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                      <p className="font-medium text-white">Submission type</p>
+                      <p className="mt-1 text-white/65">{linkedAssignmentDraft.points} marks • note or file submission</p>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-white/10 px-5 py-4 sm:px-6">
+              <button
+                type="button"
+                onClick={closeLinkedAssignmentComposer}
+                className="rounded-2xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white/80 transition hover:bg-white/10"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleCreateLinkedAssignment()}
+                disabled={isLinkedAssignmentSaving}
+                className="rounded-2xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isLinkedAssignmentSaving ? 'Creating...' : 'Create linked homework'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {giftingEnabled && giftNotifications.length > 0 && (
         <div className="pointer-events-none fixed right-3 top-20 z-50 w-[min(90vw,360px)] space-y-2">
           {giftNotifications.map((notification) => (
@@ -4085,7 +4451,32 @@ const LiveClassroom = () => {
                   </div>
                 )}
               </div>
-              {!isTeacher ? (
+              {isTeacher ? (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {canManageLinkedAssignments ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={openLinkedAssignmentComposer}
+                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-400/20 px-3 py-1.5 text-xs font-semibold text-emerald-50 transition-colors hover:bg-emerald-400/30"
+                      >
+                        {linkedPostClassAssignments.length > 0 ? 'Add linked homework' : 'Create linked homework'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/school-assignments')}
+                        className="inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white/90 transition-colors hover:bg-white/15"
+                      >
+                        Open homework hub
+                      </button>
+                    </>
+                  ) : teacherActor === 'school' ? (
+                    <div className="rounded-xl border border-white/10 bg-white/8 px-3 py-2 text-[11px] text-emerald-100/85">
+                      Start this class from the school dashboard if you want to attach school homework directly inside the live room.
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
                 <div className="mt-3">
                   <button
                     type="button"
@@ -4095,7 +4486,7 @@ const LiveClassroom = () => {
                     Open Assignments
                   </button>
                 </div>
-              ) : null}
+              )}
             </div>
           )}
 
