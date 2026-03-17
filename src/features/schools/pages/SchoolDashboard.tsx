@@ -144,7 +144,7 @@ const PerformanceOverview = () => {
         setAttendanceMap(nextAttendanceMap);
         setNotice(
           Object.keys(nextAttendanceMap).length === 0 && attendanceCandidates.length > 0
-            ? 'Attendance has not been captured for recent classes yet.'
+            ? 'Attendance has not been taken for recent classes yet.'
             : ''
         );
       } catch (error) {
@@ -155,7 +155,7 @@ const PerformanceOverview = () => {
         const message =
           error instanceof Error
             ? error.message
-            : 'Could not load attendance performance right now.';
+            : 'Could not load class attendance right now.';
         setNotice(message);
         setAttendanceMap({});
         setSessions([]);
@@ -220,7 +220,7 @@ const PerformanceOverview = () => {
     );
   }, [recentAttendanceEntries]);
 
-  const attendanceCoverage =
+  const attendanceRate =
     attendanceSummary.expected > 0
       ? (attendanceSummary.checkedIn / attendanceSummary.expected) * 100
       : 0;
@@ -233,32 +233,32 @@ const PerformanceOverview = () => {
 
   const metrics = [
     {
-      label: 'Attendance coverage',
-      value: `${clampPercentage(attendanceCoverage)}%`,
+      label: 'Attendance rate',
+      value: `${clampPercentage(attendanceRate)}%`,
       helper:
         attendanceSummary.expected > 0
-          ? `${attendanceSummary.checkedIn}/${attendanceSummary.expected} students confirmed`
-          : 'Waiting for recent class check-ins',
-      progress: clampPercentage(attendanceCoverage),
+          ? `${attendanceSummary.checkedIn} of ${attendanceSummary.expected} students marked attendance`
+          : 'Waiting for students to mark attendance',
+      progress: clampPercentage(attendanceRate),
       progressClassName: 'from-[#3D08BA] to-[#5B22E3]',
     },
     {
-      label: 'On-time check-ins',
+      label: 'On-time attendance',
       value: `${clampPercentage(onTimeRate)}%`,
       helper:
         attendanceSummary.checkedIn > 0
-          ? `${attendanceSummary.present} on time`
-          : 'No confirmed check-ins yet',
+          ? `${attendanceSummary.present} students marked on time`
+          : 'No students marked on time yet',
       progress: clampPercentage(onTimeRate),
       progressClassName: 'from-emerald-500 to-emerald-600',
     },
     {
-      label: 'Late arrivals',
+      label: 'Late attendance',
       value: `${clampPercentage(lateRate)}%`,
       helper:
         attendanceSummary.checkedIn > 0
-          ? `${attendanceSummary.late} late check-ins`
-          : 'No late arrivals recorded',
+          ? `${attendanceSummary.late} students marked late`
+          : 'No late students recorded',
       progress: clampPercentage(lateRate),
       progressClassName: 'from-amber-400 to-orange-500',
     },
@@ -268,9 +268,9 @@ const PerformanceOverview = () => {
     <div className='bg-white rounded-2xl border border-gray-200 p-5 shadow-sm'>
       <div className='mb-4 flex items-start justify-between gap-3'>
         <div>
-          <h3 className='text-base font-bold text-gray-900'>Attendance performance</h3>
+          <h3 className='text-base font-bold text-gray-900'>Class attendance</h3>
           <p className='mt-1 text-[11px] text-gray-500'>
-            Live attendance coverage from your most recent tracked classes.
+            Attendance summary from your most recent classes.
           </p>
         </div>
         <button
@@ -314,22 +314,22 @@ const PerformanceOverview = () => {
       <div className='mt-5 rounded-2xl border border-gray-200 bg-white p-4'>
         <div className='mb-3 flex items-center justify-between gap-3'>
           <div>
-            <h4 className='text-sm font-semibold text-gray-900'>Recent tracked classes</h4>
+            <h4 className='text-sm font-semibold text-gray-900'>Recent class attendance</h4>
             <p className='mt-1 text-[11px] text-gray-500'>
               {attendanceSummary.trackedSessions > 0
-                ? `${attendanceSummary.trackedSessions} recent classes with attendance data`
-                : 'Attendance will appear here once classes start checking in.'}
+                ? `${attendanceSummary.trackedSessions} recent classes with attendance taken`
+                : 'Attendance will appear here once classes start taking attendance.'}
             </p>
           </div>
           <span className='rounded-full bg-[#3D08BA]/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]'>
-            {recentAttendanceEntries.length} sessions
+            {recentAttendanceEntries.length} classes
           </span>
         </div>
 
         <div className='space-y-3'>
           {isLoading && (
             <div className='rounded-xl border border-gray-100 bg-gray-50 px-3 py-4 text-xs text-gray-500'>
-              Loading recent attendance...
+              Loading class attendance...
             </div>
           )}
           {!isLoading && recentAttendanceEntries.length === 0 && (
@@ -371,14 +371,14 @@ const PerformanceOverview = () => {
                     </div>
                     <div className='text-right'>
                       <p className='text-sm font-bold text-gray-900'>{sessionCoverage}%</p>
-                      <p className='text-[10px] uppercase tracking-[0.14em] text-gray-400'>coverage</p>
+                      <p className='text-[10px] uppercase tracking-[0.14em] text-gray-400'>attendance rate</p>
                     </div>
                   </div>
 
                   <div className='mt-3 grid gap-2 text-[11px] text-gray-600 sm:grid-cols-3'>
                     <div className='rounded-lg bg-white px-2.5 py-2'>
                       <span className='block text-[10px] uppercase tracking-[0.14em] text-gray-400'>
-                        Checked in
+                        Attendance marked
                       </span>
                       <span className='mt-1 block font-semibold text-gray-900'>
                         {checkedIn}/{expected || 0}

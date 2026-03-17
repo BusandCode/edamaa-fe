@@ -2578,7 +2578,7 @@ const SchoolSchedule = () => {
             row.participantName,
             row.participantId || 'N/A',
             attendanceFilterLabel(row.status),
-            row.source === 'check_in' ? 'Student check-in' : row.source === 'live' ? 'Live presence' : 'Manual',
+            row.source === 'check_in' ? 'Marked by student' : row.source === 'live' ? 'Joined live class' : 'Manual',
             formatAttendanceMoment(row.checkedInAt),
             row.durationMinutes !== null ? `${row.durationMinutes} min` : 'Not recorded',
             row.note || '',
@@ -2860,7 +2860,7 @@ const SchoolSchedule = () => {
             record.participantName,
             record.participantId || 'N/A',
             attendanceFilterLabel(record.status as AttendanceFilter),
-            record.source === 'check_in' ? 'Student check-in' : record.source === 'live' ? 'Live presence' : 'Manual',
+            record.source === 'check_in' ? 'Marked by student' : record.source === 'live' ? 'Joined live class' : 'Manual',
             formatAttendanceMoment(record.joinedAt),
             formatAttendanceMoment(record.checkedInAt),
             formatAttendanceMoment(record.lastSeenAt),
@@ -2932,13 +2932,13 @@ const SchoolSchedule = () => {
           { text: 'Student', style: 'tableHeader' },
           { text: 'Status', style: 'tableHeader' },
           { text: 'Source', style: 'tableHeader' },
-          { text: 'Checked In', style: 'tableHeader' },
+          { text: 'Attendance Time', style: 'tableHeader' },
           { text: 'Duration', style: 'tableHeader' },
         ],
         ...filteredAttendanceRecords.map((record) => [
           record.participantName,
           attendanceFilterLabel(record.status as AttendanceFilter),
-          record.source === 'check_in' ? 'Student check-in' : record.source === 'live' ? 'Live presence' : 'Manual',
+          record.source === 'check_in' ? 'Marked by student' : record.source === 'live' ? 'Joined live class' : 'Manual',
           formatAttendanceMoment(record.checkedInAt),
           record.durationMinutes !== null ? `${record.durationMinutes} min` : 'Not recorded',
         ]),
@@ -5209,7 +5209,7 @@ const SchoolSchedule = () => {
                       <p className="mt-2 text-2xl font-semibold text-amber-700">{attendanceReportSummary.pendingCount}</p>
                     </div>
                     <div className="rounded-2xl border border-[#3D08BA]/15 bg-white p-4 shadow-sm">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]">Coverage</p>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]">Attendance rate</p>
                       <p className="mt-2 text-2xl font-semibold text-[#3D08BA]">{attendanceReportCoverage}%</p>
                     </div>
                   </section>
@@ -5222,7 +5222,7 @@ const SchoolSchedule = () => {
                             <div>
                               <h3 className="text-sm font-semibold text-slate-900">Teacher attendance trend</h3>
                               <p className="mt-1 text-xs leading-5 text-slate-500">
-                                Average attendance coverage across the generated classes, with movement against the previous session.
+                                Average attendance rate across the selected classes, with movement against the previous class.
                               </p>
                             </div>
                             <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
@@ -5263,14 +5263,14 @@ const SchoolSchedule = () => {
                                 </div>
                                 <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold">
                                   <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
-                                    Attended: {trend.attendedCount}/{trend.expectedStudents || 0}
+                                    Marked attendance: {trend.attendedCount}/{trend.expectedStudents || 0}
                                   </span>
                                   <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
                                     Late: {trend.lateCount}
                                   </span>
                                   {trend.latestCoverage !== null && (
                                     <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
-                                      Latest: {trend.latestCoverage}%
+                                      Latest rate: {trend.latestCoverage}%
                                     </span>
                                   )}
                                 </div>
@@ -5284,7 +5284,7 @@ const SchoolSchedule = () => {
                             <div>
                               <h3 className="text-sm font-semibold text-slate-900">Class audience trend</h3>
                               <p className="mt-1 text-xs leading-5 text-slate-500">
-                                Coverage trend by class group or department audience across the selected report period.
+                                Attendance rate by class group or department across the selected report period.
                               </p>
                             </div>
                             <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
@@ -5325,14 +5325,14 @@ const SchoolSchedule = () => {
                                 </div>
                                 <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold">
                                   <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
-                                    Attended: {trend.attendedCount}/{trend.expectedStudents || 0}
+                                    Marked attendance: {trend.attendedCount}/{trend.expectedStudents || 0}
                                   </span>
                                   <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
                                     Late: {trend.lateCount}
                                   </span>
                                   {trend.latestCoverage !== null && (
                                     <span className="rounded-full border border-white bg-white px-2.5 py-1 text-slate-600">
-                                      Latest: {trend.latestCoverage}%
+                                      Latest rate: {trend.latestCoverage}%
                                     </span>
                                   )}
                                 </div>
@@ -5345,9 +5345,9 @@ const SchoolSchedule = () => {
                       <section className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <h3 className="text-sm font-semibold text-slate-900">Recent session coverage</h3>
+                            <h3 className="text-sm font-semibold text-slate-900">Recent class attendance</h3>
                             <p className="mt-1 text-xs leading-5 text-slate-500">
-                              Track how individual classes performed over time and spot sessions with low attendance coverage quickly.
+                              Review how each class performed over time and quickly spot classes with low attendance.
                             </p>
                           </div>
                           <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
@@ -5369,7 +5369,7 @@ const SchoolSchedule = () => {
                                 <div className="text-right">
                                   <p className="text-sm font-semibold text-slate-900">{trend.coverage}%</p>
                                   <p className="mt-1 text-[11px] text-slate-500">
-                                    {trend.attendedCount}/{trend.expectedStudents || 0} attended
+                                    {trend.attendedCount}/{trend.expectedStudents || 0} students marked attendance
                                   </p>
                                 </div>
                               </div>
@@ -5406,7 +5406,7 @@ const SchoolSchedule = () => {
                   <section className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <h3 className="text-sm font-semibold text-slate-900">Attendance rows</h3>
+                        <h3 className="text-sm font-semibold text-slate-900">Attendance list</h3>
                         <p className="mt-1 text-xs leading-5 text-slate-500">
                           Filter the generated report by attendance status, then export the exact view you need.
                         </p>
@@ -5484,9 +5484,9 @@ const SchoolSchedule = () => {
                                   {formatDateTime(row.sessionStartAt)}
                                 </p>
                               </div>
-                              <div className="grid gap-2 sm:grid-cols-3">
+                            <div className="grid gap-2 sm:grid-cols-3">
                                 <div className="rounded-xl border border-white bg-white px-3 py-2">
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Checked in</p>
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Attendance time</p>
                                   <p className="mt-1 text-xs font-medium text-slate-700">{formatAttendanceMoment(row.checkedInAt)}</p>
                                 </div>
                                 <div className="rounded-xl border border-white bg-white px-3 py-2">
@@ -5498,7 +5498,7 @@ const SchoolSchedule = () => {
                                 <div className="rounded-xl border border-white bg-white px-3 py-2">
                                   <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Source</p>
                                   <p className="mt-1 text-xs font-medium text-slate-700">
-                                    {row.source === 'check_in' ? 'Student check-in' : row.source === 'live' ? 'Live presence' : 'Manual'}
+                                    {row.source === 'check_in' ? 'Marked by student' : row.source === 'live' ? 'Joined live class' : 'Manual'}
                                   </p>
                                 </div>
                               </div>
@@ -5577,7 +5577,7 @@ const SchoolSchedule = () => {
                               {attendancePayload.window.isOpen ? 'Attendance window open' : 'Attendance window closed'}
                             </span>
                             <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">
-                              {attendancePayload.summary.checkedInCount} checked in
+                              {attendancePayload.summary.checkedInCount} marked attendance
                             </span>
                             {attendancePayload.summary.lateCount > 0 && (
                               <span className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-orange-700">
@@ -5586,16 +5586,16 @@ const SchoolSchedule = () => {
                             )}
                             {attendancePayload.summary.pendingCount > 0 && (
                               <span className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-700">
-                                {attendancePayload.summary.pendingCount} waiting to confirm
+                                {attendancePayload.summary.pendingCount} yet to mark attendance
                               </span>
                             )}
                           </div>
                           <h3 className="mt-3 text-sm font-semibold text-slate-900">
-                            Live attendance confirmation
+                            Live attendance
                           </h3>
                           <p className="mt-1 text-xs leading-5 text-slate-500">
-                            Students first appear as connected. They become fully present after tapping the attendance
-                            button inside the live classroom while the window is open. Check-ins after{' '}
+                            Students first appear as connected. They become present after tapping the attendance button
+                            inside the live classroom while the window is open. Students marked after{' '}
                             {attendancePayload.window.gracePeriodMinutes} minutes are recorded as late.
                           </p>
                         </div>
@@ -5647,7 +5647,7 @@ const SchoolSchedule = () => {
                       </div>
                       <div className="rounded-2xl border border-[#3D08BA]/15 bg-white p-4 shadow-sm">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]">
-                          Checked in
+                          Attendance marked
                         </p>
                         <p className="mt-2 text-2xl font-semibold text-[#3D08BA]">
                           {attendancePayload.summary.checkedInCount}
@@ -5679,7 +5679,7 @@ const SchoolSchedule = () => {
                       </div>
                       <div className="rounded-2xl border border-[#3D08BA]/15 bg-white p-4 shadow-sm">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]">
-                          Coverage
+                          Attendance rate
                         </p>
                         <p className="mt-2 text-2xl font-semibold text-[#3D08BA]">
                           {attendancePayload.summary.attendanceRate}%
@@ -5693,7 +5693,7 @@ const SchoolSchedule = () => {
                           <div>
                             <h3 className="text-sm font-semibold text-slate-900">Mark attendance manually</h3>
                             <p className="mt-1 text-xs leading-5 text-slate-500">
-                              Use this for late corrections, offline learners, or students the live room did not capture.
+                              Use this for corrections, offline learners, or students the live room did not capture.
                             </p>
                           </div>
                           <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
@@ -5796,7 +5796,7 @@ const SchoolSchedule = () => {
                           <div>
                             <h3 className="text-sm font-semibold text-slate-900">Attendance register</h3>
                             <p className="mt-1 text-xs leading-5 text-slate-500">
-                              Live learners are captured automatically. You can still correct any record below.
+                              Students in the live class are added automatically. You can still correct any record below.
                             </p>
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
@@ -5851,7 +5851,7 @@ const SchoolSchedule = () => {
                         {filteredAttendanceRecords.length === 0 ? (
                           <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
                             {attendancePayload.records.length === 0
-                              ? 'No attendance record yet. Live join events or manual entries will appear here.'
+                              ? 'No attendance record yet. Live joins or manual entries will appear here.'
                               : `No ${attendanceFilterLabel(attendanceFilter).toLowerCase()} attendance record in this view yet.`}
                           </div>
                         ) : (
@@ -5882,9 +5882,9 @@ const SchoolSchedule = () => {
                                     : 'Absent';
                               const sourceLabel =
                                 record.source === 'live'
-                                  ? 'Live presence'
+                                  ? 'Joined live class'
                                   : record.source === 'check_in'
-                                    ? 'Student check-in'
+                                    ? 'Marked by student'
                                     : 'Manual';
 
                               return (
@@ -5921,12 +5921,12 @@ const SchoolSchedule = () => {
                                       </p>
                                       {record.status === 'pending' && (
                                         <p className="mt-2 text-xs text-amber-700">
-                                          Connected to class but has not tapped the live attendance button yet.
+                                          Connected to class but has not marked attendance yet.
                                         </p>
                                       )}
                                       {record.status === 'late' && (
                                         <p className="mt-2 text-xs text-orange-700">
-                                          Attendance was confirmed after the {attendancePayload.window.gracePeriodMinutes}-minute grace period.
+                                          Attendance was marked after the {attendancePayload.window.gracePeriodMinutes}-minute grace period.
                                         </p>
                                       )}
                                     </div>
