@@ -12,6 +12,7 @@ import {
   ChartBarIcon,
   CheckCircleIcon,
   ClockIcon,
+  BookOpenIcon,
   HomeIcon,
   QuestionMarkCircleIcon,
   TrophyIcon,
@@ -46,6 +47,10 @@ import {
   fetchSchoolScheduleLiveAttendance,
   type SchoolScheduleAttendanceRecord,
 } from '../../schools/utils/schoolScheduleApi';
+import {
+  archiveStudentAssignmentNotification,
+  markStudentAssignmentNotificationAsRead,
+} from '../../schools/utils/assignmentsApi';
 import {
   archiveStudentExamNotification,
   fetchStudentExams,
@@ -93,6 +98,11 @@ type DashboardNotification = {
   examId?: string;
   examDepartment?: string;
   examClassGroup?: string;
+  assignmentId?: string;
+  assignmentDepartment?: string;
+  assignmentClassGroup?: string;
+  assignmentSessionId?: string | null;
+  assignmentKind?: 'released' | 'graded';
 };
 
 const EXAM_NOTIFICATION_PREFIX = 'exam:';
@@ -102,8 +112,18 @@ const isExamNotification = (notification: DashboardNotification) =>
   String(notification.id || '').startsWith(EXAM_NOTIFICATION_PREFIX) &&
   Boolean(notification.examId && notification.examDepartment && notification.examClassGroup);
 
+const ASSIGNMENT_NOTIFICATION_PREFIX = 'assignment:';
+
+const isAssignmentNotification = (notification: DashboardNotification) =>
+  notification.source === 'assignment' &&
+  String(notification.id || '').startsWith(ASSIGNMENT_NOTIFICATION_PREFIX) &&
+  Boolean(notification.assignmentId && notification.assignmentDepartment && notification.assignmentClassGroup);
+
 const fromExamNotificationId = (notificationId: string) =>
   String(notificationId || '').slice(EXAM_NOTIFICATION_PREFIX.length);
+
+const fromAssignmentNotificationId = (notificationId: string) =>
+  String(notificationId || '').slice(ASSIGNMENT_NOTIFICATION_PREFIX.length);
 
 const readDashboardNotifications = (): DashboardNotification[] => {
   if (typeof window === 'undefined') {
@@ -524,6 +544,7 @@ const StudentDashboard = () => {
   const [schoolInvoicesError, setSchoolInvoicesError] = useState<string | null>(null);
   const [activeSchoolInvoiceId, setActiveSchoolInvoiceId] = useState('');
   const [resultNotifications, setResultNotifications] = useState<DashboardNotification[]>([]);
+  const [assignmentNotifications, setAssignmentNotifications] = useState<DashboardNotification[]>([]);
   const [activeResultNotificationId, setActiveResultNotificationId] = useState('');
   const [publishedResults, setPublishedResults] = useState<StudentPublishedResultEntry[]>([]);
   const [academicSubmissionStates, setAcademicSubmissionStates] = useState<StudentExamSubmissionSummary[]>([]);
@@ -556,6 +577,11 @@ const StudentDashboard = () => {
   const unreadResultNotifications = useMemo(
     () => resultNotifications.filter((notification) => !notification.isRead),
     [resultNotifications]
+  );
+
+  const unreadAssignmentNotifications = useMemo(
+    () => assignmentNotifications.filter((notification) => !notification.isRead),
+    [assignmentNotifications]
   );
 
   useEffect(() => {
@@ -841,7 +867,15 @@ const StudentDashboard = () => {
         const rightTs = right.createdAt ? new Date(right.createdAt).getTime() : 0;
         return rightTs - leftTs;
       });
+    const homeworkNotifications = notifications
+      .filter(isAssignmentNotification)
+      .sort((left, right) => {
+        const leftTs = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+        const rightTs = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+        return rightTs - leftTs;
+      });
     setResultNotifications(examNotifications);
+    setAssignmentNotifications(homeworkNotifications);
   };
 
   const handleAssignmentsClick = () => {
@@ -1027,6 +1061,62 @@ const StudentDashboard = () => {
 
     try {
       await archiveStudentExamNotification(fromExamNotificationId(notification.id));
+    } catch {
+      // Keep local dismissal to avoid a disruptive UX.
+    } finally {
+      setActiveResultNotificationId('');
+    }
+  };
+
+  const openAssignmentNotification = async (notification: DashboardNotification) => {
+    if (!isAssignmentNotification(notification)) {
+      return;
+    }
+
+    setActiveResultNotificationId(notification.id);
+    const nextNotifications = readDashboardNotifications().map((item) =>
+      item.id === notification.id ? { ...item, isRead: true } : item
+    );
+    writeDashboardNotifications(nextNotifications);
+
+    try {
+      await markStudentAssignmentNotificationAsRead({
+        notificationId: fromAssignmentNotificationId(notification.id),
+        department: notification.assignmentDepartment || '',
+        classGroup: notification.assignmentClassGroup || '',
+        studentId: dashboardStudentIdentity.id,
+      });
+    } catch {
+      // Keep optimistic local read state to avoid blocking task access.
+    } finally {
+      setActiveResultNotificationId('');
+    }
+
+    const params = new URLSearchParams({
+      assignmentId: notification.assignmentId || '',
+      department: notification.assignmentDepartment || '',
+      classGroup: notification.assignmentClassGroup || '',
+      ...(notification.assignmentSessionId ? { sessionId: notification.assignmentSessionId } : {}),
+    });
+    navigate(`/assignments?${params.toString()}`);
+  };
+
+  const dismissAssignmentNotification = async (notification: DashboardNotification) => {
+    if (!isAssignmentNotification(notification)) {
+      return;
+    }
+
+    setActiveResultNotificationId(notification.id);
+    const nextNotifications = readDashboardNotifications().filter((item) => item.id !== notification.id);
+    writeDashboardNotifications(nextNotifications);
+
+    try {
+      await archiveStudentAssignmentNotification({
+        notificationId: fromAssignmentNotificationId(notification.id),
+        department: notification.assignmentDepartment || '',
+        classGroup: notification.assignmentClassGroup || '',
+        studentId: dashboardStudentIdentity.id,
+      });
     } catch {
       // Keep local dismissal to avoid a disruptive UX.
     } finally {
@@ -1299,6 +1389,77 @@ const StudentDashboard = () => {
                         <button
                           type="button"
                           onClick={() => void dismissPublishedResult(notification)}
+                          disabled={activeResultNotificationId === notification.id}
+                          className="inline-flex items-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs sm:text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {unreadAssignmentNotifications.length > 0 && (
+              <div className="bg-[linear-gradient(135deg,_rgba(16,185,129,0.08),_rgba(255,255,255,0.98))] rounded-xl sm:rounded-2xl border border-emerald-200 shadow-sm p-4 sm:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                      <BookOpenIcon className="h-4 w-4" />
+                      Homework update
+                    </div>
+                    <h2 className="mt-3 text-lg sm:text-xl font-bold text-gray-900">
+                      New task{unreadAssignmentNotifications.length === 1 ? '' : 's'} to review
+                    </h2>
+                    <p className="mt-1 text-xs sm:text-sm text-gray-600">
+                      Newly released homework and recently graded work appear here so you can open them straight away.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleNotificationClick}
+                    className="inline-flex items-center rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs sm:text-sm font-semibold text-emerald-700 hover:bg-emerald-50 transition-colors"
+                  >
+                    View all notifications
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {unreadAssignmentNotifications.slice(0, 2).map((notification) => (
+                    <div
+                      key={notification.id}
+                      className="rounded-xl border border-white/80 bg-white/90 px-4 py-4 shadow-sm"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm sm:text-base font-semibold text-gray-900">
+                            {notification.title || 'Homework update'}
+                          </p>
+                          <p className="mt-1 text-xs sm:text-sm text-gray-600 leading-5">
+                            {notification.message}
+                          </p>
+                          <p className="mt-2 text-[11px] text-gray-500">
+                            {notification.time || 'Recently'}
+                          </p>
+                        </div>
+                        <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                          {notification.assignmentKind === 'graded' ? 'Graded' : 'Open now'}
+                        </span>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void openAssignmentNotification(notification)}
+                          disabled={activeResultNotificationId === notification.id}
+                          className="inline-flex items-center rounded-lg bg-emerald-600 px-3 py-2 text-xs sm:text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                        >
+                          {activeResultNotificationId === notification.id ? 'Opening...' : 'Open task'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void dismissAssignmentNotification(notification)}
                           disabled={activeResultNotificationId === notification.id}
                           className="inline-flex items-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs sm:text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
                         >
