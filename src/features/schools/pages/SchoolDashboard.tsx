@@ -1419,6 +1419,10 @@ const SchoolDashboard = () => {
     navigate('/school-exams');
   };
 
+  const handleAssignmentsClick = () => {
+    navigate('/school-assignments');
+  };
+
   const handleWaecPrepClick = () => {
     if (!isSubscriptionActive) {
       goToSubscription('Premium WAEC prep delivery is available on Edamaa Pro.');
@@ -1708,6 +1712,7 @@ const SchoolDashboard = () => {
             <QuickActionButton icon={FaChartLine} label="Revenue" onClick={handleFinanceClick} />
             <QuickActionButton icon={FaCalendarAlt} label="Schedule" onClick={handleScheduleClick} />
             <QuickActionButton icon={FaFileAlt} label="Exams" onClick={handleExamManagementClick} />
+            <QuickActionButton icon={FaFileAlt} label="Homework" onClick={handleAssignmentsClick} />
             <QuickActionButton icon={FaVideo} label="Live Classes" badge="8" onClick={handleLiveClassesClick} />
             <QuickActionButton icon={FaFileAlt} label="Upload Resources" onClick={handleResourceUploadClick} />
           </div>
@@ -1855,6 +1860,15 @@ const SchoolDashboard = () => {
                     <button
                       type='button'
                       onClick={() => navigate('/school-exams')}
+                      className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
+                    >
+                      Open
+                    </button>
+                  )}
+                  {activeSchoolModule.id === 'homework-study-materials' && (
+                    <button
+                      type='button'
+                      onClick={() => navigate('/school-assignments')}
                       className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
                     >
                       Open

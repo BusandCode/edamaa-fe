@@ -25,6 +25,7 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { buildRtcConfiguration } from '../../../utils/rtc';
+import { hasPersistedAuthSession } from '../../../utils/authSession';
 import { loadSchoolBrandingNames, loadSchoolProfileImage } from '../../../utils/schoolBranding';
 import {
   fetchSchoolScheduleLiveAttendance,
@@ -32,6 +33,12 @@ import {
   setSchoolScheduleAttendanceWindow,
   type SchoolScheduleAttendanceResponse,
 } from '../../schools/utils/schoolScheduleApi';
+import {
+  fetchSchoolAssignments,
+  fetchStudentAssignments,
+  type SchoolAssignment,
+  type StudentAssignment,
+} from '../../schools/utils/assignmentsApi';
 import {
   fetchTeachingSubscriptionState,
   type TeachingActor,
@@ -220,9 +227,39 @@ type LiveTaskRuntime = LiveTaskPlan & {
   remainingMs?: number;
 };
 
+type LiveLinkedAssignment = Pick<
+  StudentAssignment | SchoolAssignment,
+  | 'id'
+  | 'title'
+  | 'content'
+  | 'checklist'
+  | 'dueAt'
+  | 'isReleased'
+  | 'releaseMode'
+  | 'linkedSessionStatus'
+  | 'type'
+  | 'sessionId'
+>;
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '');
 
 const RTC_CONFIGURATION: RTCConfiguration = buildRtcConfiguration();
+
+const formatLiveDateTime = (value: string | null | undefined) => {
+  if (!value) {
+    return '--';
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return '--';
+  }
+  return parsed.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
 
 const AVATAR_GRADIENTS: Array<[string, string]> = [
   ['#3D08BA', '#5f2ce0'],
@@ -268,7 +305,6 @@ const REACTION_PALETTE_BY_SET: Record<string, typeof DEFAULT_REACTION_PALETTE> =
     { emoji: '🤝', label: 'Agree', accentClass: 'from-slate-400 to-blue-500' },
   ],
 };
-const LIVE_CLASS_END_STORAGE_KEY = 'edamaa_live_class_last_ended_at';
 
 const COIN_PACKS: CoinPack[] = [
   { id: 'starter', label: 'Starter', coins: 120, bonusCoins: 0, priceLabel: '$1.99' },
@@ -635,12 +671,6 @@ const LiveClassroom = () => {
   const [isTeacherSubscriptionLocked, setIsTeacherSubscriptionLocked] = useState(false);
   const [teacherSubscriptionLockReason, setTeacherSubscriptionLockReason] = useState('');
   const [liveNowMs, setLiveNowMs] = useState(() => Date.now());
-  const [classEndedAtIso, setClassEndedAtIso] = useState<string | null>(() => {
-    if (typeof window === 'undefined') {
-      return null;
-    }
-    return window.localStorage.getItem(LIVE_CLASS_END_STORAGE_KEY);
-  });
   const [activeClassworkPromptId, setActiveClassworkPromptId] = useState<string | null>(null);
   const [showTeacherWelcome, setShowTeacherWelcome] = useState(false);
 
@@ -1044,21 +1074,86 @@ const LiveClassroom = () => {
     );
   }, [liveClassworkTasks, liveNowMs, streamStatus]);
 
-  const postClassAssignments = useMemo(
-    () => LIVE_TASK_PLAN.filter((task) => task.kind === 'assignment'),
-    []
-  );
-  const shouldShowPostClassAssignmentContent = streamStatus === 'ended' || !!classEndedAtIso;
+  const [linkedPostClassAssignments, setLinkedPostClassAssignments] = useState<LiveLinkedAssignment[]>([]);
+  const [isLinkedAssignmentsLoading, setIsLinkedAssignmentsLoading] = useState(false);
 
-  const markClassEnded = useCallback(() => {
-    if (typeof window === 'undefined') {
+  useEffect(() => {
+    if (teacherActor !== 'school' || !liveClass.id) {
+      setLinkedPostClassAssignments([]);
       return;
     }
 
-    const endedAtIso = new Date().toISOString();
-    window.localStorage.setItem(LIVE_CLASS_END_STORAGE_KEY, endedAtIso);
-    setClassEndedAtIso(endedAtIso);
-  }, []);
+    let cancelled = false;
+    const loadLinkedAssignments = async () => {
+      setIsLinkedAssignmentsLoading(true);
+      try {
+        if (isTeacher) {
+          if (!hasPersistedAuthSession()) {
+            if (!cancelled) {
+              setLinkedPostClassAssignments([]);
+            }
+            return;
+          }
+
+          const payload = await fetchSchoolAssignments();
+          if (!cancelled) {
+            setLinkedPostClassAssignments(
+              payload.assignments.filter((assignment) => assignment.sessionId === liveClass.id)
+            );
+          }
+          return;
+        }
+
+        if (!studentIdentity.department || !studentIdentity.classGroup) {
+          if (!cancelled) {
+            setLinkedPostClassAssignments([]);
+          }
+          return;
+        }
+
+        const payload = await fetchStudentAssignments({
+          department: studentIdentity.department,
+          classGroup: studentIdentity.classGroup,
+          studentId: studentIdentity.id,
+        });
+
+        if (!cancelled) {
+          setLinkedPostClassAssignments(
+            payload.assignments.filter((assignment) => assignment.sessionId === liveClass.id)
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setLinkedPostClassAssignments([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLinkedAssignmentsLoading(false);
+        }
+      }
+    };
+
+    void loadLinkedAssignments();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isTeacher,
+    liveClass.id,
+    studentIdentity.classGroup,
+    studentIdentity.department,
+    studentIdentity.id,
+    teacherActor,
+  ]);
+
+  const releasedLinkedAssignments = useMemo(
+    () => linkedPostClassAssignments.filter((assignment) => assignment.isReleased),
+    [linkedPostClassAssignments]
+  );
+  const shouldShowLinkedAssignmentsPanel =
+    teacherActor === 'school' &&
+    (isLinkedAssignmentsLoading || linkedPostClassAssignments.length > 0);
 
   const rememberEventId = useCallback((eventId: string) => {
     if (!eventId) {
@@ -1511,21 +1606,6 @@ const LiveClassroom = () => {
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === LIVE_CLASS_END_STORAGE_KEY) {
-        setClassEndedAtIso(event.newValue);
-      }
-    };
-
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, []);
-
-  useEffect(() => {
     if (!activeLiveClasswork || isTeacher) {
       return;
     }
@@ -1941,7 +2021,6 @@ const LiveClassroom = () => {
           setStreamStatus('ended');
           setRemoteTeacherStream(null);
           closeAllPeerConnections();
-          markClassEnded();
           pushNotice('Tutor ended the live stream.');
         }
 
@@ -2403,7 +2482,6 @@ const LiveClassroom = () => {
     isTeacher,
     liveClass.instructor,
     liveClass.name,
-    markClassEnded,
     onStageParticipantIds,
     publishSignal,
     rememberEventId,
@@ -3229,8 +3307,6 @@ const LiveClassroom = () => {
   const handleClassroomExit = () => {
     // Keep one exit flow, but present host/student intent clearly in the UI.
     if (isTeacher) {
-      // Persist class-end timestamp so post-class assignments can auto-release on the assignments page.
-      markClassEnded();
       pushNotice('Ending class for all participants...');
     }
     leaveClassroom();
@@ -3934,42 +4010,92 @@ const LiveClassroom = () => {
             </div>
           )}
 
-          {shouldShowPostClassAssignmentContent && postClassAssignments.length > 0 && (
+          {shouldShowLinkedAssignmentsPanel && (
             <div className="rounded-2xl border border-emerald-300/30 bg-emerald-500/10 p-3 sm:p-4">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <h2 className="text-sm font-semibold text-emerald-100 sm:text-base">Post-Class Assignments</h2>
+                <h2 className="text-sm font-semibold text-emerald-100 sm:text-base">Class Homework</h2>
                 <span className="rounded-full border border-emerald-300/35 bg-emerald-300/20 px-2.5 py-1 text-[11px] font-semibold text-emerald-100">
-                  Now available
+                  {releasedLinkedAssignments.length > 0 ? 'Now available' : 'Opens after class'}
                 </span>
               </div>
+              <p className="mb-3 text-xs leading-relaxed text-emerald-100/85 sm:text-sm">
+                {isTeacher
+                  ? releasedLinkedAssignments.length > 0
+                    ? 'These are the real homework tasks linked to this class session.'
+                    : 'Linked homework stays locked until this class ends, then students will see it automatically.'
+                  : releasedLinkedAssignments.length > 0
+                    ? 'These homework tasks are now open because the linked class has ended.'
+                    : 'Homework linked to this class will open automatically once the class ends.'}
+              </p>
               <div className="space-y-3">
-                {postClassAssignments.map((assignment) => (
-                  <article
-                    key={assignment.id}
-                    className="rounded-xl border border-emerald-200/30 bg-black/20 p-3 text-xs text-emerald-50/95 sm:text-sm"
+                {isLinkedAssignmentsLoading ? (
+                  <div className="rounded-xl border border-emerald-200/30 bg-black/20 p-3 text-xs text-emerald-50/95 sm:text-sm">
+                    Loading linked homework...
+                  </div>
+                ) : linkedPostClassAssignments.length > 0 ? (
+                  linkedPostClassAssignments.map((assignment) => (
+                    <article
+                      key={assignment.id}
+                      className="rounded-xl border border-emerald-200/30 bg-black/20 p-3 text-xs text-emerald-50/95 sm:text-sm"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-semibold text-emerald-100">{assignment.title}</h3>
+                          <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-emerald-100/70">
+                            {assignment.type === 'classwork' ? 'Classwork' : 'Homework'}
+                          </p>
+                        </div>
+                        <span
+                          className={`rounded-full px-2 py-1 text-[10px] font-semibold ${
+                            assignment.isReleased
+                              ? 'border border-emerald-200/40 bg-emerald-300/20 text-emerald-50'
+                              : 'border border-white/15 bg-white/10 text-emerald-100/80'
+                          }`}
+                        >
+                          {assignment.isReleased ? 'Open now' : 'Waiting for class end'}
+                        </span>
+                      </div>
+                      <p className="mt-2 leading-relaxed">{assignment.content}</p>
+                      <ul className="mt-2 space-y-1 text-[11px] text-emerald-100/90 sm:text-xs">
+                        {assignment.checklist.map((item) => (
+                          <li key={`${assignment.id}-${item}`} className="flex items-start gap-2">
+                            <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-200"></span>
+                            <span>{item}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-emerald-100/80">
+                        <span>Due: {formatLiveDateTime(assignment.dueAt)}</span>
+                        {assignment.releaseMode === 'on_class_end' ? (
+                          <span>
+                            Class status:{' '}
+                            {assignment.linkedSessionStatus === 'completed'
+                              ? 'ended'
+                              : assignment.linkedSessionStatus === 'live'
+                                ? 'live'
+                                : 'upcoming'}
+                          </span>
+                        ) : null}
+                      </div>
+                    </article>
+                  ))
+                ) : (
+                  <div className="rounded-xl border border-emerald-200/20 bg-black/20 p-3 text-xs text-emerald-100/80 sm:text-sm">
+                    No homework has been linked to this class yet.
+                  </div>
+                )}
+              </div>
+              {!isTeacher ? (
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/assignments?sessionId=${encodeURIComponent(liveClass.id)}`)}
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-400/20 px-3 py-1.5 text-xs font-semibold text-emerald-50 transition-colors hover:bg-emerald-400/30"
                   >
-                    <h3 className="text-sm font-semibold text-emerald-100">{assignment.title}</h3>
-                    <p className="mt-1 leading-relaxed">{assignment.content}</p>
-                    <ul className="mt-2 space-y-1 text-[11px] text-emerald-100/90 sm:text-xs">
-                      {assignment.checklist.map((item) => (
-                        <li key={`${assignment.id}-${item}`} className="flex items-start gap-2">
-                          <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-200"></span>
-                          <span>{item}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </article>
-                ))}
-              </div>
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={() => navigate('/assignments')}
-                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-400/20 px-3 py-1.5 text-xs font-semibold text-emerald-50 transition-colors hover:bg-emerald-400/30"
-                >
-                  Open Assignments
-                </button>
-              </div>
+                    Open Assignments
+                  </button>
+                </div>
+              ) : null}
             </div>
           )}
 
