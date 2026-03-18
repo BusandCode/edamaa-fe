@@ -25,6 +25,11 @@ import {
   type TeachingSubscriptionState,
 } from '../../subscriptions/utils/teachingSubscriptionApi';
 import {
+  fetchTutorAssignments,
+  fetchTutorAssignmentNotifications,
+  type SchoolAssignmentNotification,
+} from '../../schools/utils/assignmentsApi';
+import {
   fetchSchoolScheduleFeed,
   type SchoolScheduleFeedSession,
 } from '../../schools/utils/schoolScheduleApi';
@@ -69,6 +74,29 @@ const formatDashboardDuration = (durationMinutes: number) => {
   return `${hours} hr ${minutes} mins`;
 };
 
+const formatRelativeUpdateTime = (value: string) => {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) {
+    return 'Recently';
+  }
+
+  const diffMinutes = Math.max(0, Math.round((Date.now() - timestamp) / 60000));
+  if (diffMinutes <= 1) {
+    return 'Just now';
+  }
+  if (diffMinutes < 60) {
+    return `${diffMinutes} mins ago`;
+  }
+
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours} hr${diffHours === 1 ? '' : 's'} ago`;
+  }
+
+  const diffDays = Math.round(diffHours / 24);
+  return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+};
+
 const mapAssignedSessionToTutorClass = (
   session: SchoolScheduleFeedSession
 ): NewClassData => ({
@@ -109,6 +137,11 @@ const TutorDashboard = () => {
   const [isSubscriptionLoading, setIsSubscriptionLoading] = useState(false);
   const [isUpcomingLoading, setIsUpcomingLoading] = useState(false);
   const [upcomingNotice, setUpcomingNotice] = useState('');
+  const [homeworkSummary, setHomeworkSummary] = useState({ total: 0, active: 0, awaitingReview: 0 });
+  const [homeworkUnreadCount, setHomeworkUnreadCount] = useState(0);
+  const [homeworkUpdates, setHomeworkUpdates] = useState<SchoolAssignmentNotification[]>([]);
+  const [isHomeworkLoading, setIsHomeworkLoading] = useState(false);
+  const [homeworkNotice, setHomeworkNotice] = useState('');
   const [editingClass, setEditingClass] = useState<NewClassData | null>(null);
   const [activeClassActionId, setActiveClassActionId] = useState<string | null>(null);
   const [independentClasses, setIndependentClasses] = useState<NewClassData[]>([]);
@@ -146,6 +179,14 @@ const TutorDashboard = () => {
   const openSubscriptionPage = (message: string) => {
     toast.info(message);
     navigate('/subscription?actor=tutor');
+  };
+
+  const handleHomeworkUpdatesClick = () => {
+    navigate('/tutor-assignments');
+  };
+
+  const handleAssignmentsClick = () => {
+    navigate('/tutor-assignments');
   };
 
   const loadSubscriptionState = async () => {
@@ -186,6 +227,27 @@ const TutorDashboard = () => {
     }
   };
 
+  const loadHomeworkOverview = async () => {
+    setIsHomeworkLoading(true);
+    setHomeworkNotice('');
+    try {
+      const [assignmentsPayload, notificationsPayload] = await Promise.all([
+        fetchTutorAssignments(),
+        fetchTutorAssignmentNotifications(),
+      ]);
+      setHomeworkSummary(assignmentsPayload.summary);
+      setHomeworkUnreadCount(notificationsPayload.unreadCount);
+      setHomeworkUpdates(notificationsPayload.notifications.slice(0, 3));
+    } catch {
+      setHomeworkSummary({ total: 0, active: 0, awaitingReview: 0 });
+      setHomeworkUnreadCount(0);
+      setHomeworkUpdates([]);
+      setHomeworkNotice('Homework updates are not available right now.');
+    } finally {
+      setIsHomeworkLoading(false);
+    }
+  };
+
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(INDEPENDENT_CLASSES_STORAGE_KEY);
@@ -200,6 +262,7 @@ const TutorDashboard = () => {
     }
     void loadSubscriptionState();
     void loadUpcomingClasses();
+    void loadHomeworkOverview();
   }, []);
 
   const copyToClipboard = async () => {
@@ -364,10 +427,6 @@ const TutorDashboard = () => {
     navigate('/tutor-resources?mode=upload');
   };
 
-  const handleAssignmentsClick = () => {
-    navigate('/tutor-assignments');
-  };
-
   const handleLogout = async () => {
     await signOutEverywhere();
     navigate('/signin', { replace: true });
@@ -382,8 +441,8 @@ const TutorDashboard = () => {
     },
     {
       icon: BellSolidIcon,
-      label: 'Notifications',
-      onClick: () => navigate('/notifications')
+      label: 'Homework Updates',
+      onClick: handleHomeworkUpdatesClick
     },
     {
       icon: Cog6ToothIcon,
@@ -444,17 +503,21 @@ const TutorDashboard = () => {
 
               {/* Notification Bell */}
               <button
-                onClick={() => navigate('/notifications')}
+                onClick={handleHomeworkUpdatesClick}
                 className="relative shrink-0 p-1.5 sm:p-2 rounded-full hover:bg-gray-100 transition-colors"
-                aria-label="Notifications"
+                aria-label="Homework updates"
               >
                 <div className="relative">
                   <div className="w-9 h-9 sm:w-10 sm:h-10 bg-[#3D08BA] rounded-full flex items-center justify-center">
                     <BellSolidIcon className="w-5 h-5 text-white" />
                   </div>
-                  <div className="absolute -top-1 -right-1 min-w-5 h-5 px-1.5 bg-red-500 rounded-full flex items-center justify-center shadow-md">
-                    <span className="text-white text-[10px] font-bold">3</span>
-                  </div>
+                  {homeworkUnreadCount > 0 ? (
+                    <div className="absolute -top-1 -right-1 min-w-5 h-5 px-1.5 bg-red-500 rounded-full flex items-center justify-center shadow-md">
+                      <span className="text-white text-[10px] font-bold">
+                        {homeworkUnreadCount > 99 ? '99+' : homeworkUnreadCount}
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
               </button>
 
@@ -636,6 +699,97 @@ const TutorDashboard = () => {
               </div>
             </div>
           )}
+        </div>
+
+        <div className="mb-5 sm:mb-6 rounded-2xl border border-[#3D08BA]/10 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3D08BA]">
+                Homework review
+              </p>
+              <h2 className="mt-1 text-lg font-bold text-gray-900">Tasks waiting for your attention</h2>
+              <p className="mt-1 text-sm text-gray-600">
+                Keep up with student submissions and open homework from one dashboard block.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleHomeworkUpdatesClick}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
+              >
+                Open homework hub
+              </button>
+              <button
+                onClick={handleAssignmentsClick}
+                className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2c0691]"
+              >
+                New task
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            {[
+              { label: 'Awaiting review', value: homeworkSummary.awaitingReview, tone: 'text-rose-600 bg-rose-50 border-rose-100' },
+              { label: 'Open homework', value: homeworkSummary.active, tone: 'text-emerald-700 bg-emerald-50 border-emerald-100' },
+              { label: 'Unread updates', value: homeworkUnreadCount, tone: 'text-[#3D08BA] bg-[#3D08BA]/5 border-[#3D08BA]/10' },
+            ].map((item) => (
+              <div key={item.label} className={`rounded-xl border px-4 py-3 ${item.tone}`}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em]">{item.label}</p>
+                <p className="mt-2 text-2xl font-bold">{item.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Latest homework updates</p>
+                <p className="text-xs text-gray-500">Recent submissions and review items for your classes.</p>
+              </div>
+            </div>
+
+            {isHomeworkLoading ? (
+              <p className="mt-3 text-sm text-gray-600">Loading homework updates...</p>
+            ) : homeworkNotice ? (
+              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {homeworkNotice}
+              </p>
+            ) : homeworkUpdates.length === 0 ? (
+              <p className="mt-3 text-sm text-gray-600">No homework updates yet.</p>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {homeworkUpdates.map((update) => (
+                  <button
+                    key={update.id}
+                    type="button"
+                    onClick={handleHomeworkUpdatesClick}
+                    className="flex w-full items-start justify-between gap-3 rounded-xl border border-white bg-white px-3 py-3 text-left shadow-sm transition hover:border-[#3D08BA]/15 hover:shadow-md"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-semibold text-gray-900">{update.title}</p>
+                        {!update.isRead ? (
+                          <span className="rounded-full bg-[#3D08BA]/10 px-2 py-0.5 text-[10px] font-semibold text-[#3D08BA]">
+                            New
+                          </span>
+                        ) : null}
+                        {update.needsReview ? (
+                          <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">
+                            Review
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-gray-600">{update.message}</p>
+                    </div>
+                    <span className="shrink-0 text-[11px] font-medium text-gray-500">
+                      {formatRelativeUpdateTime(update.createdAt)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Stats Cards */}
