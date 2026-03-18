@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FaSearch, FaBook, FaUserGraduate, FaMoneyBillWave, FaHome, FaClock, FaCalendar, FaCopy, FaVideo, FaPlus } from 'react-icons/fa';
+import { FaSearch, FaBook, FaUserGraduate, FaMoneyBillWave, FaHome, FaClock, FaCalendar, FaCopy, FaVideo, FaPlus, FaClipboardList } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import NewLogo from '../../../components/common/NewLogo';
 import { students } from './lists/students';
@@ -442,7 +442,8 @@ const TutorDashboard = () => {
     {
       icon: BellSolidIcon,
       label: 'Homework Updates',
-      onClick: handleHomeworkUpdatesClick
+      onClick: handleHomeworkUpdatesClick,
+      badge: homeworkUnreadCount,
     },
     {
       icon: Cog6ToothIcon,
@@ -1047,11 +1048,19 @@ const TutorDashboard = () => {
             </div>
             <span className="text-[11px]">Students</span>
           </button>
-          <button className="flex flex-col items-center gap-0.5 sm:gap-1 text-gray-500 hover:text-[#F68C29]">
-            <div className="p-2 sm:p-2.5 rounded-lg hover:bg-orange-50">
-              <FaMoneyBillWave size={16} />
+          <button
+            onClick={handleHomeworkUpdatesClick}
+            className="relative flex flex-col items-center gap-0.5 sm:gap-1 text-gray-500 hover:text-[#F68C29]"
+          >
+            <div className="relative p-2 sm:p-2.5 rounded-lg hover:bg-orange-50">
+              <FaClipboardList size={16} />
+              {homeworkUnreadCount > 0 ? (
+                <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-red-500 px-1 text-center text-[9px] font-bold leading-4 text-white">
+                  {homeworkUnreadCount > 9 ? '9+' : homeworkUnreadCount}
+                </span>
+              ) : null}
             </div>
-            <span className="text-[11px]">Earnings</span>
+            <span className="text-[11px]">Homework</span>
           </button>
         </div>
       </div>
@@ -1099,6 +1108,11 @@ const TutorDashboard = () => {
                       <item.icon className="w-5 h-5 text-gray-600 group-hover:text-white transition-colors" />
                     </div>
                     <span className="flex-1">{item.label}</span>
+                    {typeof item.badge === 'number' && item.badge > 0 ? (
+                      <span className="rounded-full bg-[#3D08BA] px-2 py-0.5 text-[10px] font-semibold text-white">
+                        {item.badge > 99 ? '99+' : item.badge}
+                      </span>
+                    ) : null}
                   </button>
                 ))}
               </div>
