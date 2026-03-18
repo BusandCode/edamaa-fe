@@ -124,7 +124,13 @@ type FeedSummary = {
   unreadNotifications: number;
 };
 
-const MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024;
+const STANDARD_MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024;
+const LIVE_RECORDING_MAX_UPLOAD_SIZE_BYTES = 250 * 1024 * 1024;
+
+const getMaxUploadSizeBytes = (type: ResourceType, category: ResourceCategory) =>
+  category === 'live_recording' || type === 'video'
+    ? LIVE_RECORDING_MAX_UPLOAD_SIZE_BYTES
+    : STANDARD_MAX_UPLOAD_SIZE_BYTES;
 
 const formatBytes = (bytes: number) => {
   if (bytes < 1024) {
@@ -361,11 +367,13 @@ export class ResourcesService implements OnModuleInit {
     if (size <= 0) {
       throw new BadRequestException('Uploaded file is empty. Please choose a valid file.');
     }
-    if (size > MAX_UPLOAD_SIZE_BYTES) {
-      throw new BadRequestException('File is too large. Keep uploads below 25MB for now.');
-    }
-
     const resourceType = this.normalizeResourceType(input.type, String(uploadedFile.mimetype || ''));
+    const maxUploadSizeBytes = getMaxUploadSizeBytes(resourceType, category);
+    if (size > maxUploadSizeBytes) {
+      const maxUploadSizeLabel =
+        maxUploadSizeBytes === LIVE_RECORDING_MAX_UPLOAD_SIZE_BYTES ? '250MB' : '25MB';
+      throw new BadRequestException(`File is too large. Keep uploads below ${maxUploadSizeLabel} for this material.`);
+    }
     if (category === 'live_recording' && resourceType !== 'video') {
       throw new BadRequestException('Live recordings must be uploaded as video files.');
     }
@@ -465,10 +473,13 @@ export class ResourcesService implements OnModuleInit {
           authUser.name ||
           this.defaultNameFromEmail(email);
 
-    const validatedFile = this.validateOptionalUploadedFile(uploadedFile);
     if (nextCategory === 'live_recording' && nextType !== 'video') {
       throw new BadRequestException('Live recordings must be uploaded as video files.');
     }
+    const validatedFile = this.validateOptionalUploadedFile(uploadedFile, {
+      type: nextType,
+      category: nextCategory,
+    });
 
     resource.title = nextTitle;
     resource.subject = nextSubject;
@@ -909,7 +920,10 @@ export class ResourcesService implements OnModuleInit {
     return this.parsePriceMinor(value, pricingType);
   }
 
-  private validateOptionalUploadedFile(uploadedFile: any) {
+  private validateOptionalUploadedFile(
+    uploadedFile: any,
+    constraints?: { type?: ResourceType; category?: ResourceCategory }
+  ) {
     if (!uploadedFile) {
       return null;
     }
@@ -922,8 +936,14 @@ export class ResourcesService implements OnModuleInit {
     if (size <= 0) {
       throw new BadRequestException('Uploaded file is empty. Please choose a valid file.');
     }
-    if (size > MAX_UPLOAD_SIZE_BYTES) {
-      throw new BadRequestException('File is too large. Keep uploads below 25MB for now.');
+    const maxUploadSizeBytes = getMaxUploadSizeBytes(
+      constraints?.type || detectResourceTypeFromMime(String(uploadedFile.mimetype || '')),
+      constraints?.category || 'note'
+    );
+    if (size > maxUploadSizeBytes) {
+      const maxUploadSizeLabel =
+        maxUploadSizeBytes === LIVE_RECORDING_MAX_UPLOAD_SIZE_BYTES ? '250MB' : '25MB';
+      throw new BadRequestException(`File is too large. Keep uploads below ${maxUploadSizeLabel} for this material.`);
     }
 
     return uploadedFile;

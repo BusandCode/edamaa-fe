@@ -530,13 +530,34 @@ const getBadgeForTotalGiftedCoins = (totalGiftedCoins: number) => {
 const sanitizeCardNumber = (value: string) => value.replace(/[^\d]/g, '').slice(0, 16);
 const sanitizeExpiry = (value: string) => value.replace(/[^\d/]/g, '').slice(0, 5);
 const sanitizeCvv = (value: string) => value.replace(/[^\d]/g, '').slice(0, 4);
-const LIVE_RECORDING_UPLOAD_LIMIT_BYTES = 25 * 1024 * 1024;
+const LIVE_RECORDING_UPLOAD_LIMIT_BYTES = 250 * 1024 * 1024;
+const LIVE_RECORDING_TARGET_VIDEO_BITRATE = 650_000;
+const LIVE_RECORDING_TARGET_AUDIO_BITRATE = 64_000;
+const LIVE_RECORDING_CAPTURE_CONSTRAINTS: MediaTrackConstraints = {
+  width: { ideal: 1280, max: 1280 },
+  height: { ideal: 720, max: 720 },
+  frameRate: { ideal: 24, max: 24 },
+};
 const sanitizeFilePart = (value: string) =>
   value
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '') || 'recording';
+
+const getPreferredRecordingMimeType = () => {
+  if (typeof MediaRecorder === 'undefined') {
+    return '';
+  }
+
+  const preferredTypes = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm',
+  ];
+
+  return preferredTypes.find((value) => MediaRecorder.isTypeSupported(value)) || '';
+};
 
 const LiveClassroom = () => {
   const navigate = useNavigate();
@@ -2088,8 +2109,14 @@ const LiveClassroom = () => {
     const startBroadcast = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: cameraOn,
-          audio: micOn,
+          video: cameraOn ? LIVE_RECORDING_CAPTURE_CONSTRAINTS : false,
+          audio: micOn
+            ? {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+              }
+            : false,
         });
 
         if (cancelled) {
@@ -2983,10 +3010,11 @@ const LiveClassroom = () => {
     }
 
     try {
+      const recordingMimeType = getPreferredRecordingMimeType();
       const recorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
-          ? 'video/webm;codecs=vp8,opus'
-          : 'video/webm',
+        ...(recordingMimeType ? { mimeType: recordingMimeType } : {}),
+        videoBitsPerSecond: LIVE_RECORDING_TARGET_VIDEO_BITRATE,
+        audioBitsPerSecond: LIVE_RECORDING_TARGET_AUDIO_BITRATE,
       });
 
       liveRecordingChunksRef.current = [];
@@ -3029,7 +3057,7 @@ const LiveClassroom = () => {
       };
 
       liveRecordingMediaRecorderRef.current = recorder;
-      recorder.start(1000);
+      recorder.start(2000);
       clearLiveRecordingTicker();
       liveRecordingTickerRef.current = window.setInterval(() => {
         const startedAt = liveRecordingStartMsRef.current;
@@ -3042,8 +3070,8 @@ const LiveClassroom = () => {
 
       pushNotice(
         canAutoPublishLiveRecording
-          ? 'Recording started. It will be added to resources when you stop.'
-          : 'Recording started. If auto-publish is unavailable, the replay will download locally.',
+          ? 'Recording started with the long-form optimized profile. It will be added to resources when you stop.'
+          : 'Recording started with the long-form optimized profile. If auto-publish is unavailable, the replay will download locally.',
         'success'
       );
     } catch {

@@ -1686,7 +1686,9 @@ const SchoolResources = () => {
                       ? `Current file: ${editingResource.fileName}. Leave this empty to keep it.`
                       : uploadForm.category === 'official_document' && officialDocumentDraft.templateId
                       ? 'Optional. Leave this empty to generate the official document file from the fields above.'
-                      : 'Keep each file below 25MB.'}
+                      : uploadForm.type === 'video' || uploadForm.category === 'live_recording'
+                      ? 'Video lessons and live recordings can be larger, but smaller compressed files publish faster.'
+                      : 'Keep standard files below 25MB.'}
                   </p>
                 </div>
               </div>
