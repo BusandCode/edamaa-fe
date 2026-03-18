@@ -51,6 +51,7 @@ type UploadFormState = {
 
 type ResourceWorkspaceView = 'all' | 'textbooks' | 'video-lessons' | 'documents';
 type VideoLibraryLane = 'all' | 'uploaded' | 'recordings';
+type OfficialDocumentTemplateId = (typeof OFFICIAL_DOCUMENT_TEMPLATES)[number]['id'] | '';
 
 const OFFICIAL_DOCUMENT_TEMPLATES = [
   {
@@ -78,6 +79,145 @@ const OFFICIAL_DOCUMENT_TEMPLATES = [
       'Official completion letter issued after a student finishes a programme, course, or school session.',
   },
 ] as const;
+
+type OfficialDocumentDraftState = {
+  templateId: OfficialDocumentTemplateId;
+  studentName: string;
+  admissionNumber: string;
+  classGroup: string;
+  programme: string;
+  academicSession: string;
+  issueDate: string;
+  referenceCode: string;
+  signatoryName: string;
+  signatoryTitle: string;
+};
+
+const createOfficialDocumentDraft = (): OfficialDocumentDraftState => ({
+  templateId: '',
+  studentName: '',
+  admissionNumber: '',
+  classGroup: '',
+  programme: '',
+  academicSession: '',
+  issueDate: new Date().toISOString().slice(0, 10),
+  referenceCode: '',
+  signatoryName: '',
+  signatoryTitle: 'Registrar',
+});
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const formatDocumentDate = (value: string) => {
+  if (!value) {
+    return '';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+};
+
+const slugifyFilePart = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'document';
+
+const buildOfficialDocumentHtml = (
+  templateId: Exclude<OfficialDocumentTemplateId, ''>,
+  draft: OfficialDocumentDraftState,
+  schoolName: string,
+  title: string
+) => {
+  const studentName = escapeHtml(draft.studentName.trim());
+  const admissionNumber = escapeHtml(draft.admissionNumber.trim());
+  const classGroup = escapeHtml(draft.classGroup.trim());
+  const programme = escapeHtml(draft.programme.trim());
+  const academicSession = escapeHtml(draft.academicSession.trim());
+  const issueDate = escapeHtml(formatDocumentDate(draft.issueDate));
+  const referenceCode = escapeHtml(draft.referenceCode.trim());
+  const issuerName = escapeHtml(schoolName.trim() || 'School Administration');
+  const signatoryName = escapeHtml(draft.signatoryName.trim() || schoolName.trim() || 'School Administration');
+  const signatoryTitle = escapeHtml(draft.signatoryTitle.trim() || 'Registrar');
+
+  const bodyByTemplate: Record<Exclude<OfficialDocumentTemplateId, ''>, string> = {
+    'enrollment-letter': `
+      <p>This letter confirms that <strong>${studentName}</strong> has been enrolled in <strong>${programme || classGroup || 'the school programme'}</strong> for the <strong>${academicSession || 'current academic session'}</strong>.</p>
+      <p>${studentName} is recorded under admission number <strong>${admissionNumber || 'Pending'}</strong>${classGroup ? ` and assigned to <strong>${classGroup}</strong>.` : '.'}</p>
+      <p>Please keep this letter for onboarding, student verification, and other official school processes.</p>
+    `,
+    'admission-letter': `
+      <p>We are pleased to inform you that <strong>${studentName}</strong> has been offered admission into <strong>${programme || classGroup || 'the school programme'}</strong>.</p>
+      <p>The admission reference for this offer is <strong>${admissionNumber || referenceCode || 'Pending'}</strong>${academicSession ? ` for the <strong>${academicSession}</strong> session.` : '.'}</p>
+      <p>Please complete the remaining registration requirements and report to the school with this letter for confirmation.</p>
+    `,
+    'completion-letter': `
+      <p>This letter confirms that <strong>${studentName}</strong> has successfully completed <strong>${programme || classGroup || 'the required programme'}</strong>.</p>
+      <p>The completion was recorded for the <strong>${academicSession || 'current academic session'}</strong>${admissionNumber ? ` under student record <strong>${admissionNumber}</strong>` : ''}.</p>
+      <p>This document may be used as an official school confirmation of programme completion where required.</p>
+    `,
+  };
+
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      body { font-family: Georgia, "Times New Roman", serif; margin: 0; background: #f8fafc; color: #0f172a; }
+      .sheet { max-width: 840px; margin: 32px auto; background: white; border: 1px solid #e2e8f0; border-radius: 24px; padding: 48px; box-shadow: 0 30px 80px rgba(15,23,42,0.08); }
+      .eyebrow { font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase; color: #3D08BA; font-weight: 700; margin-bottom: 12px; }
+      h1 { margin: 0 0 8px; font-size: 34px; line-height: 1.15; }
+      .meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; margin: 24px 0 32px; font-size: 14px; }
+      .meta div { padding: 12px 14px; background: #f8fafc; border-radius: 16px; }
+      .meta strong { display: block; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #64748b; margin-bottom: 6px; }
+      .content { font-size: 17px; line-height: 1.8; }
+      .signature { margin-top: 48px; padding-top: 24px; border-top: 1px solid #e2e8f0; }
+      .signature-line { font-weight: 700; margin-top: 24px; }
+      .signature-role { color: #475569; margin-top: 4px; }
+      .footer { margin-top: 36px; font-size: 12px; color: #64748b; }
+    </style>
+  </head>
+  <body>
+    <div class="sheet">
+      <div class="eyebrow">Official School Document</div>
+      <h1>${escapeHtml(title)}</h1>
+      <div style="font-size: 18px; color: #475569;">${issuerName}</div>
+      <div class="meta">
+        <div><strong>Student</strong>${studentName || 'Pending'}</div>
+        <div><strong>Issue date</strong>${issueDate || 'Pending'}</div>
+        <div><strong>Admission / Record No.</strong>${admissionNumber || 'Pending'}</div>
+        <div><strong>Reference</strong>${referenceCode || 'Pending'}</div>
+      </div>
+      <div class="content">
+        ${bodyByTemplate[templateId]}
+      </div>
+      <div class="signature">
+        <div class="signature-line">${signatoryName}</div>
+        <div class="signature-role">${signatoryTitle}</div>
+      </div>
+      <div class="footer">
+        Generated from the school resources workspace for secure student distribution.
+      </div>
+    </div>
+  </body>
+</html>`;
+};
 
 const formatResourceCategoryLabel = (category: ResourceCategory) => {
   switch (category) {
@@ -222,6 +362,9 @@ const SchoolResources = () => {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadForm, setUploadForm] = useState<UploadFormState>(createUploadForm());
+  const [officialDocumentDraft, setOfficialDocumentDraft] = useState<OfficialDocumentDraftState>(
+    createOfficialDocumentDraft()
+  );
   const [editingResource, setEditingResource] = useState<ResourceItem | null>(null);
 
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
@@ -332,10 +475,16 @@ const SchoolResources = () => {
       return;
     }
 
+    setOfficialDocumentDraft((previous) => ({
+      ...previous,
+      templateId,
+    }));
     setUploadForm((previous) => ({
       ...previous,
       category: 'official_document',
-      type: previous.type === 'video' ? 'document' : previous.type,
+      type: 'document',
+      pricingType: 'free',
+      price: '',
       title: previous.title.trim() ? previous.title : template.title,
       subject: previous.subject.trim() ? previous.subject : template.subject,
       description: previous.description.trim() ? previous.description : template.description,
@@ -348,9 +497,27 @@ const SchoolResources = () => {
 
   const resetUpload = () => {
     setUploadForm(createUploadForm());
+    setOfficialDocumentDraft(createOfficialDocumentDraft());
     setUploadFile(null);
     setUploadError(null);
     setEditingResource(null);
+  };
+
+  const buildGeneratedOfficialDocumentFile = (): File | null => {
+    if (uploadForm.category !== 'official_document' || !officialDocumentDraft.templateId) {
+      return null;
+    }
+
+    const templateId = officialDocumentDraft.templateId;
+    const title = uploadForm.title.trim();
+    const schoolName = uploadForm.instructorName.trim();
+    const studentName = officialDocumentDraft.studentName.trim();
+    const html = buildOfficialDocumentHtml(templateId, officialDocumentDraft, schoolName, title);
+    const fileBaseName = `${slugifyFilePart(title)}-${slugifyFilePart(studentName || 'student')}`;
+
+    return new File([html], `${fileBaseName}.html`, {
+      type: 'text/html',
+    });
   };
 
   const openCreateDialog = () => {
@@ -380,6 +547,7 @@ const SchoolResources = () => {
   const openEditDialog = (resource: ResourceItem) => {
     setEditingResource(resource);
     setUploadForm(toUploadFormState(resource));
+    setOfficialDocumentDraft(createOfficialDocumentDraft());
     setUploadFile(null);
     setUploadError(null);
     setNotice(null);
@@ -505,8 +673,24 @@ const SchoolResources = () => {
       return;
     }
 
-    if (!uploadFile && !isEditing) {
-      setUploadError('Choose a file before publishing.');
+    const generatedOfficialDocumentFile = buildGeneratedOfficialDocumentFile();
+    const effectiveFile = uploadFile || generatedOfficialDocumentFile;
+
+    if (
+      uploadForm.category === 'official_document' &&
+      officialDocumentDraft.templateId &&
+      (!officialDocumentDraft.studentName.trim() || !officialDocumentDraft.issueDate.trim())
+    ) {
+      setUploadError('Add the student name and issue date before generating this official document.');
+      return;
+    }
+
+    if (!effectiveFile && !isEditing) {
+      setUploadError(
+        uploadForm.category === 'official_document' && officialDocumentDraft.templateId
+          ? 'Could not generate the official document file. Review the template fields and try again.'
+          : 'Choose a file before publishing.'
+      );
       return;
     }
 
@@ -523,20 +707,26 @@ const SchoolResources = () => {
     setNotice(null);
 
     try {
+      const normalizedUploadForm = {
+        ...uploadForm,
+        type: generatedOfficialDocumentFile ? 'document' : uploadForm.type,
+        pricingType: uploadForm.category === 'official_document' ? 'free' : uploadForm.pricingType,
+        price: uploadForm.category === 'official_document' ? '' : uploadForm.price,
+      };
       const payload = isEditing && editingResource
         ? await updateResourceForActor(
             editingResource.id,
             {
-              ...uploadForm,
-              file: uploadFile,
+              ...normalizedUploadForm,
+              file: effectiveFile,
             },
             'school'
           )
         : await uploadResourceForActor(
             {
-              ...uploadForm,
+              ...normalizedUploadForm,
               uploaderRole: 'school',
-              file: uploadFile as File,
+              file: effectiveFile as File,
             },
             'school'
           );
@@ -1190,6 +1380,8 @@ const SchoolResources = () => {
                           ...previous,
                           category: nextCategory,
                           type: nextCategory === 'live_recording' ? 'video' : previous.type,
+                          pricingType: nextCategory === 'official_document' ? 'free' : previous.pricingType,
+                          price: nextCategory === 'official_document' ? '' : previous.price,
                         };
                       })
                     }
@@ -1212,14 +1404,14 @@ const SchoolResources = () => {
                 </div>
 
                 {uploadForm.category === 'official_document' ? (
-                  <div className="sm:col-span-2 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                  <div className="sm:col-span-2 space-y-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                           Quick document templates
                         </p>
                         <p className="mt-1 text-sm text-slate-600">
-                          Use a starter template to prefill the title and description before you attach the real file.
+                          Use a starter template to prefill the title and description, then generate the letter directly if you do not want to upload a separate file.
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -1228,34 +1420,200 @@ const SchoolResources = () => {
                             key={template.id}
                             type="button"
                             onClick={() => applyOfficialDocumentTemplate(template.id)}
-                            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[#3D08BA]/15 hover:text-[#3D08BA]"
+                            className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                              officialDocumentDraft.templateId === template.id
+                                ? 'bg-[#3D08BA] text-white'
+                                : 'border border-slate-200 bg-white text-slate-600 hover:border-[#3D08BA]/15 hover:text-[#3D08BA]'
+                            }`}
                           >
                             {template.label}
                           </button>
                         ))}
                       </div>
                     </div>
+
+                    {officialDocumentDraft.templateId ? (
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            Student name
+                          </label>
+                          <input
+                            required
+                            value={officialDocumentDraft.studentName}
+                            onChange={(event) =>
+                              setOfficialDocumentDraft((previous) => ({
+                                ...previous,
+                                studentName: event.target.value,
+                              }))
+                            }
+                            placeholder="Student full name"
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            Admission / record number
+                          </label>
+                          <input
+                            value={officialDocumentDraft.admissionNumber}
+                            onChange={(event) =>
+                              setOfficialDocumentDraft((previous) => ({
+                                ...previous,
+                                admissionNumber: event.target.value,
+                              }))
+                            }
+                            placeholder="ADM-2026-014"
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            Class / level
+                          </label>
+                          <input
+                            value={officialDocumentDraft.classGroup}
+                            onChange={(event) =>
+                              setOfficialDocumentDraft((previous) => ({
+                                ...previous,
+                                classGroup: event.target.value,
+                              }))
+                            }
+                            placeholder="SS2 Blue"
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            Programme / unit
+                          </label>
+                          <input
+                            value={officialDocumentDraft.programme}
+                            onChange={(event) =>
+                              setOfficialDocumentDraft((previous) => ({
+                                ...previous,
+                                programme: event.target.value,
+                              }))
+                            }
+                            placeholder="Science programme"
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            Academic session
+                          </label>
+                          <input
+                            value={officialDocumentDraft.academicSession}
+                            onChange={(event) =>
+                              setOfficialDocumentDraft((previous) => ({
+                                ...previous,
+                                academicSession: event.target.value,
+                              }))
+                            }
+                            placeholder="2026/2027"
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            Issue date
+                          </label>
+                          <input
+                            required
+                            type="date"
+                            value={officialDocumentDraft.issueDate}
+                            onChange={(event) =>
+                              setOfficialDocumentDraft((previous) => ({
+                                ...previous,
+                                issueDate: event.target.value,
+                              }))
+                            }
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            Reference code
+                          </label>
+                          <input
+                            value={officialDocumentDraft.referenceCode}
+                            onChange={(event) =>
+                              setOfficialDocumentDraft((previous) => ({
+                                ...previous,
+                                referenceCode: event.target.value,
+                              }))
+                            }
+                            placeholder="REF-EDM-2603"
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            Signatory name
+                          </label>
+                          <input
+                            value={officialDocumentDraft.signatoryName}
+                            onChange={(event) =>
+                              setOfficialDocumentDraft((previous) => ({
+                                ...previous,
+                                signatoryName: event.target.value,
+                              }))
+                            }
+                            placeholder="School registrar"
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            Signatory title
+                          </label>
+                          <input
+                            value={officialDocumentDraft.signatoryTitle}
+                            onChange={(event) =>
+                              setOfficialDocumentDraft((previous) => ({
+                                ...previous,
+                                signatoryTitle: event.target.value,
+                              }))
+                            }
+                            placeholder="Registrar"
+                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
+                          />
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
 
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                    Student access
-                  </label>
-                  <select
-                    value={uploadForm.pricingType}
-                    onChange={(event) =>
-                      setUploadForm((previous) => ({
-                        ...previous,
-                        pricingType: event.target.value as ResourcePricingType,
-                      }))
-                    }
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
-                  >
-                    <option value="free">Free</option>
-                    <option value="paid">Paid</option>
-                  </select>
-                </div>
+                {uploadForm.category === 'official_document' ? (
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                      Student access
+                    </label>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+                      Official documents are always free to students.
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                      Student access
+                    </label>
+                    <select
+                      value={uploadForm.pricingType}
+                      onChange={(event) =>
+                        setUploadForm((previous) => ({
+                          ...previous,
+                          pricingType: event.target.value as ResourcePricingType,
+                        }))
+                      }
+                      className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
+                    >
+                      <option value="free">Free</option>
+                      <option value="paid">Paid</option>
+                    </select>
+                  </div>
+                )}
 
                 {uploadForm.pricingType === 'paid' ? (
                   <div>
@@ -1318,7 +1676,7 @@ const SchoolResources = () => {
                   </label>
                   <input
                     type="file"
-                    required={!isEditing}
+                    required={!isEditing && !(uploadForm.category === 'official_document' && officialDocumentDraft.templateId)}
                     onChange={(event) => setUploadFile(event.target.files?.[0] || null)}
                     accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,.webp,.mp3,.wav,.mp4,.mov"
                     className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700"
@@ -1326,6 +1684,8 @@ const SchoolResources = () => {
                   <p className="mt-1.5 text-xs text-slate-500">
                     {isEditing && editingResource
                       ? `Current file: ${editingResource.fileName}. Leave this empty to keep it.`
+                      : uploadForm.category === 'official_document' && officialDocumentDraft.templateId
+                      ? 'Optional. Leave this empty to generate the official document file from the fields above.'
                       : 'Keep each file below 25MB.'}
                   </p>
                 </div>
