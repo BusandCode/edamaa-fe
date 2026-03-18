@@ -1257,216 +1257,269 @@ const SchoolAssignments = () => {
       {editorOpen ? (
         <div className="fixed inset-0 z-50 bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
           <div className="mx-auto flex h-full max-w-5xl items-center justify-center">
-            <div className="max-h-[94vh] w-full overflow-hidden rounded-[32px] border border-white/70 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.24)]">
-              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 sm:px-6">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#3D08BA]">
-                    {editorMode === 'edit' ? 'Edit task' : 'New task'}
-                  </p>
-                  <h2 className="mt-1 text-xl font-semibold text-slate-900">
-                    {editor.type === 'assignment' ? 'Homework workspace' : 'Classwork workspace'}
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-500">Set the class, release timing, and student instructions before publishing.</p>
+            <div className="max-h-[94vh] w-full overflow-hidden rounded-[34px] border border-white/70 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.24)]">
+              <div className="relative overflow-hidden border-b border-slate-200/80 bg-[linear-gradient(135deg,_rgba(255,255,255,0.98),_rgba(248,250,252,0.96)_58%,_rgba(245,243,255,0.94))] px-5 py-4 sm:px-6">
+                <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-64 bg-[radial-gradient(circle_at_center,_rgba(61,8,186,0.09),_transparent_72%)] lg:block" />
+                <div className="relative flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-[#3D08BA]/18 bg-[#3D08BA]/7 px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA]">
+                        {editorMode === 'edit' ? 'Edit task' : 'New task'}
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-white/92 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                        {editor.type === 'assignment' ? 'Homework' : 'Classwork'}
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-white/92 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                        {editor.releaseMode === 'immediate'
+                          ? 'Open now'
+                          : editor.releaseMode === 'scheduled'
+                            ? 'Scheduled'
+                            : 'Linked to class end'}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#3D08BA]">
+                      {editorMode === 'edit' ? 'Update assignment workspace' : 'Create assignment workspace'}
+                    </p>
+                    <h2 className="mt-1 text-xl font-semibold text-slate-900">
+                      {editor.type === 'assignment' ? 'Homework workspace' : 'Classwork workspace'}
+                    </h2>
+                    <p className="mt-1 max-w-2xl text-sm text-slate-500">
+                      Set the class lane, release timing, and student instructions before publishing.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeEditor}
+                    className="rounded-2xl border border-slate-200 bg-white/95 p-2 text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
+                  >
+                    <XMarkIcon className="h-5 w-5" />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={closeEditor}
-                  className="rounded-2xl border border-slate-200 bg-white p-2 text-slate-500 transition hover:text-slate-700"
-                >
-                  <XMarkIcon className="h-5 w-5" />
-                </button>
               </div>
 
-              <div className="grid max-h-[calc(94vh-148px)] gap-0 overflow-y-auto lg:grid-cols-[minmax(0,1fr)_320px]">
-                <div className="space-y-5 px-5 py-5 sm:px-6">
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium text-slate-700">Task title</span>
-                      <input
-                        value={editor.title}
-                        onChange={(event) => setEditor((current) => ({ ...current, title: event.target.value }))}
-                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                        placeholder="Example: Week 4 Algebra Homework"
-                      />
-                    </label>
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium text-slate-700">Subject</span>
-                      <input
-                        value={editor.subject}
-                        onChange={(event) => setEditor((current) => ({ ...current, subject: event.target.value }))}
-                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                        placeholder="Mathematics"
-                      />
-                    </label>
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium text-slate-700">Department</span>
-                      <input
-                        value={editor.department}
-                        onChange={(event) => setEditor((current) => ({ ...current, department: event.target.value }))}
-                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                        placeholder="Science"
-                      />
-                    </label>
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium text-slate-700">Class</span>
-                      <input
-                        value={editor.classGroup}
-                        onChange={(event) => setEditor((current) => ({ ...current, classGroup: event.target.value }))}
-                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                        placeholder="SS2"
-                      />
-                    </label>
-                  </div>
+              <div className="grid max-h-[calc(94vh-164px)] gap-0 overflow-y-auto lg:grid-cols-[minmax(0,1fr)_340px]">
+                <div className="space-y-5 bg-[linear-gradient(180deg,_rgba(255,255,255,0.94),_rgba(248,250,252,0.86))] px-5 py-5 sm:px-6">
+                  <section className="rounded-[28px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_32px_rgba(15,23,42,0.04)]">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Class lane</p>
+                        <h3 className="mt-1 text-base font-semibold text-slate-900">Basic task details</h3>
+                      </div>
+                      <p className="text-xs text-slate-400">Title, subject, department, and class group</p>
+                    </div>
 
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium text-slate-700">Task type</span>
-                      <select
-                        value={editor.type}
-                        onChange={(event) =>
-                          setEditor((current) => ({
-                            ...current,
-                            type: event.target.value === 'classwork' ? 'classwork' : 'assignment',
-                          }))
-                        }
-                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                      >
-                        <option value="assignment">Homework</option>
-                        <option value="classwork">Classwork</option>
-                      </select>
-                    </label>
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium text-slate-700">Delivery</span>
-                      <select
-                        value={editor.deliveryMode}
-                        onChange={(event) =>
-                          setEditor((current) => ({
-                            ...current,
-                            deliveryMode: event.target.value === 'offline' ? 'offline' : 'virtual',
-                          }))
-                        }
-                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                      >
-                        <option value="virtual">Live class</option>
-                        <option value="offline">Offline class</option>
-                      </select>
-                    </label>
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium text-slate-700">Release timing</span>
-                      <select
-                        value={editor.releaseMode}
-                        onChange={(event) =>
-                          setEditor((current) => ({
-                            ...current,
-                            releaseMode: event.target.value as AssignmentReleaseMode,
-                          }))
-                        }
-                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                      >
-                        <option value="immediate">Open immediately</option>
-                        <option value="scheduled">Open at a set time</option>
-                        <option value="on_class_end">Open when linked class ends</option>
-                      </select>
-                    </label>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {editor.releaseMode === 'scheduled' ? (
+                    <div className="mt-4 grid gap-4 md:grid-cols-2">
                       <label className="space-y-2">
-                        <span className="text-sm font-medium text-slate-700">Release date and time</span>
+                        <span className="text-sm font-medium text-slate-700">Task title</span>
                         <input
-                          type="datetime-local"
-                          value={editor.releaseAt}
-                          onChange={(event) => setEditor((current) => ({ ...current, releaseAt: event.target.value }))}
+                          value={editor.title}
+                          onChange={(event) => setEditor((current) => ({ ...current, title: event.target.value }))}
                           className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                          placeholder="Example: Week 4 Algebra Homework"
                         />
                       </label>
-                    ) : null}
-                    {editor.releaseMode === 'on_class_end' ? (
-                      <label className="space-y-2 md:col-span-2">
-                        <span className="text-sm font-medium text-slate-700">Linked class session</span>
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-slate-700">Subject</span>
+                        <input
+                          value={editor.subject}
+                          onChange={(event) => setEditor((current) => ({ ...current, subject: event.target.value }))}
+                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                          placeholder="Mathematics"
+                        />
+                      </label>
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-slate-700">Department</span>
+                        <input
+                          value={editor.department}
+                          onChange={(event) => setEditor((current) => ({ ...current, department: event.target.value }))}
+                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                          placeholder="Science"
+                        />
+                      </label>
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-slate-700">Class</span>
+                        <input
+                          value={editor.classGroup}
+                          onChange={(event) => setEditor((current) => ({ ...current, classGroup: event.target.value }))}
+                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                          placeholder="SS2"
+                        />
+                      </label>
+                    </div>
+                  </section>
+
+                  <section className="rounded-[28px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_32px_rgba(15,23,42,0.04)]">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Timing and delivery</p>
+                        <h3 className="mt-1 text-base font-semibold text-slate-900">Choose how students receive this</h3>
+                      </div>
+                      <p className="text-xs text-slate-400">Delivery mode, release timing, due date, and marks</p>
+                    </div>
+
+                    <div className="mt-4 grid gap-4 md:grid-cols-3">
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-slate-700">Task type</span>
                         <select
-                          value={editor.sessionId}
-                          onChange={(event) => setEditor((current) => ({ ...current, sessionId: event.target.value }))}
+                          value={editor.type}
+                          onChange={(event) =>
+                            setEditor((current) => ({
+                              ...current,
+                              type: event.target.value === 'classwork' ? 'classwork' : 'assignment',
+                            }))
+                          }
                           className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
                         >
-                          <option value="">Select class session</option>
-                          {sessionOptions.map((session) => (
-                            <option key={session.id} value={session.id}>
-                              {session.title} • {session.subject} • {formatDateTime(session.startAt)}
-                            </option>
-                          ))}
+                          <option value="assignment">Homework</option>
+                          <option value="classwork">Classwork</option>
                         </select>
                       </label>
-                    ) : null}
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium text-slate-700">Due date and time</span>
-                      <input
-                        type="datetime-local"
-                        value={editor.dueAt}
-                        onChange={(event) => setEditor((current) => ({ ...current, dueAt: event.target.value }))}
-                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                      />
-                    </label>
-                    {editor.type === 'assignment' ? (
                       <label className="space-y-2">
-                        <span className="text-sm font-medium text-slate-700">Marks</span>
+                        <span className="text-sm font-medium text-slate-700">Delivery</span>
+                        <select
+                          value={editor.deliveryMode}
+                          onChange={(event) =>
+                            setEditor((current) => ({
+                              ...current,
+                              deliveryMode: event.target.value === 'offline' ? 'offline' : 'virtual',
+                            }))
+                          }
+                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                        >
+                          <option value="virtual">Live class</option>
+                          <option value="offline">Offline class</option>
+                        </select>
+                      </label>
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-slate-700">Release timing</span>
+                        <select
+                          value={editor.releaseMode}
+                          onChange={(event) =>
+                            setEditor((current) => ({
+                              ...current,
+                              releaseMode: event.target.value as AssignmentReleaseMode,
+                            }))
+                          }
+                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                        >
+                          <option value="immediate">Open immediately</option>
+                          <option value="scheduled">Open at a set time</option>
+                          <option value="on_class_end">Open when linked class ends</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    <div className="mt-4 grid gap-4 md:grid-cols-2">
+                      {editor.releaseMode === 'scheduled' ? (
+                        <label className="space-y-2">
+                          <span className="text-sm font-medium text-slate-700">Release date and time</span>
+                          <input
+                            type="datetime-local"
+                            value={editor.releaseAt}
+                            onChange={(event) => setEditor((current) => ({ ...current, releaseAt: event.target.value }))}
+                            className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                          />
+                        </label>
+                      ) : null}
+                      {editor.releaseMode === 'on_class_end' ? (
+                        <label className="space-y-2 md:col-span-2">
+                          <span className="text-sm font-medium text-slate-700">Linked class session</span>
+                          <select
+                            value={editor.sessionId}
+                            onChange={(event) => setEditor((current) => ({ ...current, sessionId: event.target.value }))}
+                            className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                          >
+                            <option value="">Select class session</option>
+                            {sessionOptions.map((session) => (
+                              <option key={session.id} value={session.id}>
+                                {session.title} • {session.subject} • {formatDateTime(session.startAt)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-slate-700">Due date and time</span>
                         <input
-                          type="number"
-                          min={1}
-                          value={editor.points}
-                          onChange={(event) => setEditor((current) => ({ ...current, points: Number(event.target.value) || 0 }))}
+                          type="datetime-local"
+                          value={editor.dueAt}
+                          onChange={(event) => setEditor((current) => ({ ...current, dueAt: event.target.value }))}
                           className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
                         />
                       </label>
-                    ) : (
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <p className="text-sm font-medium text-slate-700">Classwork marks</p>
-                        <p className="mt-2 text-sm text-slate-500">Calculated from the question set below.</p>
-                        <p className="mt-3 text-lg font-semibold text-slate-900">{classworkPoints}</p>
+                      {editor.type === 'assignment' ? (
+                        <label className="space-y-2">
+                          <span className="text-sm font-medium text-slate-700">Marks</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={editor.points}
+                            onChange={(event) => setEditor((current) => ({ ...current, points: Number(event.target.value) || 0 }))}
+                            className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                          />
+                        </label>
+                      ) : (
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                          <p className="text-sm font-medium text-slate-700">Classwork marks</p>
+                          <p className="mt-2 text-sm text-slate-500">Calculated from the question set below.</p>
+                          <p className="mt-3 text-lg font-semibold text-slate-900">{classworkPoints}</p>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+
+                  <section className="rounded-[28px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_32px_rgba(15,23,42,0.04)]">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Student-facing content</p>
+                        <h3 className="mt-1 text-base font-semibold text-slate-900">Instructions students will read</h3>
                       </div>
-                    )}
-                  </div>
+                      <p className="text-xs text-slate-400">Summary, full instructions, and checklist</p>
+                    </div>
 
-                  <label className="space-y-2">
-                    <span className="text-sm font-medium text-slate-700">Short summary</span>
-                    <textarea
-                      rows={3}
-                      value={editor.description}
-                      onChange={(event) => setEditor((current) => ({ ...current, description: event.target.value }))}
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                      placeholder="Tell students what this task covers in one or two lines."
-                    />
-                  </label>
+                    <div className="mt-4 space-y-4">
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-slate-700">Short summary</span>
+                        <textarea
+                          rows={3}
+                          value={editor.description}
+                          onChange={(event) => setEditor((current) => ({ ...current, description: event.target.value }))}
+                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                          placeholder="Tell students what this task covers in one or two lines."
+                        />
+                      </label>
 
-                  <label className="space-y-2">
-                    <span className="text-sm font-medium text-slate-700">Main instructions</span>
-                    <textarea
-                      rows={6}
-                      value={editor.content}
-                      onChange={(event) => setEditor((current) => ({ ...current, content: event.target.value }))}
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                      placeholder="Give students the full task instructions."
-                    />
-                  </label>
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-slate-700">Main instructions</span>
+                        <textarea
+                          rows={6}
+                          value={editor.content}
+                          onChange={(event) => setEditor((current) => ({ ...current, content: event.target.value }))}
+                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                          placeholder="Give students the full task instructions."
+                        />
+                      </label>
 
-                  <label className="space-y-2">
-                    <span className="text-sm font-medium text-slate-700">Checklist</span>
-                    <textarea
-                      rows={4}
-                      value={editor.checklistText}
-                      onChange={(event) => setEditor((current) => ({ ...current, checklistText: event.target.value }))}
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                      placeholder="One item per line, for example:\nShow your method\nUpload as PDF"
-                    />
-                  </label>
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-slate-700">Checklist</span>
+                        <textarea
+                          rows={4}
+                          value={editor.checklistText}
+                          onChange={(event) => setEditor((current) => ({ ...current, checklistText: event.target.value }))}
+                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                          placeholder="One item per line, for example:\nShow your method\nUpload as PDF"
+                        />
+                      </label>
+                    </div>
+                  </section>
 
                   {editor.type === 'classwork' ? (
-                    <section className="space-y-4 rounded-[28px] border border-slate-200 bg-slate-50 p-4">
-                      <div className="flex items-center justify-between gap-3">
+                    <section className="space-y-4 rounded-[28px] border border-slate-200/80 bg-white p-5 shadow-[0_14px_32px_rgba(15,23,42,0.04)]">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div>
-                          <h3 className="text-sm font-semibold text-slate-900">Question builder</h3>
-                          <p className="text-sm text-slate-500">Students get scored instantly when they submit this classwork.</p>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Question builder</p>
+                          <h3 className="mt-1 text-base font-semibold text-slate-900">Build the classwork answer set</h3>
+                          <p className="mt-1 text-sm text-slate-500">Students get scored instantly when they submit this classwork.</p>
                         </div>
                         <button
                           type="button"
@@ -1477,11 +1530,15 @@ const SchoolAssignments = () => {
                           Add question
                         </button>
                       </div>
+
                       {editor.questions.map((question, index) => (
-                        <article key={question.id} className="rounded-[24px] border border-white bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+                        <article
+                          key={question.id}
+                          className="rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,_rgba(248,250,252,0.88),_rgba(255,255,255,1))] p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]"
+                        >
                           <div className="flex items-start justify-between gap-3">
                             <div>
-                              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Question {index + 1}</p>
+                              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3D08BA]">Question {index + 1}</p>
                               <p className="mt-1 text-sm text-slate-500">Multiple choice only for this first MVP.</p>
                             </div>
                             {editor.questions.length > 1 ? (
@@ -1499,115 +1556,130 @@ const SchoolAssignments = () => {
                               </button>
                             ) : null}
                           </div>
+
                           <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1fr)_120px]">
-                            <input
-                              value={question.prompt}
-                              onChange={(event) =>
-                                setEditor((current) => ({
-                                  ...current,
-                                  questions: current.questions.map((item) =>
-                                    item.id === question.id ? { ...item, prompt: event.target.value } : item
-                                  ),
-                                }))
-                              }
-                              className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                              placeholder="Write the question prompt"
-                            />
-                            <input
-                              type="number"
-                              min={1}
-                              value={question.points}
-                              onChange={(event) =>
-                                setEditor((current) => ({
-                                  ...current,
-                                  questions: current.questions.map((item) =>
-                                    item.id === question.id ? { ...item, points: Number(event.target.value) || 0 } : item
-                                  ),
-                                }))
-                              }
-                              className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                            />
+                            <label className="space-y-2">
+                              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Question prompt</span>
+                              <input
+                                value={question.prompt}
+                                onChange={(event) =>
+                                  setEditor((current) => ({
+                                    ...current,
+                                    questions: current.questions.map((item) =>
+                                      item.id === question.id ? { ...item, prompt: event.target.value } : item
+                                    ),
+                                  }))
+                                }
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                                placeholder="Write the question prompt"
+                              />
+                            </label>
+                            <label className="space-y-2">
+                              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Marks</span>
+                              <input
+                                type="number"
+                                min={1}
+                                value={question.points}
+                                onChange={(event) =>
+                                  setEditor((current) => ({
+                                    ...current,
+                                    questions: current.questions.map((item) =>
+                                      item.id === question.id ? { ...item, points: Number(event.target.value) || 0 } : item
+                                    ),
+                                  }))
+                                }
+                                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                              />
+                            </label>
                           </div>
-                          <div className="mt-4 space-y-3">
-                            {question.options.map((option) => (
-                              <div key={option.id} className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center">
-                                <input
-                                  type="radio"
-                                  name={`correct-${question.id}`}
-                                  checked={question.correctOptionId === option.id}
-                                  onChange={() =>
-                                    setEditor((current) => ({
-                                      ...current,
-                                      questions: current.questions.map((item) =>
-                                        item.id === question.id ? { ...item, correctOptionId: option.id } : item
-                                      ),
-                                    }))
-                                  }
-                                  className="mt-1 h-4 w-4"
-                                />
-                                <input
-                                  value={option.text}
-                                  onChange={(event) =>
-                                    setEditor((current) => ({
-                                      ...current,
-                                      questions: current.questions.map((item) =>
-                                        item.id === question.id
-                                          ? {
-                                              ...item,
-                                              options: item.options.map((entry) =>
-                                                entry.id === option.id ? { ...entry, text: event.target.value } : entry
-                                              ),
-                                            }
-                                          : item
-                                      ),
-                                    }))
-                                  }
-                                  className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                                  placeholder="Answer option"
-                                />
-                                {question.options.length > 2 ? (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
+
+                          <div className="mt-4 rounded-[22px] border border-slate-200/80 bg-white/75 p-3">
+                            <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Answer options</p>
+                              <p className="text-xs text-slate-400">Choose the correct option with the radio button</p>
+                            </div>
+
+                            <div className="space-y-3">
+                              {question.options.map((option) => (
+                                <div key={option.id} className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center">
+                                  <input
+                                    type="radio"
+                                    name={`correct-${question.id}`}
+                                    checked={question.correctOptionId === option.id}
+                                    onChange={() =>
+                                      setEditor((current) => ({
+                                        ...current,
+                                        questions: current.questions.map((item) =>
+                                          item.id === question.id ? { ...item, correctOptionId: option.id } : item
+                                        ),
+                                      }))
+                                    }
+                                    className="mt-1 h-4 w-4"
+                                  />
+                                  <input
+                                    value={option.text}
+                                    onChange={(event) =>
                                       setEditor((current) => ({
                                         ...current,
                                         questions: current.questions.map((item) =>
                                           item.id === question.id
                                             ? {
                                                 ...item,
-                                                options: item.options.filter((entry) => entry.id !== option.id),
-                                                correctOptionId:
-                                                  item.correctOptionId === option.id ? item.options[0]?.id || '' : item.correctOptionId,
+                                                options: item.options.map((entry) =>
+                                                  entry.id === option.id ? { ...entry, text: event.target.value } : entry
+                                                ),
                                               }
                                             : item
                                         ),
                                       }))
                                     }
-                                    className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-rose-200 hover:text-rose-700"
-                                  >
-                                    Remove
-                                  </button>
-                                ) : (
-                                  <div />
-                                )}
-                              </div>
-                            ))}
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setEditor((current) => ({
-                                  ...current,
-                                  questions: current.questions.map((item) =>
-                                    item.id === question.id
-                                      ? { ...item, options: [...item.options, createOption(`Option ${String.fromCharCode(65 + item.options.length)}`)] }
-                                      : item
-                                  ),
-                                }))
-                              }
-                              className="rounded-2xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 transition hover:border-[#3D08BA]/30 hover:text-[#3D08BA]"
-                            >
-                              Add option
-                            </button>
+                                    className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                                    placeholder="Answer option"
+                                  />
+                                  {question.options.length > 2 ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setEditor((current) => ({
+                                          ...current,
+                                          questions: current.questions.map((item) =>
+                                            item.id === question.id
+                                              ? {
+                                                  ...item,
+                                                  options: item.options.filter((entry) => entry.id !== option.id),
+                                                  correctOptionId:
+                                                    item.correctOptionId === option.id ? item.options[0]?.id || '' : item.correctOptionId,
+                                                }
+                                              : item
+                                          ),
+                                        }))
+                                      }
+                                      className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-rose-200 hover:text-rose-700"
+                                    >
+                                      Remove
+                                    </button>
+                                  ) : (
+                                    <div />
+                                  )}
+                                </div>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setEditor((current) => ({
+                                    ...current,
+                                    questions: current.questions.map((item) =>
+                                      item.id === question.id
+                                        ? { ...item, options: [...item.options, createOption(`Option ${String.fromCharCode(65 + item.options.length)}`)] }
+                                        : item
+                                    ),
+                                  }))
+                                }
+                                className="rounded-2xl border border-dashed border-slate-300 px-4 py-3 text-sm font-medium text-slate-600 transition hover:border-[#3D08BA]/30 hover:text-[#3D08BA]"
+                              >
+                                Add option
+                              </button>
+                            </div>
                           </div>
                         </article>
                       ))}
@@ -1615,13 +1687,14 @@ const SchoolAssignments = () => {
                   ) : null}
                 </div>
 
-                <aside className="border-t border-slate-200 bg-slate-50 px-5 py-5 lg:border-l lg:border-t-0 lg:px-6">
-                  <div className="rounded-[26px] border border-white bg-white p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Preview</p>
+                <aside className="border-t border-slate-200 bg-[linear-gradient(180deg,_rgba(248,250,252,0.98),_rgba(241,245,249,0.92))] px-5 py-5 lg:border-l lg:border-t-0 lg:px-6">
+                  <div className="rounded-[28px] border border-white/80 bg-[linear-gradient(180deg,_rgba(255,255,255,0.98),_rgba(248,250,252,0.96))] p-5 shadow-[0_16px_40px_rgba(15,23,42,0.05)]">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Preview</p>
                     <h3 className="mt-3 text-lg font-semibold text-slate-900">{editor.title || 'Task title'}</h3>
                     <p className="mt-2 text-sm text-slate-500">
                       {[editor.subject || 'Subject', editor.department || 'Department', editor.classGroup || 'Class'].join(' • ')}
                     </p>
+
                     <div className="mt-4 space-y-3 text-sm text-slate-600">
                       <div className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                         <CalendarDaysIcon className="mt-0.5 h-4 w-4 text-slate-400" />
@@ -1659,30 +1732,49 @@ const SchoolAssignments = () => {
                         </div>
                       </div>
                     </div>
-                    <div className="mt-5 rounded-2xl border border-[#3D08BA]/15 bg-[#3D08BA]/5 p-4 text-sm text-slate-700">
+
+                    <div className="mt-5 rounded-[22px] border border-[#3D08BA]/15 bg-[#3D08BA]/5 p-4 text-sm text-slate-700">
                       <p className="font-semibold text-[#2D0690]">Student instructions</p>
                       <p className="mt-2 leading-6">{editor.content || 'Add instructions so students know exactly what to do.'}</p>
+                    </div>
+
+                    <div className="mt-4 rounded-[22px] border border-slate-200 bg-white/88 p-4 text-sm text-slate-600">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Publishing note</p>
+                      <p className="mt-2 leading-6">
+                        {editor.releaseMode === 'immediate'
+                          ? 'Students can open this as soon as you save it.'
+                          : editor.releaseMode === 'scheduled'
+                            ? 'Students will only see this after the release date and time you set.'
+                            : 'Students will only see this after the linked class session ends.'}
+                      </p>
                     </div>
                   </div>
                 </aside>
               </div>
 
-              <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-5 py-4 sm:px-6">
-                <button
-                  type="button"
-                  onClick={closeEditor}
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => void handleSaveAssignment()}
-                  className="rounded-2xl bg-[#3D08BA] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2D0690] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {saving ? 'Saving...' : editorMode === 'edit' ? 'Save changes' : 'Create task'}
-                </button>
+              <div className="flex flex-col gap-3 border-t border-slate-200/80 bg-slate-50/85 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                <p className="text-sm text-slate-500">
+                  {editor.type === 'assignment'
+                    ? 'Homework accepts note or file submissions.'
+                    : 'Classwork uses auto-scored multiple choice questions.'}
+                </p>
+                <div className="flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={closeEditor}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => void handleSaveAssignment()}
+                    className="rounded-2xl bg-[#3D08BA] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2D0690] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {saving ? 'Saving...' : editorMode === 'edit' ? 'Save changes' : 'Create task'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
