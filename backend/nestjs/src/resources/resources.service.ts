@@ -17,7 +17,7 @@ type AuthUser = {
 };
 
 type ResourceType = 'pdf' | 'video' | 'image' | 'audio' | 'document';
-type ResourceCategory = 'assignment' | 'classwork' | 'note' | 'library';
+type ResourceCategory = 'assignment' | 'classwork' | 'note' | 'library' | 'official_document';
 type ResourcePricingType = 'free' | 'paid';
 type UploaderRole = 'tutor' | 'school';
 type ResourcePriority = 'high' | 'medium' | 'low';
@@ -237,7 +237,10 @@ export class ResourcesService implements OnModuleInit {
     const summary: FeedSummary = {
       totalResources: resources.length,
       totalFreeResources: resources.filter((resource) => resource.pricingType === 'free').length,
-      classroomResources: resources.filter((resource) => resource.category !== 'library').length,
+      classroomResources: resources.filter(
+        (resource) =>
+          resource.category !== 'library' && resource.category !== 'official_document'
+      ).length,
       libraryResources: resources.filter((resource) => resource.category === 'library').length,
       unreadNotifications: notifications.filter((notification) => !notification.isRead).length,
     };
@@ -822,6 +825,9 @@ export class ResourcesService implements OnModuleInit {
     if (normalized === 'library') {
       return 'library';
     }
+    if (normalized === 'official_document' || normalized === 'official-document') {
+      return 'official_document';
+    }
     return 'note';
   }
 
@@ -941,6 +947,8 @@ export class ResourcesService implements OnModuleInit {
         return 'Visual resource uploaded for quicker concept recall.';
       case 'audio':
         return 'Audio explanation resource uploaded for flexible study sessions.';
+      case 'document':
+        return 'Document resource uploaded for learning support or official school communication.';
       default:
         return 'Resource uploaded to support your assignment, classwork, and note review.';
     }
@@ -954,6 +962,8 @@ export class ResourcesService implements OnModuleInit {
         ? 'classwork support'
         : resource.category === 'library'
         ? 'e-library resource'
+        : resource.category === 'official_document'
+        ? 'official school document'
         : 'class notes';
 
     const title = 'New resource added';
@@ -1134,6 +1144,22 @@ export class ResourcesService implements OnModuleInit {
         createdAtOffsetMs: 1000 * 60 * 80,
         bodyText:
           'Premium SAT Math Drill Pack\n\nSections:\n- Timed algebra drills\n- Data interpretation\n- Worked answer review',
+      },
+      {
+        id: 'resource_seed_enrollment_letter_pack',
+        title: 'Enrollment Letter Template',
+        description: 'Official enrollment confirmation letter for newly admitted students.',
+        subject: 'School Admin',
+        type: 'document',
+        category: 'official_document',
+        uploaderName: 'Edamaa Science School',
+        uploaderRole: 'school',
+        uploaderEmail: 'school@edamaa.dev',
+        fileName: 'enrollment-letter-template.txt',
+        mimeType: 'text/plain',
+        createdAtOffsetMs: 1000 * 60 * 140,
+        bodyText:
+          'Enrollment Letter\n\nThis letter confirms that the student has been formally enrolled in the school for the current session.',
       },
     ];
 

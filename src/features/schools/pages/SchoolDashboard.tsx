@@ -40,6 +40,10 @@ import {
   type SchoolExam,
   type SchoolExamNotification,
 } from '../utils/examsApi';
+import {
+  fetchMyResourceUploads,
+  type ResourceItem,
+} from '../utils/resourcesApi';
 import { fetchMyAccountRoles, switchDefaultAccountRole } from '../../auth/utils/accountRolesApi';
 import { schoolManagementModules, type SchoolModule } from '../data/schoolManagementModules';
 import {
@@ -86,6 +90,160 @@ type ResultLedgerEntry = {
   topScorePercentage: number | null;
   laneLabel: string;
   effectiveTimestamp: number;
+};
+
+type ResourceLibraryView = 'textbooks' | 'video-lessons' | 'documents';
+
+const isTextbookResource = (resource: ResourceItem) =>
+  resource.category === 'library' && (resource.type === 'document' || resource.type === 'pdf');
+
+const ResourceLibraryOverview = () => {
+  const navigate = useNavigate();
+  const [uploads, setUploads] = useState<ResourceItem[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    let active = true;
+
+    const loadResources = async () => {
+      setIsLoading(true);
+      try {
+        const payload = await fetchMyResourceUploads('school');
+        if (!active) {
+          return;
+        }
+
+        const nextUploads = Array.isArray(payload.uploads) ? payload.uploads : [];
+        setUploads(nextUploads);
+        setNotice(
+          nextUploads.length === 0
+            ? 'No study materials published yet. Upload the first textbook, video lesson, or classroom document.'
+            : ''
+        );
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        const message =
+          error instanceof Error ? error.message : 'Could not load study materials right now.';
+        setUploads([]);
+        setNotice(message);
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void loadResources();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const stats = useMemo(
+    () => ({
+      ebooks: uploads.filter(isTextbookResource).length,
+      videoLessons: uploads.filter((resource) => resource.type === 'video').length,
+      officialDocuments: uploads.filter((resource) => resource.category === 'official_document').length,
+    }),
+    [uploads]
+  );
+
+  const cards: Array<{
+    key: ResourceLibraryView;
+    label: string;
+    count: number;
+    icon: IconType;
+    tone: string;
+    iconTone: string;
+    helper: string;
+  }> = [
+    {
+      key: 'textbooks',
+      label: 'E-Books',
+      count: stats.ebooks,
+      icon: FaBook,
+      tone: 'from-blue-50 to-blue-100',
+      iconTone: 'text-blue-600',
+      helper: 'Digital textbooks and study guides',
+    },
+    {
+      key: 'video-lessons',
+      label: 'Video Lessons',
+      count: stats.videoLessons,
+      icon: FaVideo,
+      tone: 'from-green-50 to-green-100',
+      iconTone: 'text-green-600',
+      helper: 'Uploaded course videos and live recordings',
+    },
+    {
+      key: 'documents',
+      label: 'Official Documents',
+      count: stats.officialDocuments,
+      icon: FaFileAlt,
+      tone: 'from-purple-50 to-purple-100',
+      iconTone: 'text-purple-600',
+      helper: 'Enrollment letters and official school files',
+    },
+  ];
+
+  const handleOpenView = (view: ResourceLibraryView) => {
+    navigate(`/school-resources?view=${encodeURIComponent(view)}`);
+  };
+
+  return (
+    <div>
+      <div className='flex items-center justify-between mb-4'>
+        <div>
+          <h3 className='text-sm font-semibold text-gray-900'>Resource Library</h3>
+          <p className='mt-1 text-xs text-gray-500'>
+            Open the exact material view your school wants to manage.
+          </p>
+        </div>
+        <button
+          type='button'
+          onClick={() => navigate('/school-resources')}
+          className='text-xs text-[#3D08BA] font-medium hover:underline'
+        >
+          View All
+        </button>
+      </div>
+      {notice ? (
+        <div className='mb-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs text-gray-600 shadow-sm'>
+          {notice}
+        </div>
+      ) : null}
+      <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
+        {cards.map((card) => {
+          const Icon = card.icon;
+          return (
+            <button
+              key={card.key}
+              type='button'
+              onClick={() => handleOpenView(card.key)}
+              className={`rounded-xl bg-linear-to-br ${card.tone} p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md`}
+            >
+              <div className='flex items-start justify-between gap-3'>
+                <div>
+                  <p className='text-xs font-semibold text-gray-900'>{card.label}</p>
+                  <p className='mt-1 text-2xl font-bold text-gray-900'>
+                    {isLoading ? '--' : card.count}
+                  </p>
+                  <p className='mt-1 text-xs text-gray-600'>{card.helper}</p>
+                </div>
+                <div className='rounded-lg bg-white/80 p-2 shadow-sm'>
+                  <Icon className={`${card.iconTone} text-xl`} />
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 };
 
 // Performance Overview Component
@@ -1767,27 +1925,7 @@ const SchoolDashboard = () => {
 
         {/* Resource Library */}
         <div>
-          <div className='flex items-center justify-between mb-4'>
-            <h3 className='text-sm font-semibold text-gray-900'>Resource Library</h3>
-            <button className='text-xs text-[#3D08BA] font-medium hover:underline'>View All</button>
-          </div>
-          <div className='grid grid-cols-3 gap-3'>
-            <div className='bg-linear-to-br from-blue-50 to-blue-100 rounded-xl p-4 text-center'>
-              <FaBook className='text-blue-600 text-2xl mx-auto mb-2' />
-              <p className='text-xs font-semibold text-gray-900'>Textbooks</p>
-              <p className='text-xs text-gray-600'>125 items</p>
-            </div>
-            <div className='bg-linear-to-br from-green-50 to-green-100 rounded-xl p-4 text-center'>
-              <FaVideo className='text-green-600 text-2xl mx-auto mb-2' />
-              <p className='text-xs font-semibold text-gray-900'>Video Lessons</p>
-              <p className='text-xs text-gray-600'>87 items</p>
-            </div>
-            <div className='bg-linear-to-br from-purple-50 to-purple-100 rounded-xl p-4 text-center'>
-              <FaFileAlt className='text-purple-600 text-2xl mx-auto mb-2' />
-              <p className='text-xs font-semibold text-gray-900'>Documents</p>
-              <p className='text-xs text-gray-600'>256 items</p>
-            </div>
-          </div>
+          <ResourceLibraryOverview />
         </div>
       </main>
 

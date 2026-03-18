@@ -49,6 +49,32 @@ type UploadFormState = {
   instructorName: string;
 };
 
+type ResourceWorkspaceView = 'all' | 'textbooks' | 'video-lessons' | 'documents';
+
+const formatResourceCategoryLabel = (category: ResourceCategory) => {
+  switch (category) {
+    case 'assignment':
+      return 'Assignment support';
+    case 'classwork':
+      return 'Classwork support';
+    case 'library':
+      return 'E-Book';
+    case 'official_document':
+      return 'Official document';
+    case 'note':
+    default:
+      return 'Class notes';
+  }
+};
+
+const isEbookResource = (resource: ResourceItem) =>
+  resource.category === 'library' && (resource.type === 'document' || resource.type === 'pdf');
+
+const isVideoLessonResource = (resource: ResourceItem) => resource.type === 'video';
+
+const isOfficialDocumentResource = (resource: ResourceItem) =>
+  resource.category === 'official_document';
+
 const createUploadForm = (): UploadFormState => ({
   title: '',
   description: '',
@@ -107,16 +133,40 @@ const getResourceColor = (type: ResourceType) => {
   }
 };
 
+const resolveWorkspaceView = (value: string): ResourceWorkspaceView => {
+  switch (value) {
+    case 'textbooks':
+    case 'video-lessons':
+    case 'documents':
+      return value;
+    default:
+      return 'all';
+  }
+};
+
+const matchesWorkspaceView = (resource: ResourceItem, view: ResourceWorkspaceView) => {
+  switch (view) {
+    case 'textbooks':
+      return isEbookResource(resource);
+    case 'video-lessons':
+      return isVideoLessonResource(resource);
+    case 'documents':
+      return isOfficialDocumentResource(resource);
+    case 'all':
+    default:
+      return true;
+  }
+};
+
+const workspaceViewLabel: Record<Exclude<ResourceWorkspaceView, 'all'>, string> = {
+  textbooks: 'E-Books',
+  'video-lessons': 'Video lessons',
+  documents: 'Official documents',
+};
+
 const SchoolResources = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [summary, setSummary] = useState<{
-    totalResources: number;
-    totalFreeResources: number;
-    classroomResources: number;
-    libraryResources: number;
-    unreadNotifications: number;
-  } | null>(null);
   const [libraryResources, setLibraryResources] = useState<ResourceItem[]>([]);
   const [uploads, setUploads] = useState<ResourceItem[]>([]);
   const [notifications, setNotifications] = useState<ResourceNotification[]>([]);
@@ -130,6 +180,7 @@ const SchoolResources = () => {
   const [categoryFilter, setCategoryFilter] = useState<'all' | ResourceCategory>('all');
   const [pricingFilter, setPricingFilter] = useState<'all' | ResourcePricingType>('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [workspaceView, setWorkspaceView] = useState<ResourceWorkspaceView>('all');
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -143,6 +194,7 @@ const SchoolResources = () => {
   const [activeNotificationId, setActiveNotificationId] = useState<string | 'all' | null>(null);
 
   const modeParam = (searchParams.get('mode') || '').trim().toLowerCase();
+  const viewParam = resolveWorkspaceView((searchParams.get('view') || '').trim().toLowerCase());
 
   const refreshWorkspace = async (silent = false) => {
     if (silent) {
@@ -157,7 +209,6 @@ const SchoolResources = () => {
         fetchResourcesFeed('school'),
         fetchMyResourceUploads('school'),
       ]);
-      setSummary(feedPayload.summary || null);
       setLibraryResources(Array.isArray(feedPayload.resources) ? feedPayload.resources : []);
       setNotifications(Array.isArray(feedPayload.notifications) ? feedPayload.notifications : []);
       setUploads(Array.isArray(uploadsPayload.uploads) ? uploadsPayload.uploads : []);
@@ -181,6 +232,10 @@ const SchoolResources = () => {
     }
   }, [modeParam]);
 
+  useEffect(() => {
+    setWorkspaceView(viewParam);
+  }, [viewParam]);
+
   const filteredUploads = useMemo(() => {
     const normalizedSearch = searchQuery.trim().toLowerCase();
     return uploads.filter((resource) => {
@@ -193,10 +248,11 @@ const SchoolResources = () => {
       const matchesType = typeFilter === 'all' || resource.type === typeFilter;
       const matchesCategory = categoryFilter === 'all' || resource.category === categoryFilter;
       const matchesPricing = pricingFilter === 'all' || resource.pricingType === pricingFilter;
+      const matchesWorkspacePreset = matchesWorkspaceView(resource, workspaceView);
 
-      return matchesSearch && matchesType && matchesCategory && matchesPricing;
+      return matchesSearch && matchesType && matchesCategory && matchesPricing && matchesWorkspacePreset;
     });
-  }, [uploads, searchQuery, typeFilter, categoryFilter, pricingFilter]);
+  }, [uploads, searchQuery, typeFilter, categoryFilter, pricingFilter, workspaceView]);
 
   const unreadNotifications = useMemo(
     () => notifications.filter((notification) => !notification.isRead),
@@ -206,11 +262,12 @@ const SchoolResources = () => {
   const myStats = useMemo(
     () => ({
       total: uploads.length,
-      free: uploads.filter((resource) => resource.pricingType === 'free').length,
-      paid: uploads.filter((resource) => resource.pricingType === 'paid').length,
-      classroom: uploads.filter((resource) => resource.category !== 'library').length,
+      ebooks: uploads.filter(isEbookResource).length,
+      videos: uploads.filter(isVideoLessonResource).length,
+      officialDocuments: uploads.filter(isOfficialDocumentResource).length,
+      unread: unreadNotifications.length,
     }),
-    [uploads]
+    [uploads, unreadNotifications.length]
   );
 
   const libraryPreview = useMemo(() => libraryResources.slice(0, 4), [libraryResources]);
@@ -344,33 +401,6 @@ const SchoolResources = () => {
       setNotifications((previous) =>
         previous.filter((notification) => notification.resourceId !== resource.id)
       );
-      setSummary((previous) =>
-        previous
-          ? {
-              ...previous,
-              totalResources: Math.max(0, previous.totalResources - 1),
-              totalFreeResources:
-                resource.pricingType === 'free'
-                  ? Math.max(0, previous.totalFreeResources - 1)
-                  : previous.totalFreeResources,
-              classroomResources:
-                resource.category !== 'library'
-                  ? Math.max(0, previous.classroomResources - 1)
-                  : previous.classroomResources,
-              libraryResources:
-                resource.category === 'library'
-                  ? Math.max(0, previous.libraryResources - 1)
-                  : previous.libraryResources,
-              unreadNotifications: Math.max(
-                0,
-                previous.unreadNotifications -
-                  notifications.filter(
-                    (notification) => !notification.isRead && notification.resourceId === resource.id
-                  ).length
-              ),
-            }
-          : previous
-      );
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Could not remove this material right now.');
     } finally {
@@ -458,11 +488,11 @@ const SchoolResources = () => {
                   School Resources
                 </p>
                 <h1 className="text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
-                  Manage study materials in one place
+                  Manage e-books, video lessons, and official documents
                 </h1>
                 <p className="max-w-2xl text-sm leading-6 text-slate-600">
-                  Publish notes, assignment support, classwork help, and library materials for students.
-                  Everything you upload here appears in the student library immediately.
+                  Publish learning content and official student-facing files from one school workspace.
+                  Materials appear in the student library as soon as they are published.
                 </p>
               </div>
             </div>
@@ -503,34 +533,34 @@ const SchoolResources = () => {
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                Free materials
+                E-Books
               </p>
-              <p className="mt-2 text-2xl font-semibold text-emerald-700">{myStats.free}</p>
-              <p className="mt-1 text-xs text-slate-500">Open to all students immediately.</p>
+              <p className="mt-2 text-2xl font-semibold text-blue-700">{myStats.ebooks}</p>
+              <p className="mt-1 text-xs text-slate-500">Textbooks, guides, and reading files.</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                Paid materials
+                Video lessons
               </p>
-              <p className="mt-2 text-2xl font-semibold text-amber-700">{myStats.paid}</p>
-              <p className="mt-1 text-xs text-slate-500">Locked until a student buys access.</p>
+              <p className="mt-2 text-2xl font-semibold text-emerald-700">{myStats.videos}</p>
+              <p className="mt-1 text-xs text-slate-500">Uploaded course videos and class recordings.</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                Class support
+                Official documents
               </p>
-              <p className="mt-2 text-2xl font-semibold text-slate-950">{myStats.classroom}</p>
-              <p className="mt-1 text-xs text-slate-500">Notes, classwork help, and assignment support.</p>
+              <p className="mt-2 text-2xl font-semibold text-slate-950">{myStats.officialDocuments}</p>
+              <p className="mt-1 text-xs text-slate-500">Enrollment letters, forms, and school files.</p>
             </div>
             <div className="rounded-2xl border border-[#3D08BA]/12 bg-[#3D08BA]/5 p-4">
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]/70">
-                Student library
+                Unread updates
               </p>
               <p className="mt-2 text-2xl font-semibold text-[#3D08BA]">
-                {summary?.totalResources ?? libraryResources.length}
+                {myStats.unread}
               </p>
               <p className="mt-1 text-xs text-[#3D08BA]/70">
-                {summary?.unreadNotifications ?? unreadNotifications.length} unread library updates.
+                Library updates the school has not reviewed yet.
               </p>
             </div>
           </div>
@@ -588,12 +618,31 @@ const SchoolResources = () => {
                     setTypeFilter('all');
                     setCategoryFilter('all');
                     setPricingFilter('all');
+                    setWorkspaceView('all');
                   }}
                   className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
                 >
                   Reset
                 </button>
               </div>
+
+              {workspaceView !== 'all' ? (
+                <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-[#3D08BA]/12 bg-[#3D08BA]/5 px-4 py-3 text-sm text-slate-700">
+                  <span className="inline-flex items-center rounded-full bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">
+                    {workspaceViewLabel[workspaceView]}
+                  </span>
+                  <p className="text-sm text-slate-600">
+                    Showing materials opened from the school dashboard resource card.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setWorkspaceView('all')}
+                    className="ml-auto rounded-full border border-[#3D08BA]/15 bg-white px-3 py-1.5 text-xs font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/5"
+                  >
+                    Show all materials
+                  </button>
+                </div>
+              ) : null}
 
               {showFilters ? (
                 <div className="mt-4 grid gap-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 md:grid-cols-3">
@@ -625,7 +674,7 @@ const SchoolResources = () => {
                     </label>
                     <div className="flex flex-wrap gap-2">
                       {(
-                        ['all', 'assignment', 'classwork', 'note', 'library'] as Array<
+                        ['all', 'assignment', 'classwork', 'note', 'library', 'official_document'] as Array<
                           'all' | ResourceCategory
                         >
                       ).map((category) => (
@@ -638,11 +687,7 @@ const SchoolResources = () => {
                               : 'bg-white text-slate-600 hover:bg-slate-100'
                           }`}
                         >
-                          {category === 'all'
-                            ? 'All categories'
-                            : category === 'classwork'
-                            ? 'Classwork'
-                            : category.charAt(0).toUpperCase() + category.slice(1)}
+                          {category === 'all' ? 'All categories' : formatResourceCategoryLabel(category)}
                         </button>
                       ))}
                     </div>
@@ -715,9 +760,7 @@ const SchoolResources = () => {
                               </div>
                               <div className="flex flex-col items-end gap-1">
                                 <span className="rounded-full bg-white/16 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white">
-                                  {resource.category === 'classwork'
-                                    ? 'Classwork'
-                                    : resource.category}
+                                  {formatResourceCategoryLabel(resource.category)}
                                 </span>
                                 <span className="rounded-full bg-white/12 px-2.5 py-1 text-[11px] font-semibold text-white/90">
                                   {resource.pricingType === 'free' ? 'Free' : resource.priceLabel || 'Paid'}
@@ -894,7 +937,7 @@ const SchoolResources = () => {
                               ) : null}
                             </div>
                             <p className="mt-1 text-xs text-slate-500">
-                              {resource.subject} • {resource.category === 'classwork' ? 'Classwork' : resource.category}
+                              {resource.subject} • {formatResourceCategoryLabel(resource.category)}
                             </p>
                             <p className="mt-2 text-sm text-slate-600">{resource.uploadedDate}</p>
                           </div>
@@ -923,11 +966,11 @@ const SchoolResources = () => {
                 <h3 className="mt-2 text-lg font-semibold text-slate-950">
                   {isEditing ? 'Update this study material' : 'Add a new study material'}
                 </h3>
-                <p className="mt-1 text-sm text-slate-600">
-                  {isEditing
-                    ? 'Change the details students see, or replace the current file if needed.'
-                    : 'Upload notes, classwork help, assignment support, or library files.'}
-                </p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {isEditing
+                      ? 'Change the details students see, or replace the current file if needed.'
+                    : 'Upload e-books, video lessons, class support, or official school documents.'}
+                  </p>
               </div>
               <button
                 type="button"
@@ -985,7 +1028,7 @@ const SchoolResources = () => {
 
                 <div>
                   <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                    Material type
+                    Format
                   </label>
                   <select
                     value={uploadForm.type}
@@ -997,9 +1040,9 @@ const SchoolResources = () => {
                     }
                     className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
                   >
-                    <option value="document">Document</option>
+                    <option value="document">Document file</option>
                     <option value="pdf">PDF</option>
-                    <option value="video">Video</option>
+                    <option value="video">Video lesson / recording</option>
                     <option value="image">Image</option>
                     <option value="audio">Audio</option>
                   </select>
@@ -1007,7 +1050,7 @@ const SchoolResources = () => {
 
                 <div>
                   <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                    Category
+                    Material lane
                   </label>
                   <select
                     value={uploadForm.category}
@@ -1022,8 +1065,12 @@ const SchoolResources = () => {
                     <option value="assignment">Assignment support</option>
                     <option value="classwork">Classwork support</option>
                     <option value="note">Class notes</option>
-                    <option value="library">E-Library</option>
+                    <option value="library">E-Book / Library material</option>
+                    <option value="official_document">Official document</option>
                   </select>
+                  <p className="mt-1.5 text-xs text-slate-500">
+                    Use official documents for enrollment letters, notices, forms, and other school-issued files.
+                  </p>
                 </div>
 
                 <div>

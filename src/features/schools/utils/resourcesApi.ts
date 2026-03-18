@@ -4,7 +4,12 @@ import {
 } from '../../../utils/authSession';
 
 export type ResourceType = 'pdf' | 'video' | 'image' | 'audio' | 'document';
-export type ResourceCategory = 'assignment' | 'classwork' | 'note' | 'library';
+export type ResourceCategory =
+  | 'assignment'
+  | 'classwork'
+  | 'note'
+  | 'library'
+  | 'official_document';
 export type ResourcePricingType = 'free' | 'paid';
 export type ResourcePriority = 'high' | 'medium' | 'low';
 export type ResourceUploaderRole = 'tutor' | 'school';

@@ -24,7 +24,7 @@ import {
 } from '../../../utils/authSession';
 
 type ResourceType = 'pdf' | 'video' | 'image' | 'audio' | 'document';
-type ResourceCategory = 'assignment' | 'classwork' | 'note' | 'library';
+type ResourceCategory = 'assignment' | 'classwork' | 'note' | 'library' | 'official_document';
 type ResourcePricingType = 'free' | 'paid';
 type ResourcePriority = 'high' | 'medium' | 'low';
 
@@ -159,6 +159,22 @@ const getResourceColor = (type: ResourceType) => {
       return 'bg-blue-500';
     default:
       return 'bg-gray-500';
+  }
+};
+
+const formatResourceCategoryLabel = (category: ResourceCategory) => {
+  switch (category) {
+    case 'assignment':
+      return 'Assignment support';
+    case 'classwork':
+      return 'Classwork support';
+    case 'library':
+      return 'E-Book';
+    case 'official_document':
+      return 'Official document';
+    case 'note':
+    default:
+      return 'Class notes';
   }
 };
 
@@ -521,7 +537,7 @@ const Resources = () => {
           ? true
           : activeCollection === 'library'
           ? resource.category === 'library'
-          : resource.category !== 'library';
+          : resource.category !== 'library' && resource.category !== 'official_document';
 
       return matchesSearch && matchesType && matchesSubject && matchesCategory && matchesCollection;
     });
@@ -539,7 +555,9 @@ const Resources = () => {
         summary?.totalFreeResources ?? resources.filter((resource) => resource.pricingType === 'free').length,
       classroomResources:
         summary?.classroomResources ??
-        resources.filter((resource) => resource.category !== 'library').length,
+        resources.filter(
+          (resource) => resource.category !== 'library' && resource.category !== 'official_document'
+        ).length,
       libraryResources:
         summary?.libraryResources ??
         resources.filter((resource) => resource.category === 'library').length,
@@ -981,7 +999,7 @@ const Resources = () => {
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {(
-                    ['all', 'assignment', 'classwork', 'note', 'library'] as Array<
+                    ['all', 'assignment', 'classwork', 'note', 'library', 'official_document'] as Array<
                       'all' | ResourceCategory
                     >
                   ).map((category) => (
@@ -994,9 +1012,7 @@ const Resources = () => {
                           : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                       }`}
                     >
-                      {category === 'classwork'
-                        ? 'Classwork'
-                        : category.charAt(0).toUpperCase() + category.slice(1)}
+                      {category === 'all' ? 'All' : formatResourceCategoryLabel(category)}
                     </button>
                   ))}
                 </div>
@@ -1121,9 +1137,7 @@ const Resources = () => {
                       </p>
                       <p>
                         <span className="font-semibold text-gray-700">Category:</span>{' '}
-                        {resource.category === 'classwork'
-                          ? 'Classwork'
-                          : resource.category.charAt(0).toUpperCase() + resource.category.slice(1)}
+                        {formatResourceCategoryLabel(resource.category)}
                       </p>
                       <div className="flex items-center justify-between gap-2">
                         <span className="inline-flex items-center gap-1">

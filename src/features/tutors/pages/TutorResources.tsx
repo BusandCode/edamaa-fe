@@ -49,6 +49,22 @@ type UploadFormState = {
   instructorName: string;
 };
 
+const formatResourceCategoryLabel = (category: ResourceCategory) => {
+  switch (category) {
+    case 'assignment':
+      return 'Assignment support';
+    case 'classwork':
+      return 'Classwork support';
+    case 'library':
+      return 'E-Book';
+    case 'official_document':
+      return 'Official document';
+    case 'note':
+    default:
+      return 'Class notes';
+  }
+};
+
 const createUploadForm = (): UploadFormState => ({
   title: '',
   description: '',
@@ -208,7 +224,9 @@ const TutorResources = () => {
       total: uploads.length,
       free: uploads.filter((resource) => resource.pricingType === 'free').length,
       paid: uploads.filter((resource) => resource.pricingType === 'paid').length,
-      classroom: uploads.filter((resource) => resource.category !== 'library').length,
+      classroom: uploads.filter(
+        (resource) => resource.category !== 'library' && resource.category !== 'official_document'
+      ).length,
     }),
     [uploads]
   );
@@ -625,7 +643,7 @@ const TutorResources = () => {
                     </label>
                     <div className="flex flex-wrap gap-2">
                       {(
-                        ['all', 'assignment', 'classwork', 'note', 'library'] as Array<
+                        ['all', 'assignment', 'classwork', 'note', 'library', 'official_document'] as Array<
                           'all' | ResourceCategory
                         >
                       ).map((category) => (
@@ -638,11 +656,7 @@ const TutorResources = () => {
                               : 'bg-white text-slate-600 hover:bg-slate-100'
                           }`}
                         >
-                          {category === 'all'
-                            ? 'All categories'
-                            : category === 'classwork'
-                            ? 'Classwork'
-                            : category.charAt(0).toUpperCase() + category.slice(1)}
+                          {category === 'all' ? 'All categories' : formatResourceCategoryLabel(category)}
                         </button>
                       ))}
                     </div>
@@ -715,9 +729,7 @@ const TutorResources = () => {
                               </div>
                               <div className="flex flex-col items-end gap-1">
                                 <span className="rounded-full bg-white/16 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white">
-                                  {resource.category === 'classwork'
-                                    ? 'Classwork'
-                                    : resource.category}
+                                  {formatResourceCategoryLabel(resource.category)}
                                 </span>
                                 <span className="rounded-full bg-white/12 px-2.5 py-1 text-[11px] font-semibold text-white/90">
                                   {resource.pricingType === 'free' ? 'Free' : resource.priceLabel || 'Paid'}
@@ -894,7 +906,7 @@ const TutorResources = () => {
                               ) : null}
                             </div>
                             <p className="mt-1 text-xs text-slate-500">
-                              {resource.subject} • {resource.category === 'classwork' ? 'Classwork' : resource.category}
+                              {resource.subject} • {formatResourceCategoryLabel(resource.category)}
                             </p>
                             <p className="mt-2 text-sm text-slate-600">{resource.uploadedDate}</p>
                           </div>
