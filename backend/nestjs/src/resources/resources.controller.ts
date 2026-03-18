@@ -66,6 +66,20 @@ export class ResourcesController {
     return this.resourcesService.getUploadsForAuthUser(this.getAuthUser(request));
   }
 
+  @Get('discover/free-books')
+  discoverFreeBooks(
+    @Req() request: Request,
+    @Query('q') query: string | undefined,
+    @Query('subject') subject: string | undefined,
+    @Query('limit') limit: string | undefined
+  ) {
+    return this.resourcesService.searchFreeLibraryForAuthUser(this.getAuthUser(request), {
+      query,
+      subject,
+      limit,
+    });
+  }
+
   @Post('me/upload')
   @UseInterceptors(
     FileInterceptor('file', {

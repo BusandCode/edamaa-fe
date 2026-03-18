@@ -124,8 +124,40 @@ type FeedSummary = {
   unreadNotifications: number;
 };
 
+type FreeLibraryProvider = 'open_library' | 'google_books';
+
+type FreeLibrarySearchInput = {
+  query?: string;
+  subject?: string;
+  limit?: string | number;
+};
+
+type FreeLibraryBookItemResponse = {
+  id: string;
+  source: FreeLibraryProvider;
+  sourceLabel: string;
+  title: string;
+  authors: string[];
+  description: string;
+  subject: string;
+  coverImageUrl: string | null;
+  actionUrl: string;
+  actionLabel: string;
+  accessLabel: string;
+  licenseLabel: string;
+  publishedAt: string | null;
+};
+
+type FreeLibraryProviderStatus = {
+  source: FreeLibraryProvider;
+  sourceLabel: string;
+  status: 'ok' | 'unavailable';
+  note: string;
+};
+
 const STANDARD_MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024;
 const LIVE_RECORDING_MAX_UPLOAD_SIZE_BYTES = 250 * 1024 * 1024;
+const EXTERNAL_DISCOVERY_TIMEOUT_MS = 6000;
 
 const getMaxUploadSizeBytes = (type: ResourceType, category: ResourceCategory) =>
   category === 'live_recording' || type === 'video'
@@ -336,6 +368,64 @@ export class ResourcesService implements OnModuleInit {
         degraded: false,
         source: 'memory' as const,
       },
+    };
+  }
+
+  async searchFreeLibraryForAuthUser(authUser: AuthUser, input: FreeLibrarySearchInput) {
+    this.requireEmail(authUser);
+
+    const query = this.normalizeOptionalText(input.query, 120);
+    const subject = this.normalizeOptionalText(input.subject, 80);
+    const limit = this.normalizeDiscoveryLimit(input.limit);
+    const searchTerm = [query, subject].filter(Boolean).join(' ').trim() || 'education';
+    const perProviderLimit = Math.max(4, Math.ceil(limit / 2));
+
+    const [openLibraryResult, googleBooksResult] = await Promise.allSettled([
+      this.searchOpenLibraryFreeBooks(searchTerm, perProviderLimit, subject),
+      this.searchGoogleBooksFreeBooks(searchTerm, perProviderLimit, subject),
+    ]);
+
+    if (openLibraryResult.status === 'rejected') {
+      this.logger.warn(`Open Library discovery failed: ${openLibraryResult.reason instanceof Error ? openLibraryResult.reason.message : 'Unknown error'}`);
+    }
+    if (googleBooksResult.status === 'rejected') {
+      this.logger.warn(`Google Books discovery failed: ${googleBooksResult.reason instanceof Error ? googleBooksResult.reason.message : 'Unknown error'}`);
+    }
+
+    const items = this.dedupeFreeLibraryItems(
+      [
+        openLibraryResult.status === 'fulfilled' ? openLibraryResult.value : [],
+        googleBooksResult.status === 'fulfilled' ? googleBooksResult.value : [],
+      ].flat()
+    ).slice(0, limit);
+
+    const providers: FreeLibraryProviderStatus[] = [
+      {
+        source: 'open_library',
+        sourceLabel: 'Open Library',
+        status: openLibraryResult.status === 'fulfilled' ? 'ok' : 'unavailable',
+        note:
+          openLibraryResult.status === 'fulfilled'
+            ? `${openLibraryResult.value.length} book${openLibraryResult.value.length === 1 ? '' : 's'} found`
+            : 'Open Library is unavailable right now',
+      },
+      {
+        source: 'google_books',
+        sourceLabel: 'Google Books',
+        status: googleBooksResult.status === 'fulfilled' ? 'ok' : 'unavailable',
+        note:
+          googleBooksResult.status === 'fulfilled'
+            ? `${googleBooksResult.value.length} book${googleBooksResult.value.length === 1 ? '' : 's'} found`
+            : 'Google Books is unavailable right now',
+      },
+    ];
+
+    return {
+      generatedAt: new Date().toISOString(),
+      query: query || '',
+      subject: subject || '',
+      items,
+      providers,
     };
   }
 
@@ -837,6 +927,232 @@ export class ResourcesService implements OnModuleInit {
     return currentType;
   }
 
+  private normalizeDiscoveryLimit(value: string | number | undefined) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return 8;
+    }
+
+    return Math.max(4, Math.min(12, Math.round(numeric)));
+  }
+
+  private dedupeFreeLibraryItems(items: FreeLibraryBookItemResponse[]) {
+    const seen = new Set<string>();
+    return items.filter((item) => {
+      const key = `${item.title.trim().toLowerCase()}::${item.authors.join('|').trim().toLowerCase()}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }
+
+  private buildExternalDescription(primary: unknown, fallback: string) {
+    const value = Array.isArray(primary) ? primary[0] : primary;
+    const normalized =
+      typeof value === 'string' && value.trim()
+        ? value.trim().replace(/\s+/g, ' ')
+        : fallback;
+
+    if (normalized.length <= 220) {
+      return normalized;
+    }
+
+    return `${normalized.slice(0, 217).trimEnd()}...`;
+  }
+
+  private async fetchExternalJson(url: URL, sourceLabel: string) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), EXTERNAL_DISCOVERY_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'Edamaa3D/1.0 Free Library Discovery',
+        },
+      });
+
+      if (!response.ok) {
+        throw new BadRequestException(`${sourceLabel} returned ${response.status}.`);
+      }
+
+      return (await response.json()) as Record<string, unknown>;
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new BadRequestException(`${sourceLabel} took too long to respond.`);
+      }
+
+      throw new BadRequestException(
+        `${sourceLabel} could not be reached right now.`
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async searchOpenLibraryFreeBooks(
+    searchTerm: string,
+    limit: number,
+    preferredSubject: string
+  ): Promise<FreeLibraryBookItemResponse[]> {
+    const url = new URL('https://openlibrary.org/search.json');
+    url.searchParams.set('q', searchTerm);
+    url.searchParams.set('limit', String(limit));
+
+    const payload = await this.fetchExternalJson(url, 'Open Library');
+    const docs = Array.isArray(payload.docs) ? payload.docs : [];
+
+    return docs
+      .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+      .filter((entry) => {
+        const ebookAccess = String(entry.ebook_access || '').trim().toLowerCase();
+        return (
+          entry.public_scan_b === true ||
+          ebookAccess === 'public' ||
+          ebookAccess === 'borrowable' ||
+          ebookAccess === 'printdisabled'
+        );
+      })
+      .map((entry, index) => {
+        const title =
+          (typeof entry.title === 'string' && entry.title.trim()) || 'Untitled book';
+        const authors = Array.isArray(entry.author_name)
+          ? entry.author_name.filter((author): author is string => typeof author === 'string').slice(0, 3)
+          : [];
+        const key = typeof entry.key === 'string' ? entry.key : '';
+        const coverId = Number(entry.cover_i);
+        const subject =
+          preferredSubject ||
+          (Array.isArray(entry.subject) && typeof entry.subject[0] === 'string'
+            ? String(entry.subject[0])
+            : 'General');
+        const ebookAccess = String(entry.ebook_access || '').trim().toLowerCase();
+        const isPublicAccess = entry.public_scan_b === true || ebookAccess === 'public';
+        const editionKey =
+          (Array.isArray(entry.edition_key) && typeof entry.edition_key[0] === 'string'
+            ? String(entry.edition_key[0])
+            : '') ||
+          (typeof entry.cover_edition_key === 'string' ? entry.cover_edition_key : '') ||
+          key;
+
+        return {
+          id: `open_library_${String(editionKey || index)}`,
+          source: 'open_library' as const,
+          sourceLabel: 'Open Library',
+          title,
+          authors,
+          description: this.buildExternalDescription(
+            entry.first_sentence,
+            'Free title from Open Library.'
+          ),
+          subject,
+          coverImageUrl:
+            Number.isFinite(coverId) && coverId > 0
+              ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg`
+              : null,
+          actionUrl: key ? `https://openlibrary.org${key}` : 'https://openlibrary.org',
+          actionLabel: isPublicAccess ? 'Open book' : 'View source',
+          accessLabel: isPublicAccess ? 'Public access' : 'Library access',
+          licenseLabel: isPublicAccess ? 'Free access' : 'Borrowable title',
+          publishedAt:
+            Number.isFinite(Number(entry.first_publish_year)) && Number(entry.first_publish_year) > 0
+              ? String(entry.first_publish_year)
+              : null,
+        };
+      });
+  }
+
+  private async searchGoogleBooksFreeBooks(
+    searchTerm: string,
+    limit: number,
+    preferredSubject: string
+  ): Promise<FreeLibraryBookItemResponse[]> {
+    const url = new URL('https://www.googleapis.com/books/v1/volumes');
+    url.searchParams.set('q', searchTerm);
+    url.searchParams.set('printType', 'books');
+    url.searchParams.set('filter', 'free-ebooks');
+    url.searchParams.set('download', 'epub');
+    url.searchParams.set('maxResults', String(Math.min(limit, 20)));
+
+    const payload = await this.fetchExternalJson(url, 'Google Books');
+    const items = Array.isArray(payload.items) ? payload.items : [];
+
+    return items
+      .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+      .map((entry, index) => {
+        const volumeInfo =
+          entry.volumeInfo && typeof entry.volumeInfo === 'object'
+            ? (entry.volumeInfo as Record<string, unknown>)
+            : {};
+        const accessInfo =
+          entry.accessInfo && typeof entry.accessInfo === 'object'
+            ? (entry.accessInfo as Record<string, unknown>)
+            : {};
+        const epubInfo =
+          accessInfo.epub && typeof accessInfo.epub === 'object'
+            ? (accessInfo.epub as Record<string, unknown>)
+            : {};
+        const pdfInfo =
+          accessInfo.pdf && typeof accessInfo.pdf === 'object'
+            ? (accessInfo.pdf as Record<string, unknown>)
+            : {};
+        const imageLinks =
+          volumeInfo.imageLinks && typeof volumeInfo.imageLinks === 'object'
+            ? (volumeInfo.imageLinks as Record<string, unknown>)
+            : {};
+
+        const previewLink =
+          (typeof accessInfo.webReaderLink === 'string' && accessInfo.webReaderLink.trim()) ||
+          (typeof volumeInfo.previewLink === 'string' && volumeInfo.previewLink.trim()) ||
+          (typeof volumeInfo.infoLink === 'string' && volumeInfo.infoLink.trim()) ||
+          'https://books.google.com';
+
+        const subject =
+          preferredSubject ||
+          (Array.isArray(volumeInfo.categories) && typeof volumeInfo.categories[0] === 'string'
+            ? String(volumeInfo.categories[0])
+            : 'General');
+        const hasDirectReading =
+          epubInfo.isAvailable === true || pdfInfo.isAvailable === true;
+        const thumbnail =
+          (typeof imageLinks.thumbnail === 'string' && imageLinks.thumbnail) ||
+          (typeof imageLinks.smallThumbnail === 'string' && imageLinks.smallThumbnail) ||
+          '';
+
+        return {
+          id: `google_books_${String(entry.id || index)}`,
+          source: 'google_books' as const,
+          sourceLabel: 'Google Books',
+          title:
+            (typeof volumeInfo.title === 'string' && volumeInfo.title.trim()) || 'Untitled book',
+          authors: Array.isArray(volumeInfo.authors)
+            ? volumeInfo.authors.filter((author): author is string => typeof author === 'string').slice(0, 3)
+            : [],
+          description: this.buildExternalDescription(
+            volumeInfo.description,
+            'Free ebook listed through Google Books.'
+          ),
+          subject,
+          coverImageUrl: thumbnail ? thumbnail.replace(/^http:\/\//i, 'https://') : null,
+          actionUrl: previewLink,
+          actionLabel: hasDirectReading ? 'Read free' : 'Preview',
+          accessLabel: hasDirectReading ? 'Free ebook' : 'Preview available',
+          licenseLabel: 'Source preview',
+          publishedAt:
+            typeof volumeInfo.publishedDate === 'string' && volumeInfo.publishedDate.trim()
+              ? volumeInfo.publishedDate.trim()
+              : null,
+        };
+      });
+  }
+
   private normalizeResourceCategory(value: string | undefined): ResourceCategory {
     const normalized = String(value || '').trim().toLowerCase();
     if (normalized === 'assignment') {
@@ -1165,6 +1481,22 @@ export class ResourcesService implements OnModuleInit {
           'Study Planning Template\n\nWeek Goals:\n- Concept review\n- Assignment draft\n- Practice quiz\n- Reflection',
       },
       {
+        id: 'resource_seed_jss2_english_reading_textbook',
+        title: 'JSS2 English Reading Workbook',
+        description: 'Sample e-book for comprehension practice, vocabulary building, and weekly reading tasks.',
+        subject: 'English Language',
+        type: 'pdf',
+        category: 'library',
+        uploaderName: 'Edamaa Science School',
+        uploaderRole: 'school',
+        uploaderEmail: 'school@edamaa.dev',
+        fileName: 'jss2-english-reading-workbook.txt',
+        mimeType: 'text/plain',
+        createdAtOffsetMs: 1000 * 60 * 60 * 18,
+        bodyText:
+          'JSS2 English Reading Workbook\n\nContents:\n- Reading passage one\n- Vocabulary focus\n- Weekly comprehension questions',
+      },
+      {
         id: 'resource_seed_premium_sat_math_drill_pack',
         title: 'Premium SAT Math Drill Pack',
         description: 'Paid e-library bundle with timed drills and worked answer breakdowns.',
@@ -1181,6 +1513,22 @@ export class ResourcesService implements OnModuleInit {
         createdAtOffsetMs: 1000 * 60 * 80,
         bodyText:
           'Premium SAT Math Drill Pack\n\nSections:\n- Timed algebra drills\n- Data interpretation\n- Worked answer review',
+      },
+      {
+        id: 'resource_seed_basic_science_video_lesson',
+        title: 'JSS1 Basic Science Video Lesson: States of Matter',
+        description: 'Uploaded lesson video covering solids, liquids, gases, and simple classroom demonstrations.',
+        subject: 'Basic Science',
+        type: 'video',
+        category: 'note',
+        uploaderName: 'Edamaa Science School',
+        uploaderRole: 'school',
+        uploaderEmail: 'school@edamaa.dev',
+        fileName: 'jss1-basic-science-states-of-matter.txt',
+        mimeType: 'text/plain',
+        createdAtOffsetMs: 1000 * 60 * 70,
+        bodyText:
+          'JSS1 Basic Science Video Lesson: States of Matter\n\nLesson flow:\n- Definition of matter\n- Solid, liquid, and gas examples\n- Class recap questions',
       },
       {
         id: 'resource_seed_chemistry_titration_live_recording',

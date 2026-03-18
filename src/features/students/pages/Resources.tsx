@@ -4,6 +4,7 @@ import {
   ArrowDownTrayIcon,
   ArrowLeftIcon,
   BellIcon,
+  BookOpenIcon,
   CheckCircleIcon,
   CloudArrowUpIcon,
   ClockIcon,
@@ -109,6 +110,31 @@ type LocalNotification = {
   priority: 'high' | 'medium' | 'low';
 };
 
+type FreeLibraryProvider = 'open_library' | 'google_books';
+
+type FreeLibraryItem = {
+  id: string;
+  source: FreeLibraryProvider;
+  sourceLabel: string;
+  title: string;
+  authors: string[];
+  description: string;
+  subject: string;
+  coverImageUrl: string | null;
+  actionUrl: string;
+  actionLabel: string;
+  accessLabel: string;
+  licenseLabel: string;
+  publishedAt: string | null;
+};
+
+type FreeLibraryProviderStatus = {
+  source: FreeLibraryProvider;
+  sourceLabel: string;
+  status: 'ok' | 'unavailable';
+  note: string;
+};
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
 
 const isLocalhostHost = (host: string) => host === '127.0.0.1' || host === 'localhost';
@@ -168,6 +194,14 @@ const getResourceColor = (type: ResourceType) => {
   }
 };
 
+const FREE_LIBRARY_SUBJECTS = [
+  'Mathematics',
+  'Science',
+  'English',
+  'History',
+  'Computer Studies',
+] as const;
+
 const formatResourceCategoryLabel = (category: ResourceCategory) => {
   switch (category) {
     case 'assignment':
@@ -184,6 +218,12 @@ const formatResourceCategoryLabel = (category: ResourceCategory) => {
     default:
       return 'Class notes';
   }
+};
+
+const getProviderStatusTone = (status: FreeLibraryProviderStatus['status']) => {
+  return status === 'ok'
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : 'border-amber-200 bg-amber-50 text-amber-700';
 };
 
 const parseFilenameFromContentDisposition = (contentDispositionHeader: string | null) => {
@@ -318,6 +358,14 @@ const Resources = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [freeLibraryQuery, setFreeLibraryQuery] = useState('');
+  const [freeLibrarySubject, setFreeLibrarySubject] = useState<string>(
+    FREE_LIBRARY_SUBJECTS[0]
+  );
+  const [freeLibraryItems, setFreeLibraryItems] = useState<FreeLibraryItem[]>([]);
+  const [freeLibraryProviders, setFreeLibraryProviders] = useState<FreeLibraryProviderStatus[]>([]);
+  const [isFreeLibraryLoading, setIsFreeLibraryLoading] = useState(true);
+  const [freeLibraryError, setFreeLibraryError] = useState<string | null>(null);
 
   const [activeResourceActionId, setActiveResourceActionId] = useState<string | null>(null);
   const [activePurchaseResourceId, setActivePurchaseResourceId] = useState<string | null>(null);
@@ -486,8 +534,59 @@ const Resources = () => {
     }
   };
 
+  const refreshFreeLibrary = async (overrides?: { query?: string; subject?: string }) => {
+    if (!hasAuthSession) {
+      setFreeLibraryError('Sign in first to discover free books.');
+      setIsFreeLibraryLoading(false);
+      return;
+    }
+
+    const nextQuery =
+      overrides && Object.prototype.hasOwnProperty.call(overrides, 'query')
+        ? overrides.query || ''
+        : freeLibraryQuery;
+    const nextSubject =
+      overrides && Object.prototype.hasOwnProperty.call(overrides, 'subject')
+        ? overrides.subject || ''
+        : freeLibrarySubject;
+
+    setIsFreeLibraryLoading(true);
+    setFreeLibraryError(null);
+
+    try {
+      const params = new URLSearchParams();
+      if (nextQuery.trim()) {
+        params.set('q', nextQuery.trim());
+      }
+      if (nextSubject.trim()) {
+        params.set('subject', nextSubject.trim());
+      }
+      params.set('limit', '8');
+
+      const response = await requestWithAuth(
+        `/resources/discover/free-books?${params.toString()}`
+      );
+      const payload = (await response.json()) as {
+        items?: FreeLibraryItem[];
+        providers?: FreeLibraryProviderStatus[];
+      };
+
+      setFreeLibraryItems(Array.isArray(payload.items) ? payload.items : []);
+      setFreeLibraryProviders(Array.isArray(payload.providers) ? payload.providers : []);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not load free books right now.';
+      setFreeLibraryItems([]);
+      setFreeLibraryProviders([]);
+      setFreeLibraryError(message);
+    } finally {
+      setIsFreeLibraryLoading(false);
+    }
+  };
+
   useEffect(() => {
     void refreshFeed(false);
+    void refreshFreeLibrary();
   }, []);
 
   useEffect(() => {
@@ -573,6 +672,24 @@ const Resources = () => {
     }),
     [summary, resources, notifications]
   );
+
+  const resourceHighlights = useMemo(
+    () => ({
+      ebooks: resources.filter((resource) => resource.category === 'library').length,
+      videoLessons: resources.filter((resource) => resource.type === 'video').length,
+      officialDocuments: resources.filter((resource) => resource.category === 'official_document').length,
+      liveRecordings: resources.filter((resource) => resource.category === 'live_recording').length,
+    }),
+    [resources]
+  );
+
+  const latestResourceLabel = useMemo(() => {
+    const latest = [...resources].sort((left, right) =>
+      right.uploadedAt.localeCompare(left.uploadedAt)
+    )[0];
+
+    return latest?.uploadedDate || 'No uploads yet';
+  }, [resources]);
 
   const handleMarkNotificationAsRead = async (notificationId: string) => {
     if (activeNotificationActionId || isMarkingAllRead) {
@@ -724,6 +841,15 @@ const Resources = () => {
     }
   };
 
+  const handleFreeLibrarySubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await refreshFreeLibrary();
+  };
+
+  const handleOpenFreeLibraryItem = (item: FreeLibraryItem) => {
+    window.open(item.actionUrl, '_blank', 'noopener,noreferrer');
+  };
+
   const resetUploadForm = () => {
     setUploadForm({
       title: '',
@@ -804,34 +930,65 @@ const Resources = () => {
   };
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-gray-50 to-gray-100">
-      <header className="bg-white shadow-sm sticky top-0 z-30 border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="py-5 sm:py-6 space-y-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="space-y-1">
-                <button
-                  onClick={() => navigate(-1)}
-                  className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-[#3D08BA] transition-colors"
-                >
-                  <ArrowLeftIcon className="w-4 h-4" />
-                  Back
-                </button>
-                <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Resources & E-Library</h1>
-                <p className="text-sm text-gray-600">
+    <div className="min-h-screen bg-gradient-to-b from-[#F6F3FF] via-[#F8FAFC] to-[#EEF2FF]">
+      <header className="sticky top-0 z-30 border-b border-white/70 bg-white/75 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-4 sm:px-6 lg:px-8">
+          <div className="min-w-0">
+            <button
+              onClick={() => navigate(-1)}
+              className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 transition-colors hover:text-[#3D08BA]"
+            >
+              <ArrowLeftIcon className="h-4 w-4" />
+              Back
+            </button>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <h1 className="text-lg font-bold text-gray-900 sm:text-xl">Resources & E-Library</h1>
+              <span className="inline-flex items-center rounded-full border border-[#3D08BA]/15 bg-[#3D08BA]/6 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]">
+                Student workspace
+              </span>
+            </div>
+          </div>
+
+          <div className="hidden text-right sm:block">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+              Latest library update
+            </p>
+            <p className="mt-1 text-sm font-semibold text-gray-900">{latestResourceLabel}</p>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 pb-24 sm:px-6 lg:px-8">
+        <section className="relative overflow-hidden rounded-[28px] border border-white/80 bg-white/80 p-5 shadow-[0_24px_80px_-48px_rgba(61,8,186,0.45)] backdrop-blur xl:p-7">
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-1/2 bg-gradient-to-l from-[#3D08BA]/10 via-[#3D08BA]/4 to-transparent" />
+          <div className="pointer-events-none absolute -right-24 top-0 h-56 w-56 rounded-full bg-[#3D08BA]/10 blur-3xl" />
+          <div className="pointer-events-none absolute bottom-0 left-0 h-40 w-40 rounded-full bg-sky-200/40 blur-3xl" />
+
+          <div className="relative grid gap-5 xl:grid-cols-[1.35fr_0.9fr] xl:items-start">
+            <div className="space-y-5">
+              <div className="inline-flex items-center gap-2 rounded-full border border-[#3D08BA]/15 bg-[#3D08BA]/8 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]">
+                <SparklesIcon className="h-4 w-4" />
+                Learning library
+              </div>
+
+              <div className="max-w-3xl space-y-3">
+                <h2 className="text-2xl font-bold tracking-tight text-gray-950 sm:text-3xl">
+                  One place for class materials, open books, and revision support
+                </h2>
+                <p className="max-w-2xl text-sm leading-6 text-gray-600 sm:text-base">
                   {isUploaderView
-                    ? 'Upload and manage learning materials for assignments, classwork, and e-library support.'
-                    : 'Materials shared by tutors and schools for assignments, classwork, and revision.'}
+                    ? 'Manage class support, uploaded materials, and free-library discovery from one polished workspace.'
+                    : 'Browse what your school and tutors have shared, then discover extra free books from trusted education sources.'}
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-3">
                 <button
                   onClick={() => void refreshFeed(true)}
                   disabled={isRefreshing || isLoading}
-                  className="px-3 py-2 text-xs sm:text-sm font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {isRefreshing ? 'Refreshing...' : 'Refresh'}
+                  {isRefreshing ? 'Refreshing...' : 'Refresh library'}
                 </button>
                 {isUploaderView && (
                   <button
@@ -844,65 +1001,103 @@ const Resources = () => {
                       }));
                       setIsUploadOpen(true);
                     }}
-                    className="inline-flex items-center gap-2 px-3 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-[#3D08BA] text-white hover:bg-[#2D0690] transition-colors"
+                    className="inline-flex items-center gap-2 rounded-full bg-[#3D08BA] px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-[#3D08BA]/20 transition hover:bg-[#2D0690]"
                   >
-                    <CloudArrowUpIcon className="w-4 h-4" />
-                    Upload Resource
+                    <CloudArrowUpIcon className="h-4 w-4" />
+                    Upload resource
                   </button>
                 )}
               </div>
-            </div>
 
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3">
-              <div className="bg-white rounded-xl border border-gray-200 p-3">
-                <p className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Total</p>
-                <p className="text-lg font-bold text-gray-900">{stats.totalResources}</p>
-              </div>
-              <div className="bg-white rounded-xl border border-gray-200 p-3">
-                <p className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Free</p>
-                <p className="text-lg font-bold text-emerald-700">{stats.totalFreeResources}</p>
-              </div>
-              <div className="bg-white rounded-xl border border-gray-200 p-3">
-                <p className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Class Support</p>
-                <p className="text-lg font-bold text-gray-900">{stats.classroomResources}</p>
-              </div>
-              <div className="bg-white rounded-xl border border-gray-200 p-3">
-                <p className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">E-Library</p>
-                <p className="text-lg font-bold text-gray-900">{stats.libraryResources}</p>
-              </div>
-              <div className="bg-white rounded-xl border border-gray-200 p-3">
-                <p className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Unread Updates</p>
-                <p className="text-lg font-bold text-[#3D08BA]">{stats.unreadNotifications}</p>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                {[
+                  { label: 'Total materials', value: stats.totalResources, tone: 'text-gray-950' },
+                  { label: 'Free access', value: stats.totalFreeResources, tone: 'text-emerald-700' },
+                  { label: 'Class support', value: stats.classroomResources, tone: 'text-gray-950' },
+                  { label: 'E-Library', value: stats.libraryResources, tone: 'text-gray-950' },
+                  { label: 'Unread updates', value: stats.unreadNotifications, tone: 'text-[#3D08BA]' },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="rounded-2xl border border-white/80 bg-white/90 px-4 py-3 shadow-sm"
+                  >
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">
+                      {item.label}
+                    </p>
+                    <p className={`mt-2 text-2xl font-bold ${item.tone}`}>{item.value}</p>
+                  </div>
+                ))}
               </div>
             </div>
 
-            {uploadSuccess && (
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                {uploadSuccess}
+            <aside className="grid gap-4 rounded-[24px] border border-slate-900/10 bg-slate-950 p-5 text-white shadow-[0_20px_60px_-36px_rgba(15,23,42,0.9)]">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/65">
+                  Library snapshot
+                </p>
+                <h3 className="mt-2 text-xl font-bold">What students can reach right now</h3>
               </div>
-            )}
 
-            {loadError && (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {loadError}
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                {[
+                  { label: 'E-Books', value: resourceHighlights.ebooks, helper: 'Textbooks and guides' },
+                  { label: 'Video lessons', value: resourceHighlights.videoLessons, helper: 'Uploaded videos and replays' },
+                  {
+                    label: 'Official documents',
+                    value: resourceHighlights.officialDocuments,
+                    helper: 'Letters, notices, and school files',
+                  },
+                  {
+                    label: 'Live recordings',
+                    value: resourceHighlights.liveRecordings,
+                    helper: 'Recorded class sessions',
+                  },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="rounded-2xl border border-white/10 bg-white/6 px-4 py-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-white">{item.label}</p>
+                        <p className="mt-1 text-xs text-white/65">{item.helper}</p>
+                      </div>
+                      <span className="text-2xl font-bold text-white">{item.value}</span>
+                    </div>
+                  </div>
+                ))}
               </div>
-            )}
+
+              <div className="rounded-2xl border border-[#8B5CF6]/20 bg-[#8B5CF6]/10 px-4 py-3 text-sm text-white/80">
+                Latest feed update: <span className="font-semibold text-white">{latestResourceLabel}</span>
+              </div>
+            </aside>
           </div>
-        </div>
-      </header>
+        </section>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24 space-y-5">
+        {uploadSuccess && (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 shadow-sm">
+            {uploadSuccess}
+          </div>
+        )}
+
+        {loadError && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-sm">
+            {loadError}
+          </div>
+        )}
+
         {unreadNotifications.length > 0 && (
-          <section className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 sm:p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <section className="overflow-hidden rounded-[26px] border border-white/80 bg-white/85 p-4 shadow-[0_22px_60px_-44px_rgba(61,8,186,0.35)] backdrop-blur sm:p-5">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <BellIcon className="w-5 h-5 text-[#3D08BA]" />
-                <h2 className="text-sm sm:text-base font-bold text-gray-900">New Resource Updates</h2>
+                <BellIcon className="h-5 w-5 text-[#3D08BA]" />
+                <h2 className="text-sm font-bold text-gray-900 sm:text-base">New resource updates</h2>
               </div>
               <button
                 onClick={() => void handleMarkAllNotificationsAsRead()}
                 disabled={isMarkingAllRead || activeNotificationActionId !== null}
-                className="text-xs font-semibold text-[#3D08BA] hover:underline disabled:opacity-60 disabled:cursor-not-allowed"
+                className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-[#3D08BA] shadow-sm transition hover:border-[#3D08BA]/15 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isMarkingAllRead ? 'Updating...' : 'Mark all as read'}
               </button>
@@ -912,17 +1107,17 @@ const Resources = () => {
               {unreadNotifications.slice(0, 5).map((notification) => (
                 <div
                   key={notification.id}
-                  className="rounded-xl border border-[#3D08BA]/15 bg-[#3D08BA]/5 px-3 py-3 flex items-start justify-between gap-3"
+                  className="flex items-start justify-between gap-3 rounded-2xl border border-[#3D08BA]/10 bg-gradient-to-r from-[#3D08BA]/6 via-white to-white px-3 py-3"
                 >
                   <div className="min-w-0">
-                    <p className="text-xs sm:text-sm font-semibold text-gray-900">{notification.title}</p>
+                    <p className="text-xs font-semibold text-gray-900 sm:text-sm">{notification.title}</p>
                     <p className="text-xs text-gray-600 mt-0.5">{notification.message}</p>
                     <p className="text-[11px] text-gray-500 mt-1">{notification.createdAtLabel}</p>
                   </div>
                   <button
                     onClick={() => void handleMarkNotificationAsRead(notification.id)}
                     disabled={activeNotificationActionId === notification.id || isMarkingAllRead}
-                    className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-white border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="shrink-0 inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-gray-700 shadow-sm transition hover:border-[#3D08BA]/15 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <CheckCircleIcon className="w-4 h-4" />
                     {activeNotificationActionId === notification.id ? 'Saving...' : 'Mark read'}
@@ -933,8 +1128,169 @@ const Resources = () => {
           </section>
         )}
 
-        <section className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-5">
-          <div className="flex flex-wrap items-center gap-2 mb-4">
+        <section className="overflow-hidden rounded-[28px] border border-white/80 bg-white/85 p-4 shadow-[0_24px_70px_-46px_rgba(61,8,186,0.38)] backdrop-blur sm:p-5">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-[#3D08BA]/12 bg-[#3D08BA]/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">
+                  <BookOpenIcon className="h-4 w-4" />
+                  Edamaa Free Library
+                </div>
+                <h2 className="mt-3 text-xl font-bold text-gray-950">
+                  Discover free books from trusted education sources
+                </h2>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-gray-600">
+                  Search free and previewable books from Open Library and Google Books without leaving your learning workspace.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2 self-start">
+                {freeLibraryProviders.map((provider) => (
+                  <span
+                    key={provider.source}
+                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold ${getProviderStatusTone(
+                      provider.status
+                    )}`}
+                    title={provider.note}
+                  >
+                    {provider.sourceLabel}
+                    <span className="text-[10px] uppercase tracking-wide">
+                      {provider.status === 'ok' ? 'Live' : 'Limited'}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <form
+              onSubmit={(event) => void handleFreeLibrarySubmit(event)}
+              className="rounded-[24px] border border-[#3D08BA]/10 bg-gradient-to-r from-[#F8F5FF] via-white to-[#F5F7FF] p-4 shadow-inner"
+            >
+              <div className="flex flex-col gap-3 lg:flex-row">
+                <div className="relative flex-1">
+                  <MagnifyingGlassIcon className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={freeLibraryQuery}
+                    onChange={(event) => setFreeLibraryQuery(event.target.value)}
+                    placeholder="Search free books by title, topic, or author..."
+                    className="w-full rounded-2xl border border-white bg-white/90 py-3 pl-12 pr-4 text-sm shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={isFreeLibraryLoading}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#3D08BA] px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-[#3D08BA]/20 transition hover:bg-[#2D0690] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isFreeLibraryLoading ? 'Searching...' : 'Search free books'}
+                </button>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {FREE_LIBRARY_SUBJECTS.map((subject) => (
+                  <button
+                    key={subject}
+                    type="button"
+                    onClick={() => {
+                      setFreeLibrarySubject(subject);
+                      void refreshFreeLibrary({ subject });
+                    }}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      freeLibrarySubject === subject
+                        ? 'bg-[#3D08BA] text-white shadow-sm'
+                        : 'bg-white text-gray-700 shadow-sm hover:bg-gray-100'
+                    }`}
+                  >
+                    {subject}
+                  </button>
+                ))}
+              </div>
+            </form>
+
+            {freeLibraryError ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  {freeLibraryError}
+                </div>
+              ) : null}
+
+            {isFreeLibraryLoading ? (
+              <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-600">
+                Loading free books...
+              </div>
+            ) : freeLibraryItems.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-600">
+                No free books matched this search yet. Try a different topic or subject.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                {freeLibraryItems.map((item) => (
+                  <article
+                    key={item.id}
+                    className="group overflow-hidden rounded-[24px] border border-gray-200/80 bg-white shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-[0_26px_60px_-34px_rgba(61,8,186,0.35)]"
+                  >
+                    <div className="flex h-44 items-center justify-center bg-gradient-to-br from-[#F5F0FF] via-white to-[#EEF2FF] p-4">
+                      {item.coverImageUrl ? (
+                        <img
+                          src={item.coverImageUrl}
+                          alt={item.title}
+                          className="h-full max-h-36 rounded-xl border border-gray-200 object-contain shadow-sm transition duration-300 group-hover:scale-[1.02]"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full max-w-[10rem] flex-col items-center justify-center rounded-2xl border border-dashed border-[#3D08BA]/20 bg-white text-center">
+                          <BookOpenIcon className="h-8 w-8 text-[#3D08BA]" />
+                          <p className="mt-2 px-3 text-xs font-semibold text-gray-600">
+                            Free book preview
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-3 p-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-[#3D08BA]/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-[#3D08BA]">
+                          {item.sourceLabel}
+                        </span>
+                        <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                          {item.accessLabel}
+                        </span>
+                      </div>
+
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          {item.subject}
+                        </p>
+                        <h3 className="mt-1 line-clamp-2 text-base font-bold text-gray-900">
+                          {item.title}
+                        </h3>
+                        <p className="mt-1 text-xs text-gray-600">
+                          {item.authors.length > 0 ? item.authors.join(', ') : 'Author not listed'}
+                        </p>
+                      </div>
+
+                      <p className="line-clamp-3 text-sm text-gray-600">{item.description}</p>
+
+                      <div className="flex items-center justify-between gap-3 text-[11px] text-gray-500">
+                        <span>{item.licenseLabel}</span>
+                        <span>{item.publishedAt || 'Date unavailable'}</span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenFreeLibraryItem(item)}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#3D08BA]"
+                      >
+                        <BookOpenIcon className="h-4 w-4" />
+                        {item.actionLabel}
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-[26px] border border-white/80 bg-white/90 p-4 shadow-[0_20px_60px_-44px_rgba(15,23,42,0.22)] backdrop-blur sm:p-5">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
             {[
               { id: 'all', label: `All (${stats.totalResources})` },
               { id: 'classroom', label: `Class Support (${stats.classroomResources})` },
@@ -945,9 +1301,9 @@ const Resources = () => {
                 onClick={() =>
                   setActiveCollection(collection.id as 'all' | 'classroom' | 'library')
                 }
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
                   activeCollection === collection.id
-                    ? 'bg-[#3D08BA] text-white'
+                    ? 'bg-slate-950 text-white'
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
@@ -956,20 +1312,20 @@ const Resources = () => {
             ))}
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-3 mb-4">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row">
             <div className="flex-1 relative">
-              <MagnifyingGlassIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <MagnifyingGlassIcon className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
                 placeholder="Search by title, subject, tutor, or keyword..."
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                className="w-full pl-12 pr-4 py-3 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3D08BA] focus:border-transparent bg-white"
+                className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 pl-12 text-sm shadow-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
               />
             </div>
             <button
               onClick={() => setShowFilters((previous) => !previous)}
-              className="flex items-center justify-center gap-2 px-4 py-3 border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors text-sm font-medium"
+              className="flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium shadow-sm transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
             >
               <FunnelIcon className="w-5 h-5" />
               Filters
@@ -977,7 +1333,7 @@ const Resources = () => {
           </div>
 
           {showFilters && (
-            <div className="space-y-3">
+            <div className="space-y-3 rounded-2xl border border-gray-100 bg-gray-50/80 p-4">
               <div>
                 <label className="text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2 block">
                   Type
@@ -988,7 +1344,7 @@ const Resources = () => {
                       <button
                         key={type}
                         onClick={() => setFilterType(type)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
                           filterType === type
                             ? 'bg-[#3D08BA] text-white'
                             : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -1022,10 +1378,10 @@ const Resources = () => {
                     <button
                       key={category}
                       onClick={() => setFilterCategory(category)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                        filterCategory === category
-                          ? 'bg-[#3D08BA] text-white'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                          filterCategory === category
+                            ? 'bg-[#3D08BA] text-white'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                       }`}
                     >
                       {category === 'all' ? 'All' : formatResourceCategoryLabel(category)}
@@ -1043,10 +1399,10 @@ const Resources = () => {
                     <button
                       key={subject}
                       onClick={() => setFilterSubject(subject)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                        filterSubject === subject
-                          ? 'bg-[#3D08BA] text-white'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                          filterSubject === subject
+                            ? 'bg-[#3D08BA] text-white'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                       }`}
                     >
                       {subject === 'all' ? 'All' : subject}
@@ -1059,12 +1415,12 @@ const Resources = () => {
         </section>
 
         {isLoading ? (
-          <section className="bg-white rounded-2xl border border-gray-200 p-8 text-center">
+          <section className="rounded-[26px] border border-white/80 bg-white/90 p-8 text-center shadow-sm">
             <p className="text-sm text-gray-600">Loading your resource feed...</p>
           </section>
         ) : filteredResources.length === 0 ? (
-          <section className="bg-white rounded-2xl border border-gray-200 p-10 text-center">
-            <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-5">
+          <section className="rounded-[26px] border border-white/80 bg-white/90 p-10 text-center shadow-sm">
+            <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full bg-gray-100">
               <FolderIcon className="w-10 h-10 text-gray-400" />
             </div>
             <h3 className="text-xl font-bold text-gray-900 mb-2">No resources match your filter</h3>
@@ -1079,7 +1435,7 @@ const Resources = () => {
                 setFilterCategory('all');
                 setActiveCollection('all');
               }}
-              className="px-5 py-2.5 bg-[#3D08BA] text-white rounded-lg font-semibold hover:bg-[#2D0690] transition-colors"
+              className="rounded-full bg-[#3D08BA] px-5 py-2.5 font-semibold text-white transition-colors hover:bg-[#2D0690]"
             >
               Reset filters
             </button>
@@ -1096,10 +1452,11 @@ const Resources = () => {
               return (
                 <article
                   key={resource.id}
-                  className="bg-white rounded-xl sm:rounded-2xl overflow-hidden shadow-sm hover:shadow-lg transition-all duration-300 border border-gray-200"
+                  className="group overflow-hidden rounded-[26px] border border-white/80 bg-white shadow-[0_14px_40px_-28px_rgba(15,23,42,0.28)] transition duration-300 hover:-translate-y-1 hover:shadow-[0_28px_70px_-36px_rgba(61,8,186,0.38)]"
                 >
-                  <div className={`h-32 ${colorClass} flex items-center justify-center relative`}>
-                    <Icon className="w-14 h-14 text-white/95" />
+                  <div className={`relative flex h-32 items-center justify-center ${colorClass}`}>
+                    <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-slate-950/25" />
+                    <Icon className="relative z-10 h-14 w-14 text-white/95 transition duration-300 group-hover:scale-105" />
                     <div className="absolute top-3 left-3 flex items-center gap-1.5">
                       <span className="bg-white/95 text-gray-700 px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase">
                         {resource.type}
@@ -1132,7 +1489,7 @@ const Resources = () => {
                   </div>
 
                   <div className="p-4 sm:p-5">
-                    <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="mb-2 flex items-center justify-between gap-2">
                       <span className="text-xs font-semibold text-[#3D08BA] uppercase tracking-wider">
                         {resource.subject}
                       </span>
@@ -1147,7 +1504,7 @@ const Resources = () => {
                       {resource.description}
                     </p>
 
-                    <div className="space-y-1.5 text-[11px] text-gray-600 mb-4 pb-3 border-b border-gray-100">
+                    <div className="mb-4 grid gap-2 rounded-2xl border border-gray-100 bg-gray-50/80 p-3 text-[11px] text-gray-600">
                       <p>
                         <span className="font-semibold text-gray-700">Uploaded by:</span> {resource.instructor}
                       </p>
@@ -1171,7 +1528,7 @@ const Resources = () => {
                       <button
                         onClick={() => void handleResourceAccess(resource, 'view')}
                         disabled={isViewing || isDownloading || isPurchasing || resource.isLocked}
-                        className="flex items-center justify-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                        className="flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 transition hover:border-[#3D08BA]/15 hover:text-[#3D08BA] disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <EyeIcon className="w-4 h-4" />
                         {isViewing ? 'Opening...' : 'Preview'}
@@ -1183,10 +1540,10 @@ const Resources = () => {
                             : void handleResourceAccess(resource, 'download')
                         }
                         disabled={isViewing || isDownloading || isPurchasing}
-                        className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                        className={`flex items-center justify-center gap-2 rounded-2xl px-3 py-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
                           resource.isLocked
                             ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
-                            : 'bg-[#3D08BA] text-white hover:bg-[#2D0690]'
+                            : 'bg-slate-950 text-white hover:bg-[#3D08BA]'
                         }`}
                       >
                         <ArrowDownTrayIcon className="w-4 h-4" />
