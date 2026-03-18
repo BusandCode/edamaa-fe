@@ -58,6 +58,10 @@ import {
   type SchoolExam,
   type StudentExamSubmissionSummary,
 } from '../../schools/utils/examsApi';
+import {
+  fetchStudentCourseCertificates,
+  type CourseCertificateRecord,
+} from '../utils/courseCertificatesApi';
 
 type StudentSchoolInvoiceStatus =
   | 'draft'
@@ -522,6 +526,164 @@ const StudentAttendanceOverview = ({
   );
 };
 
+const StudentCertificateWalletOverview = ({
+  onOpenWallet,
+  onOpenCourse,
+}: {
+  onOpenWallet: () => void;
+  onOpenCourse: (courseId: number) => void;
+}) => {
+  const [certificates, setCertificates] = useState<CourseCertificateRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    let active = true;
+
+    const loadCertificates = async () => {
+      setIsLoading(true);
+      try {
+        const payload = await fetchStudentCourseCertificates();
+        if (!active) {
+          return;
+        }
+        setCertificates(payload.certificates);
+        setNotice(
+          payload.certificates.length === 0
+            ? 'Complete a recorded course and pass all checkpoints to unlock your first certificate.'
+            : ''
+        );
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setCertificates([]);
+        setNotice(
+          error instanceof Error ? error.message : 'Could not load your certificate wallet right now.'
+        );
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void loadCertificates();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const summary = useMemo(
+    () => ({
+      total: certificates.length,
+      school: certificates.filter((certificate) => certificate.issuerType === 'school').length,
+      tutor: certificates.filter((certificate) => certificate.issuerType === 'tutor').length,
+      edamaa: certificates.filter((certificate) => certificate.issuerType === 'edamaa').length,
+    }),
+    [certificates]
+  );
+
+  const latestCertificate = certificates[0] || null;
+
+  return (
+    <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="inline-flex items-center gap-2 rounded-full bg-[#3D08BA]/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">
+            <AcademicCapIcon className="h-4 w-4" />
+            Certificate wallet
+          </div>
+          <h3 className="mt-3 text-base sm:text-lg font-semibold text-gray-900">
+            Certificates earned from completed online courses
+          </h3>
+          <p className="mt-1 text-xs sm:text-sm text-gray-500">
+            School, tutor, and Edamaa3D course certificates appear here once you meet the course completion rule.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenWallet}
+          className="inline-flex items-center rounded-lg border border-[#3D08BA]/20 px-3 py-2 text-xs sm:text-sm font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5 transition-colors"
+        >
+          Open wallet
+        </button>
+      </div>
+
+      {notice && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs sm:text-sm text-amber-700">
+          {notice}
+        </div>
+      )}
+
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Total
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">{summary.total}</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            School
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">{summary.school}</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Tutor
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">{summary.tutor}</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Edamaa3D
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">{summary.edamaa}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {isLoading && (
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-4 text-xs sm:text-sm text-gray-500">
+            Loading certificates...
+          </div>
+        )}
+
+        {!isLoading && latestCertificate && (
+          <div className="rounded-xl border border-gray-200 px-3 py-4 sm:px-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm sm:text-base font-semibold text-gray-900">
+                    {latestCertificate.courseTitle}
+                  </p>
+                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">
+                    Issued
+                  </span>
+                </div>
+                <p className="mt-1 text-xs sm:text-sm text-gray-600">
+                  {latestCertificate.issuerName} • {latestCertificate.certificateCode}
+                </p>
+                <p className="mt-1 text-[11px] sm:text-xs text-gray-500">
+                  Issued {new Date(latestCertificate.issueDate).toLocaleDateString()}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onOpenCourse(latestCertificate.courseId)}
+                className="inline-flex items-center rounded-lg border border-gray-200 px-3 py-2 text-xs sm:text-sm font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                Open course
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const StudentDashboard = () => {
   const navigate = useNavigate();
   const initialStudentIdentity = useMemo(() => loadStudentIdentity(), []);
@@ -882,6 +1044,10 @@ const StudentDashboard = () => {
     navigate('/assignments');
   };
 
+  const handleCertificatesClick = () => {
+    navigate('/student-certificates');
+  };
+
   const handlePerformanceClick = () => {
     navigate('/performance');
   };
@@ -1144,6 +1310,11 @@ const StudentDashboard = () => {
       icon: AcademicCapIcon, 
       label: 'My Courses', 
       onClick: OnCoursesClick
+    },
+    {
+      icon: TrophyIcon,
+      label: 'Certificates',
+      onClick: handleCertificatesClick,
     },
     { 
       icon: Cog6ToothIcon, 
@@ -1475,6 +1646,11 @@ const StudentDashboard = () => {
             <StudentAttendanceOverview
               studentIdentity={dashboardStudentIdentity}
               onOpenClasses={handleJoinClassClick}
+            />
+
+            <StudentCertificateWalletOverview
+              onOpenWallet={handleCertificatesClick}
+              onOpenCourse={(courseId) => navigate(`/course/${courseId}`)}
             />
 
             {/* Performance Stats */}

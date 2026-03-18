@@ -21,6 +21,7 @@ const SchoolTeacherClassAccess = lazy(() => import('./features/schools/pages/Sch
 const SchoolExams = lazy(() => import('./features/schools/pages/SchoolExams.tsx'))
 const SchoolAssignments = lazy(() => import('./features/schools/pages/SchoolAssignments.tsx'))
 const SchoolResources = lazy(() => import('./features/schools/pages/SchoolResources.tsx'))
+const SchoolCertificates = lazy(() => import('./features/schools/pages/SchoolCertificates.tsx'))
 const TutorDashboard = lazy(() => import('./features/tutors/pages/TutorDashboard.tsx'))
 const TutorAssignments = lazy(() => import('./features/tutors/pages/TutorAssignments.tsx'))
 const TutorResources = lazy(() => import('./features/tutors/pages/TutorResources.tsx'))
@@ -37,6 +38,7 @@ const StudentNotifications = lazy(() => import('./features/students/components/S
 const ResourceLibrary = lazy(() => import('./features/students/pages/Resources.tsx'))
 const LiveClassroom = lazy(() => import('./features/students/pages/LiveClassroom.tsx'))
 const StudentExams = lazy(() => import('./features/students/pages/StudentExams.tsx'))
+const StudentCertificates = lazy(() => import('./features/students/pages/StudentCertificates.tsx'))
 const CoursesList = lazy(() => import('./features/tutors/pages/courses/CoursesList.tsx'))
 const StudentSubjects = lazy(() => import('./features/students/pages/Courses.tsx'))
 const CourseLearning = lazy(() => import('./features/students/pages/CourseLearning.tsx'))
@@ -155,6 +157,14 @@ createRoot(document.getElementById('root')!).render(
           element={
             <RoleProtectedRoute allowedRoles={['school', 'admin']}>
               <SchoolResources />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="/school-certificates"
+          element={
+            <RoleProtectedRoute allowedRoles={['school', 'admin']}>
+              <SchoolCertificates />
             </RoleProtectedRoute>
           }
         />
@@ -325,6 +335,14 @@ createRoot(document.getElementById('root')!).render(
           element={
             <RoleProtectedRoute allowedRoles={['student', 'admin']}>
               <StudentExams />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="/student-certificates"
+          element={
+            <RoleProtectedRoute allowedRoles={['student', 'admin']}>
+              <StudentCertificates />
             </RoleProtectedRoute>
           }
         />

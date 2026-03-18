@@ -100,6 +100,21 @@ type ReminderExportSnapshot = {
   };
 };
 
+const financeHeroClass =
+  'relative overflow-hidden rounded-[32px] border border-white/80 bg-[linear-gradient(135deg,_rgba(255,255,255,0.97),_rgba(248,250,252,0.95)_54%,_rgba(245,243,255,0.94))] shadow-[0_28px_80px_rgba(15,23,42,0.10)] ring-1 ring-slate-100/70';
+
+const financePanelClass =
+  'rounded-[28px] border border-white/80 bg-white/90 shadow-[0_20px_50px_rgba(15,23,42,0.08)] ring-1 ring-slate-100/70';
+
+const financeInputClass =
+  'w-full rounded-2xl border border-slate-200 bg-slate-50/90 px-3.5 py-2.5 text-sm text-slate-700 outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10';
+
+const financeSecondaryButtonClass =
+  'rounded-2xl border border-slate-200 bg-white/92 px-3.5 py-2 text-xs font-semibold text-slate-700 transition hover:border-[#3D08BA]/18 hover:text-[#3D08BA] disabled:cursor-not-allowed disabled:opacity-50';
+
+const financePrimaryButtonClass =
+  'rounded-2xl bg-[#3D08BA] px-3.5 py-2.5 text-xs font-semibold text-white shadow-[0_16px_30px_rgba(61,8,186,0.18)] transition hover:bg-[#2D0690] hover:shadow-[0_20px_38px_rgba(61,8,186,0.24)] disabled:cursor-not-allowed disabled:opacity-50';
+
 const SchoolFinance = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -303,25 +318,33 @@ const SchoolFinance = () => {
         label: 'Available Balance',
         value: fmt(dashboard.wallet.available),
         icon: WalletIcon,
-        color: 'border-emerald-500',
+        tone: 'from-emerald-500/14 via-emerald-400/6 to-white',
+        iconTone: 'bg-emerald-50 text-emerald-600',
+        meta: 'Ready for approved withdrawals',
       },
       {
         label: 'Outstanding Invoices',
         value: fmt(dashboard.overview.outstandingAmount),
         icon: ExclamationCircleIcon,
-        color: 'border-red-500',
+        tone: 'from-rose-500/14 via-rose-400/6 to-white',
+        iconTone: 'bg-rose-50 text-rose-600',
+        meta: `${dashboard.overview.pendingInvoices} invoice${dashboard.overview.pendingInvoices === 1 ? '' : 's'} still open`,
       },
       {
         label: 'Total Collected',
         value: fmt(dashboard.wallet.lifetimeGross),
         icon: BanknotesIcon,
-        color: 'border-[#3D08BA]',
+        tone: 'from-[#3D08BA]/14 via-[#3D08BA]/6 to-white',
+        iconTone: 'bg-[#3D08BA]/8 text-[#3D08BA]',
+        meta: 'Lifetime collections into school wallet',
       },
       {
         label: 'Total Withdrawn',
         value: fmt(dashboard.wallet.totalWithdrawn),
         icon: ArrowLeftIcon,
-        color: 'border-amber-500',
+        tone: 'from-amber-500/14 via-amber-400/6 to-white',
+        iconTone: 'bg-amber-50 text-amber-600',
+        meta: 'Completed payouts to school account',
       },
     ];
   }, [dashboard]);
@@ -362,6 +385,33 @@ const SchoolFinance = () => {
       ).length,
     [reminderDispatches]
   );
+
+  const heroStats = useMemo(() => {
+    const pendingInvoiceCount =
+      (dashboard?.recentInvoices || []).filter((invoice) => invoice.status === 'pending' || invoice.status === 'overdue')
+        .length;
+    const activeWithdrawalCount =
+      (withdrawals || []).filter((payout) => payout.status === 'requested' || payout.status === 'processing').length;
+
+    return [
+      {
+        label: 'Active fee plans',
+        value: String(activeFeePlans.length),
+      },
+      {
+        label: 'Students on file',
+        value: String(students.length),
+      },
+      {
+        label: 'Invoices awaiting payment',
+        value: String(pendingInvoiceCount),
+      },
+      {
+        label: 'Finance actions pending',
+        value: String(activeWithdrawalCount + failedEmailReminderCount + queuedEmailReminderCount),
+      },
+    ];
+  }, [activeFeePlans.length, dashboard?.recentInvoices, failedEmailReminderCount, queuedEmailReminderCount, students.length, withdrawals]);
 
   const visibleWithdrawals = useMemo(
     () =>
@@ -1198,67 +1248,91 @@ const SchoolFinance = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
-      <main className="mx-auto max-w-7xl px-4 py-6">
-        <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-start gap-3">
-            <button
-              type="button"
-              onClick={() => navigate('/school-dashboard')}
-              aria-label="Back to dashboard"
-              title="Back to dashboard"
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 shadow-xs transition-colors hover:border-[#3D08BA]/25 hover:text-[#3D08BA] hover:bg-[#3D08BA]/5 focus:outline-none focus:ring-2 focus:ring-[#3D08BA]/20"
-            >
-              <ArrowLeftIcon className="h-5 w-5" />
-            </button>
-            <div className="space-y-1">
-              <h1 className="text-xl font-bold tracking-tight text-gray-900">School Fees Management</h1>
-              <p className="max-w-2xl text-sm text-gray-600">
-                Manage fee plans, student invoices, school balance, and withdrawals.
-              </p>
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(61,8,186,0.10),_transparent_34%),linear-gradient(180deg,#f8fafc_0%,#f3f4f6_100%)] pb-24">
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <section className={`${financeHeroClass} mb-6 px-5 py-5 sm:px-6 lg:px-8`}>
+          <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-72 bg-[radial-gradient(circle_at_center,_rgba(61,8,186,0.12),_transparent_72%)] xl:block" />
+          <div className="relative flex flex-col gap-5">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div className="flex items-start gap-3">
+                <button
+                  type="button"
+                  onClick={() => navigate('/school-dashboard')}
+                  aria-label="Back to dashboard"
+                  title="Back to dashboard"
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white/92 text-slate-600 shadow-[0_12px_28px_rgba(15,23,42,0.06)] transition hover:border-[#3D08BA]/20 hover:bg-[#3D08BA]/5 hover:text-[#3D08BA] focus:outline-none focus:ring-4 focus:ring-[#3D08BA]/10"
+                >
+                  <ArrowLeftIcon className="h-5 w-5" />
+                </button>
+                <div className="space-y-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#3D08BA]">
+                    School finance workspace
+                  </p>
+                  <div className="space-y-1">
+                    <h1 className="text-2xl font-semibold tracking-tight text-slate-950 sm:text-[2rem]">
+                      Fees, collections, and payouts
+                    </h1>
+                    <p className="max-w-3xl text-sm leading-6 text-slate-600">
+                      Manage fee plans, invoice students, monitor reminder delivery, and keep payouts moving from one finance desk.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsCreatePlanOpen((current) => !current)}
+                  className={financeSecondaryButtonClass}
+                >
+                  + New Fee Plan
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsCreateInvoiceOpen((current) => !current)}
+                  className={financePrimaryButtonClass}
+                >
+                  + New Invoice
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsWithdrawOpen((current) => !current)}
+                  className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                >
+                  Withdraw Funds
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleRunReminders()}
+                  disabled={activeAction === 'reminders-run'}
+                  className="rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {activeAction === 'reminders-run' ? 'Running Reminders...' : 'Run Reminders'}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {heroStats.map((item) => (
+                <div
+                  key={item.label}
+                  className="rounded-[24px] border border-white/80 bg-white/72 px-4 py-3 shadow-[0_14px_32px_rgba(15,23,42,0.05)]"
+                >
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{item.label}</p>
+                  <p className="mt-2 text-2xl font-semibold text-slate-950">{item.value}</p>
+                </div>
+              ))}
             </div>
           </div>
-
-          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-            <button
-              type="button"
-              onClick={() => setIsCreatePlanOpen((current) => !current)}
-              className="rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10"
-            >
-              + New Fee Plan
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsCreateInvoiceOpen((current) => !current)}
-              className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2c0691]"
-            >
-              + New Invoice
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsWithdrawOpen((current) => !current)}
-              className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-            >
-              Withdraw Funds
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleRunReminders()}
-              disabled={activeAction === 'reminders-run'}
-              className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {activeAction === 'reminders-run' ? 'Running Reminders...' : 'Run Reminders Now'}
-            </button>
-          </div>
-        </div>
+        </section>
 
         {notice && (
-          <p className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+          <p className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50/95 px-4 py-3 text-sm text-emerald-700 shadow-[0_12px_24px_rgba(16,185,129,0.08)]">
             {notice}
           </p>
         )}
         {error && (
-          <p className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          <p className="mb-4 rounded-2xl border border-red-200 bg-red-50/95 px-4 py-3 text-sm text-red-700 shadow-[0_12px_24px_rgba(239,68,68,0.08)]">
             {error}
           </p>
         )}
@@ -1266,15 +1340,21 @@ const SchoolFinance = () => {
         {isCreatePlanOpen && (
           <form
             onSubmit={submitCreatePlan}
-            className="mb-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
+            className={`${financePanelClass} mb-4 p-5 sm:p-6`}
           >
-            <h2 className="text-sm font-semibold text-gray-900">Create Fee Plan</h2>
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Fee plan setup</p>
+                <h2 className="mt-1 text-lg font-semibold text-slate-900">Create fee plan</h2>
+              </div>
+              <p className="text-xs text-slate-500">Reusable billing plans help you invoice faster.</p>
+            </div>
             <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
               <input
                 value={planTitle}
                 onChange={(event) => setPlanTitle(event.target.value)}
                 placeholder="Plan title"
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                className={financeInputClass}
                 required
               />
               <input
@@ -1283,7 +1363,7 @@ const SchoolFinance = () => {
                 placeholder="Amount (NGN)"
                 type="number"
                 min={1}
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                className={financeInputClass}
                 required
               />
               <input
@@ -1292,20 +1372,20 @@ const SchoolFinance = () => {
                 placeholder="Due days (optional)"
                 type="number"
                 min={0}
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                className={financeInputClass}
               />
               <input
                 value={planDescription}
                 onChange={(event) => setPlanDescription(event.target.value)}
                 placeholder="Description (optional)"
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                className={financeInputClass}
               />
             </div>
             <div className="mt-3 flex justify-end">
               <button
                 type="submit"
                 disabled={activeAction === 'plan'}
-                className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2c0691] disabled:cursor-not-allowed disabled:opacity-50"
+                className={financePrimaryButtonClass}
               >
                 {activeAction === 'plan' ? 'Saving...' : 'Save Fee Plan'}
               </button>
@@ -1316,10 +1396,16 @@ const SchoolFinance = () => {
         {isCreateInvoiceOpen && (
           <form
             onSubmit={submitCreateInvoice}
-            className="mb-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
+            className={`${financePanelClass} mb-4 p-5 sm:p-6`}
           >
-            <h2 className="text-sm font-semibold text-gray-900">Create Student Invoice</h2>
-            <p className="mt-1 text-[11px] text-gray-600">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Invoice setup</p>
+                <h2 className="mt-1 text-lg font-semibold text-slate-900">Create student invoice</h2>
+              </div>
+              <p className="text-xs text-slate-500">Pick a student and fee plan to reduce errors.</p>
+            </div>
+            <p className="mt-1 text-[11px] text-slate-600">
               Pick a student to auto-fill details. You can still enter an email manually when needed.
             </p>
             <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -1364,7 +1450,7 @@ const SchoolFinance = () => {
                       setInvoiceStudentName(selectedStudent.name);
                     }
                   }}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                  className={financeInputClass}
                 >
                   <option value="">Select student from list (recommended)</option>
                   {students.map((student) => (
@@ -1386,7 +1472,7 @@ const SchoolFinance = () => {
                 <select
                   value={invoicePlanId}
                   onChange={(event) => setInvoicePlanId(event.target.value)}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                  className={financeInputClass}
                 >
                   <option value="">Custom invoice (no fee plan)</option>
                   {activeFeePlans.map((plan) => (
@@ -1433,7 +1519,7 @@ const SchoolFinance = () => {
                   }}
                   placeholder="Student email (required)"
                   type="email"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                  className={financeInputClass}
                   required
                 />
                 <p className="text-[11px] text-gray-500">This email is how the student receives and sees this invoice.</p>
@@ -1443,7 +1529,7 @@ const SchoolFinance = () => {
                   value={invoiceStudentName}
                   onChange={(event) => setInvoiceStudentName(event.target.value)}
                   placeholder="Student name (optional, display only)"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                  className={financeInputClass}
                 />
                 <p className="text-[11px] text-gray-500">
                   Name helps you recognize the invoice. Account matching uses student record/email.
@@ -1453,7 +1539,7 @@ const SchoolFinance = () => {
                 value={invoiceTitle}
                 onChange={(event) => setInvoiceTitle(event.target.value)}
                 placeholder={selectedInvoicePlan ? 'Invoice title (auto-filled from plan)' : 'Invoice title'}
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                className={financeInputClass}
                 required={!invoicePlanId}
               />
               <input
@@ -1462,7 +1548,7 @@ const SchoolFinance = () => {
                 placeholder={selectedInvoicePlan ? 'Amount (auto-filled from plan)' : 'Amount'}
                 type="number"
                 min={1}
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                className={financeInputClass}
                 required={!invoicePlanId}
               />
               <div className="space-y-2">
@@ -1470,7 +1556,7 @@ const SchoolFinance = () => {
                   value={invoiceDueDate}
                   onChange={(event) => setInvoiceDueDate(event.target.value)}
                   type="date"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                  className={financeInputClass}
                 />
                 <div className="flex items-center gap-2">
                   <label className="text-[11px] font-semibold text-gray-500">Jump year:</label>
@@ -1487,7 +1573,7 @@ const SchoolFinance = () => {
                         return `${selectedYear}-${month}-${day}`;
                       });
                     }}
-                    className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                    className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#3D08BA]/15"
                   >
                     <option value="">Select year</option>
                     {calendarYearOptions.map((year) => (
@@ -1510,7 +1596,7 @@ const SchoolFinance = () => {
                         return `${year}-${selectedMonth}-${day}`;
                       });
                     }}
-                    className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#3D08BA]"
+                    className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#3D08BA]/15"
                   >
                     <option value="">Select month</option>
                     {monthOptions.map((month) => (
@@ -1525,14 +1611,14 @@ const SchoolFinance = () => {
                 value={invoiceDescription}
                 onChange={(event) => setInvoiceDescription(event.target.value)}
                 placeholder="Description (optional)"
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                className={financeInputClass}
               />
             </div>
             <div className="mt-3 flex justify-end">
               <button
                 type="submit"
                 disabled={activeAction === 'invoice'}
-                className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2c0691] disabled:cursor-not-allowed disabled:opacity-50"
+                className={financePrimaryButtonClass}
               >
                 {activeAction === 'invoice' ? 'Creating...' : 'Create Invoice'}
               </button>
@@ -1543,10 +1629,16 @@ const SchoolFinance = () => {
         {isWithdrawOpen && (
           <form
             onSubmit={submitWithdrawal}
-            className="mb-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
+            className={`${financePanelClass} mb-4 p-5 sm:p-6`}
           >
-            <h2 className="text-sm font-semibold text-gray-900">Request Withdrawal</h2>
-            <p className="mt-1 text-xs text-gray-600">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Payout request</p>
+                <h2 className="mt-1 text-lg font-semibold text-slate-900">Request withdrawal</h2>
+              </div>
+              <p className="text-xs text-slate-500">Move cleared school funds into the payout queue.</p>
+            </div>
+            <p className="mt-1 text-xs text-slate-600">
               Current available balance: {fmt(dashboard?.wallet.available || 0)}
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -1556,13 +1648,13 @@ const SchoolFinance = () => {
                 placeholder="Amount to withdraw (NGN)"
                 type="number"
                 min={1}
-                className="w-full max-w-xs rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#3D08BA] focus:outline-none"
+                className={`${financeInputClass} max-w-xs`}
                 required
               />
               <button
                 type="submit"
                 disabled={activeAction === 'withdraw'}
-                className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {activeAction === 'withdraw' ? 'Processing...' : 'Confirm Withdrawal'}
               </button>
@@ -1576,23 +1668,38 @@ const SchoolFinance = () => {
             return (
               <div
                 key={card.label}
-                className={`rounded-xl border-l-4 ${card.color} bg-white p-4 shadow-sm`}
+                className="overflow-hidden rounded-[28px] border border-white/80 bg-white/90 p-5 shadow-[0_18px_42px_rgba(15,23,42,0.08)] ring-1 ring-slate-100/70"
               >
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-500">{card.label}</p>
-                  <Icon className="h-5 w-5 text-gray-500" />
+                <div className={`rounded-[24px] bg-gradient-to-br ${card.tone} p-4`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{card.label}</p>
+                      <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">{card.value}</p>
+                    </div>
+                    <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${card.iconTone}`}>
+                      <Icon className="h-5 w-5" />
+                    </div>
+                  </div>
+                  <p className="mt-3 text-xs leading-5 text-slate-500">{card.meta}</p>
                 </div>
-                <p className="mt-2 text-lg font-bold text-gray-900">{card.value}</p>
               </div>
             );
           })}
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <section className="rounded-2xl bg-white p-4 shadow-sm">
-            <h2 className="text-sm font-semibold text-gray-900">Fee Plans</h2>
+          <section className={`${financePanelClass} p-5 sm:p-6`}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Fee library</p>
+                <h2 className="mt-1 text-lg font-semibold text-slate-900">Fee plans</h2>
+              </div>
+              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                {dashboard?.feePlans.length || 0} plans
+              </span>
+            </div>
             {(dashboard?.feePlans || []).length === 0 ? (
-              <p className="mt-3 text-xs text-gray-500">
+              <p className="mt-3 text-sm text-slate-500">
                 No fee plans yet. Create one to speed up invoice creation.
               </p>
             ) : (
@@ -1600,11 +1707,18 @@ const SchoolFinance = () => {
                 {dashboard?.feePlans.map((plan) => (
                   <article
                     key={plan.id}
-                    className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2"
+                    className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 px-4 py-3"
                   >
-                    <p className="text-sm font-semibold text-gray-900">{plan.title}</p>
-                    <p className="mt-1 text-xs text-gray-600">{plan.description || 'No description.'}</p>
-                    <p className="mt-1 text-xs font-semibold text-[#3D08BA]">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{plan.title}</p>
+                        <p className="mt-1 text-xs text-slate-600">{plan.description || 'No description.'}</p>
+                      </div>
+                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${plan.isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
+                        {plan.isActive ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs font-semibold text-[#3D08BA]">
                       {fmt(plan.amount)} {plan.currency}
                     </p>
                   </article>
@@ -1613,11 +1727,14 @@ const SchoolFinance = () => {
             )}
           </section>
 
-          <section className="rounded-2xl bg-white p-4 shadow-sm">
+          <section className={`${financePanelClass} p-5 sm:p-6`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-gray-900">Recent Withdrawals</h2>
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Payout activity</p>
+                <h2 className="mt-1 text-lg font-semibold text-slate-900">Recent withdrawals</h2>
+              </div>
               <div className="flex flex-wrap items-center gap-2">
-                <label className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-600">
+                <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-600">
                   <span>Status</span>
                   <select
                     value={withdrawalStatusFilter}
@@ -1632,7 +1749,7 @@ const SchoolFinance = () => {
                           | 'canceled'
                       )
                     }
-                    className="rounded border border-gray-200 bg-white px-1 py-0.5 text-[11px] text-gray-700 focus:border-[#3D08BA] focus:outline-none"
+                    className="rounded-lg border border-slate-200 bg-white px-1.5 py-1 text-[11px] text-slate-700 focus:border-[#3D08BA] focus:outline-none"
                   >
                     <option value="">All</option>
                     <option value="requested">Requested</option>
@@ -1646,7 +1763,7 @@ const SchoolFinance = () => {
                   type="button"
                   onClick={() => void handleExportWithdrawalsCsv()}
                   disabled={activeAction === 'withdrawals-export-csv' || visibleWithdrawals.length === 0}
-                  className="rounded-md border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  className={financeSecondaryButtonClass}
                 >
                   {activeAction === 'withdrawals-export-csv' ? 'Exporting...' : 'Export CSV'}
                 </button>
@@ -1654,20 +1771,20 @@ const SchoolFinance = () => {
                   type="button"
                   onClick={() => void handleExportWithdrawalsPdf()}
                   disabled={activeAction === 'withdrawals-export-pdf' || visibleWithdrawals.length === 0}
-                  className="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className={financeSecondaryButtonClass}
                 >
                   {activeAction === 'withdrawals-export-pdf' ? 'Exporting...' : 'Export PDF'}
                 </button>
               </div>
             </div>
             {visibleWithdrawals.length === 0 ? (
-              <p className="mt-3 text-xs text-gray-500">No withdrawal history yet.</p>
+              <p className="mt-3 text-sm text-slate-500">No withdrawal history yet.</p>
             ) : (
               <div className="mt-3 space-y-2">
                 {visibleWithdrawals.map((payout) => (
                   <article
                     key={payout.id}
-                    className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2"
+                    className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 px-4 py-3"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-xs font-semibold text-gray-900">{fmt(payout.amount)}</p>
@@ -1698,7 +1815,7 @@ const SchoolFinance = () => {
                         type="button"
                         onClick={() => void handleViewWithdrawalLedger(payout.id)}
                         disabled={activeAction !== null}
-                        className="rounded-md border border-gray-200 bg-white px-2 py-1 text-[10px] font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-slate-700 transition hover:border-[#3D08BA]/16 hover:text-[#3D08BA] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         View Ledger
                       </button>
@@ -1707,7 +1824,7 @@ const SchoolFinance = () => {
                           type="button"
                           onClick={() => void handleUpdateWithdrawalStatus(payout.id, 'processing')}
                           disabled={activeAction !== null}
-                          className="rounded-md border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-2 py-1 text-[10px] font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="rounded-xl border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-2.5 py-1.5 text-[10px] font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           Mark Processing
                         </button>
@@ -1718,7 +1835,7 @@ const SchoolFinance = () => {
                             type="button"
                             onClick={() => void handleUpdateWithdrawalStatus(payout.id, 'paid')}
                             disabled={activeAction !== null}
-                            className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[10px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             Mark Paid
                           </button>
@@ -1726,7 +1843,7 @@ const SchoolFinance = () => {
                             type="button"
                             onClick={() => void handleUpdateWithdrawalStatus(payout.id, 'failed')}
                             disabled={activeAction !== null}
-                            className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded-xl border border-red-200 bg-red-50 px-2.5 py-1.5 text-[10px] font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             Mark Failed
                           </button>
@@ -1740,11 +1857,12 @@ const SchoolFinance = () => {
           </section>
         </div>
 
-        <section className="mt-6 rounded-2xl bg-white p-4 shadow-sm">
+        <section className={`${financePanelClass} mt-6 p-5 sm:p-6`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h2 className="text-sm font-semibold text-gray-900">Reminder Dispatches</h2>
-              <p className="text-[11px] text-gray-500">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Reminder operations</p>
+              <h2 className="mt-1 text-lg font-semibold text-slate-900">Reminder dispatches</h2>
+              <p className="text-[11px] text-slate-500">
                 Track due soon and overdue reminders sent to students.
               </p>
             </div>
@@ -1753,7 +1871,7 @@ const SchoolFinance = () => {
                 type="button"
                 onClick={() => void handleRunReminders()}
                 disabled={activeAction === 'reminders-run'}
-                className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {activeAction === 'reminders-run' ? 'Running...' : 'Run Now'}
               </button>
@@ -1761,7 +1879,7 @@ const SchoolFinance = () => {
                 type="button"
                 onClick={() => void handleDrainQueuedReminderEmails()}
                 disabled={activeAction === 'reminders-drain' || queuedEmailReminderCount === 0}
-                className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {activeAction === 'reminders-drain'
                   ? 'Processing...'
@@ -1771,7 +1889,7 @@ const SchoolFinance = () => {
                 type="button"
                 onClick={() => void handleRequeueFailedReminderEmails()}
                 disabled={activeAction === 'reminders-requeue' || failedEmailReminderCount === 0}
-                className="rounded-md border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-xl border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-2.5 py-1.5 text-[11px] font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {activeAction === 'reminders-requeue'
                   ? 'Requeueing...'
@@ -1783,7 +1901,7 @@ const SchoolFinance = () => {
                 disabled={
                   activeAction === 'reminders-requeue-exhausted' || exhaustedEmailReminderCount === 0
                 }
-                className="rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-xl border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {activeAction === 'reminders-requeue-exhausted'
                   ? 'Retrying...'
@@ -1792,14 +1910,14 @@ const SchoolFinance = () => {
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-[22px] border border-slate-200/80 bg-slate-50/80 p-3">
             <select
               value={reminderChannelFilter}
               onChange={(event) => {
                 setReminderChannelFilter(event.target.value as '' | 'in_app' | 'email');
                 setReminderPage(1);
               }}
-              className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-700 focus:border-[#3D08BA] focus:outline-none"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-700 focus:border-[#3D08BA] focus:outline-none"
             >
               <option value="">All channels</option>
               <option value="in_app">In-app</option>
@@ -1813,7 +1931,7 @@ const SchoolFinance = () => {
                 );
                 setReminderPage(1);
               }}
-              className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-700 focus:border-[#3D08BA] focus:outline-none"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-700 focus:border-[#3D08BA] focus:outline-none"
             >
               <option value="">All statuses</option>
               <option value="queued">Queued</option>
@@ -1825,7 +1943,7 @@ const SchoolFinance = () => {
               type="button"
               onClick={() => void handleRefreshReminderDispatches()}
               disabled={activeAction === 'reminders-refresh'}
-              className="rounded-md border border-gray-200 bg-gray-100 px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+              className={financeSecondaryButtonClass}
             >
               {activeAction === 'reminders-refresh' ? 'Refreshing...' : 'Refresh List'}
             </button>
@@ -1833,7 +1951,7 @@ const SchoolFinance = () => {
               type="button"
               onClick={() => void handleExportReminderCsv()}
               disabled={activeAction === 'reminders-export-csv'}
-              className="rounded-md border border-[#3D08BA]/20 bg-white px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5 disabled:cursor-not-allowed disabled:opacity-50"
+              className={financeSecondaryButtonClass}
             >
               {activeAction === 'reminders-export-csv' ? 'Exporting CSV...' : 'Export CSV'}
             </button>
@@ -1841,7 +1959,7 @@ const SchoolFinance = () => {
               type="button"
               onClick={() => void handleExportReminderPdf()}
               disabled={activeAction === 'reminders-export-pdf'}
-              className="rounded-md border border-[#3D08BA]/20 bg-white px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5 disabled:cursor-not-allowed disabled:opacity-50"
+              className={financeSecondaryButtonClass}
             >
               {activeAction === 'reminders-export-pdf' ? 'Exporting PDF...' : 'Export PDF'}
             </button>
@@ -1888,7 +2006,7 @@ const SchoolFinance = () => {
           )}
 
           {reminderDispatches.length === 0 ? (
-            <p className="mt-3 text-xs text-gray-500">
+            <p className="mt-4 text-sm text-slate-500">
               No reminder dispatches yet. Run reminders now to generate due soon and overdue prompts.
             </p>
           ) : (
@@ -1896,7 +2014,7 @@ const SchoolFinance = () => {
               {reminderDispatches.map((dispatch) => (
                 <article
                   key={dispatch.id}
-                  className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2"
+                  className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 px-4 py-3"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-xs font-semibold text-gray-900">
@@ -1926,7 +2044,7 @@ const SchoolFinance = () => {
           )}
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[11px] text-gray-600">
+            <p className="text-[11px] text-slate-600">
               Showing page {reminderPage}
               {reminderTotalPages > 0 ? ` of ${reminderTotalPages}` : ''} • Total dispatches {reminderTotal}
             </p>
@@ -1935,7 +2053,7 @@ const SchoolFinance = () => {
                 type="button"
                 onClick={handlePreviousReminderPage}
                 disabled={activeAction !== null || reminderPage <= 1}
-                className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                className={financeSecondaryButtonClass}
               >
                 Previous
               </button>
@@ -1947,7 +2065,7 @@ const SchoolFinance = () => {
                   reminderTotalPages === 0 ||
                   reminderPage >= reminderTotalPages
                 }
-                className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                className={financeSecondaryButtonClass}
               >
                 Next
               </button>
@@ -1955,22 +2073,25 @@ const SchoolFinance = () => {
           </div>
         </section>
 
-        <section className="mt-6 rounded-2xl bg-white p-4 shadow-sm">
+        <section className={`${financePanelClass} mt-6 p-5 sm:p-6`}>
           <div className="mb-3 flex items-center gap-2">
             <DocumentTextIcon className="h-5 w-5 text-[#3D08BA]" />
-            <h2 className="text-sm font-semibold text-gray-900">Recent Invoices</h2>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Billing feed</p>
+              <h2 className="mt-1 text-lg font-semibold text-slate-900">Recent invoices</h2>
+            </div>
           </div>
 
           {isLoading ? (
-            <p className="text-xs text-gray-500">Loading school finance data...</p>
+            <p className="text-sm text-slate-500">Loading school finance data...</p>
           ) : (dashboard?.recentInvoices || []).length === 0 ? (
-            <p className="text-xs text-gray-500">No invoices yet. Create your first invoice above.</p>
+            <p className="text-sm text-slate-500">No invoices yet. Create your first invoice above.</p>
           ) : (
             <div className="space-y-2">
               {dashboard?.recentInvoices.map((invoice) => (
                 <article
                   key={invoice.id}
-                  className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2"
+                  className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 px-4 py-3"
                 >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
@@ -1996,7 +2117,7 @@ const SchoolFinance = () => {
                         type="button"
                         onClick={() => void handlePayInvoice(invoice.id)}
                         disabled={activeAction === `pay-${invoice.id}`}
-                        className="inline-flex items-center gap-1 rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex items-center gap-1 rounded-xl border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-[11px] font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <PlusCircleIcon className="h-3.5 w-3.5" />
                         {activeAction === `pay-${invoice.id}` ? 'Processing...' : 'Pay/Test Invoice'}
@@ -2009,16 +2130,19 @@ const SchoolFinance = () => {
           )}
         </section>
 
-        <section className="mt-6 rounded-2xl bg-white p-4 shadow-sm">
-          <h2 className="text-sm font-semibold text-gray-900">Recent Payments</h2>
+        <section className={`${financePanelClass} mt-6 p-5 sm:p-6`}>
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Collections feed</p>
+            <h2 className="mt-1 text-lg font-semibold text-slate-900">Recent payments</h2>
+          </div>
           {(dashboard?.recentPayments || []).length === 0 ? (
-            <p className="mt-3 text-xs text-gray-500">No payment records yet.</p>
+            <p className="mt-3 text-sm text-slate-500">No payment records yet.</p>
           ) : (
             <div className="mt-3 space-y-2">
               {dashboard?.recentPayments.slice(0, 12).map((payment) => (
                 <article
                   key={payment.id}
-                  className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2"
+                  className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 px-4 py-3"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-xs font-semibold text-gray-900">

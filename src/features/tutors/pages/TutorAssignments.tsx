@@ -13,7 +13,7 @@ import {
   UserGroupIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   archiveTutorAssignmentNotification,
   fetchTutorAssignmentNotifications,
@@ -35,6 +35,7 @@ import {
 import { fetchSchoolScheduleSessions, type SchoolScheduleSession } from '../../schools/utils/schoolScheduleApi';
 
 type EditorMode = 'create' | 'edit';
+type SubmissionFilter = 'all' | 'needs_review' | 'graded' | 'late';
 
 type EditorQuestion = {
   id: string;
@@ -207,6 +208,11 @@ const scrollToSection = (sectionId: string) => {
 
 const TutorAssignments = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const initialSearch = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const requestedAssignmentId = initialSearch.get('assignmentId')?.trim() || null;
+  const requestedNotificationId = initialSearch.get('notificationId')?.trim() || null;
+  const requestedFocus = initialSearch.get('focus')?.trim() || null;
   const [assignments, setAssignments] = useState<SchoolAssignment[]>([]);
   const [summary, setSummary] = useState({ total: 0, active: 0, awaitingReview: 0 });
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null);
@@ -230,6 +236,7 @@ const TutorAssignments = () => {
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationFilter, setNotificationFilter] = useState<'all' | 'unread'>('all');
   const [activeNotificationId, setActiveNotificationId] = useState<string | 'all' | null>(null);
+  const [submissionFilter, setSubmissionFilter] = useState<SubmissionFilter>('all');
 
   const loadNotifications = async () => {
     setNotificationsLoading(true);
@@ -255,7 +262,7 @@ const TutorAssignments = () => {
       setSummary(assignmentsPayload.summary);
       setSessions(sessionsPayload.sessions);
       setSelectedAssignmentId((current) => {
-        const nextId = preferredId || current;
+        const nextId = preferredId || requestedAssignmentId || current;
         if (nextId && assignmentsPayload.assignments.some((assignment) => assignment.id === nextId)) {
           return nextId;
         }
@@ -273,7 +280,7 @@ const TutorAssignments = () => {
 
   useEffect(() => {
     void loadAssignments();
-  }, []);
+  }, [requestedAssignmentId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -286,6 +293,36 @@ const TutorAssignments = () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!requestedNotificationId || notifications.length === 0) {
+      return;
+    }
+
+    const matchingNotification = notifications.find((notification) => notification.id === requestedNotificationId);
+    if (!matchingNotification) {
+      return;
+    }
+
+    void openAssignmentFromNotification(matchingNotification);
+  }, [notifications, requestedNotificationId]);
+
+  useEffect(() => {
+    if (requestedFocus !== 'submissions') {
+      return;
+    }
+
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    const target = document.getElementById('tutor-submission-queue');
+    if (!target) {
+      return;
+    }
+
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [requestedFocus, selectedAssignmentId, submissions.length]);
 
   useEffect(() => {
     if (!selectedAssignmentId) {
@@ -377,6 +414,49 @@ const TutorAssignments = () => {
         : notifications;
     return scoped.slice(0, 4);
   }, [notificationFilter, notifications]);
+
+  const filteredSubmissions = useMemo(() => {
+    return submissions.filter((submission) => {
+      if (submissionFilter === 'needs_review') {
+        return submission.status !== 'graded';
+      }
+      if (submissionFilter === 'graded') {
+        return submission.status === 'graded';
+      }
+      if (submissionFilter === 'late') {
+        return submission.lateSubmission;
+      }
+      return true;
+    });
+  }, [submissionFilter, submissions]);
+
+  const queueSummary = useMemo(() => {
+    let late = 0;
+    let needsReview = 0;
+    let graded = 0;
+
+    for (const submission of submissions) {
+      if (submission.lateSubmission) {
+        late += 1;
+      }
+      if (submission.status === 'graded') {
+        graded += 1;
+      } else {
+        needsReview += 1;
+      }
+    }
+
+    return {
+      late,
+      needsReview,
+      graded,
+    };
+  }, [submissions]);
+
+  const nextSubmissionToReview = useMemo(
+    () => submissions.find((submission) => submission.status !== 'graded') || submissions[0] || null,
+    [submissions]
+  );
 
   const openCreateModal = () => {
     setEditorMode('create');
@@ -556,11 +636,16 @@ const TutorAssignments = () => {
     if (!gradeTarget) {
       return;
     }
+    const normalizedScore = Number(gradeScore);
+    if (!Number.isFinite(normalizedScore) || normalizedScore < 0 || normalizedScore > gradeTarget.maxScore) {
+      setNotice(`Enter a score between 0 and ${gradeTarget.maxScore}.`);
+      return;
+    }
     setGradeSaving(true);
     try {
       const response = await gradeTutorAssignmentSubmission({
         submissionId: gradeTarget.id,
-        score: Number(gradeScore),
+        score: normalizedScore,
         feedback: gradeFeedback,
       });
       setNotice(response.message);
@@ -577,6 +662,8 @@ const TutorAssignments = () => {
       setGradeSaving(false);
     }
   };
+
+  const gradePreviewScore = gradeTarget ? Math.max(0, Math.min(gradeTarget.maxScore, Number(gradeScore) || 0)) : 0;
 
   const sessionOptions = useMemo(
     () => [...sessions].sort((left, right) => new Date(right.startAt).getTime() - new Date(left.startAt).getTime()),
@@ -1156,7 +1243,10 @@ const TutorAssignments = () => {
                       </div>
                     </section>
 
-                    <section className="rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,_rgba(248,250,252,0.95),_rgba(255,255,255,0.98))] p-5 shadow-[0_14px_32px_rgba(15,23,42,0.04)]">
+                    <section
+                      id="tutor-submission-queue"
+                      className="rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,_rgba(248,250,252,0.95),_rgba(255,255,255,0.98))] p-5 shadow-[0_14px_32px_rgba(15,23,42,0.04)]"
+                    >
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <p className="text-[11px] font-semibold uppercase tracking-[0.20em] text-[#3D08BA]">Submissions</p>
@@ -1165,6 +1255,66 @@ const TutorAssignments = () => {
                         <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
                           {submissions.length}
                         </span>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-[20px] border border-white bg-white px-4 py-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Needs review</p>
+                          <p className="mt-2 text-lg font-semibold text-slate-900">{queueSummary.needsReview}</p>
+                        </div>
+                        <div className="rounded-[20px] border border-white bg-white px-4 py-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Graded</p>
+                          <p className="mt-2 text-lg font-semibold text-slate-900">{queueSummary.graded}</p>
+                        </div>
+                        <div className="rounded-[20px] border border-white bg-white px-4 py-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Late</p>
+                          <p className="mt-2 text-lg font-semibold text-slate-900">{queueSummary.late}</p>
+                        </div>
+                      </div>
+
+                      {nextSubmissionToReview ? (
+                        <div className="mt-4 rounded-[22px] border border-[#3D08BA]/15 bg-[#3D08BA]/5 px-4 py-4 text-sm">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]/70">Next to review</p>
+                          <div className="mt-2 flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-semibold text-slate-900">{nextSubmissionToReview.studentName}</p>
+                              <p className="mt-1 text-slate-600">
+                                Submitted {formatDateTime(nextSubmissionToReview.submittedAt)}
+                                {nextSubmissionToReview.lateSubmission ? ' • Late submission' : ''}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => openGradeModal(nextSubmissionToReview)}
+                              className="inline-flex items-center gap-2 rounded-2xl bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#2D0690]"
+                            >
+                              <PencilSquareIcon className="h-4 w-4" />
+                              Review now
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div className="mt-4 flex flex-wrap gap-2 rounded-full border border-slate-200/80 bg-white/88 p-1">
+                        {([
+                          { value: 'all', label: `All (${submissions.length})` },
+                          { value: 'needs_review', label: `Needs review (${queueSummary.needsReview})` },
+                          { value: 'graded', label: `Graded (${queueSummary.graded})` },
+                          { value: 'late', label: `Late (${queueSummary.late})` },
+                        ] as const).map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => setSubmissionFilter(option.value)}
+                            className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${
+                              submissionFilter === option.value
+                                ? 'bg-[#3D08BA] text-white shadow-[0_10px_24px_rgba(61,8,186,0.20)]'
+                                : 'bg-transparent text-slate-600 hover:text-[#3D08BA]'
+                            }`}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
                       </div>
 
                       <div className="mt-4 space-y-3">
@@ -1176,8 +1326,12 @@ const TutorAssignments = () => {
                           <div className="rounded-[20px] border border-dashed border-slate-300 bg-white px-4 py-4 text-sm text-slate-500">
                             No student has submitted this task yet.
                           </div>
+                        ) : filteredSubmissions.length === 0 ? (
+                          <div className="rounded-[20px] border border-dashed border-slate-300 bg-white px-4 py-4 text-sm text-slate-500">
+                            No submissions match this filter.
+                          </div>
                         ) : (
-                          submissions.map((submission) => (
+                          filteredSubmissions.map((submission) => (
                             <article
                               key={submission.id}
                               className="rounded-[22px] border border-white bg-white p-4 text-sm text-slate-600 shadow-[0_10px_22px_rgba(15,23,42,0.03)]"
@@ -1232,14 +1386,21 @@ const TutorAssignments = () => {
                                     {submission.score != null ? `${submission.score}/${submission.maxScore}` : `Pending / ${submission.maxScore}`}
                                   </p>
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={() => openGradeModal(submission)}
-                                  className="inline-flex items-center gap-2 rounded-2xl border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/10"
-                                >
-                                  <PencilSquareIcon className="h-4 w-4" />
-                                  {submission.status === 'graded' ? 'Update grade' : 'Grade'}
-                                </button>
+                                <div className="flex items-center gap-2">
+                                  {submission.lateSubmission ? (
+                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
+                                      Late
+                                    </span>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    onClick={() => openGradeModal(submission)}
+                                    className="inline-flex items-center gap-2 rounded-2xl border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/10"
+                                  >
+                                    <PencilSquareIcon className="h-4 w-4" />
+                                    {submission.status === 'graded' ? 'Update grade' : 'Grade'}
+                                  </button>
+                                </div>
                               </div>
                             </article>
                           ))
@@ -1805,7 +1966,7 @@ const TutorAssignments = () => {
                   <div className="rounded-[24px] border border-[#3D08BA]/12 bg-[#3D08BA]/5 px-4 py-4">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]/70">Score</p>
                     <p className="mt-2 text-2xl font-semibold text-[#3D08BA]">
-                      {gradeScore.trim() ? gradeScore : '--'}
+                      {gradeScore.trim() ? gradePreviewScore : '--'}
                     </p>
                     <p className="mt-1 text-xs text-[#3D08BA]/70">out of {gradeTarget.maxScore}</p>
                   </div>
@@ -1822,7 +1983,86 @@ const TutorAssignments = () => {
                         className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
                       />
                       <p className="text-xs text-slate-500">Maximum available marks: {gradeTarget.maxScore}</p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setGradeScore(String(gradeTarget.maxScore))}
+                          className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
+                        >
+                          Full marks
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setGradeScore(String(Math.round(gradeTarget.maxScore / 2)))}
+                          className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
+                        >
+                          Half marks
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setGradeScore('')}
+                          className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
+                        >
+                          Clear
+                        </button>
+                      </div>
                     </label>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.04)]">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Submission status</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                          gradeTarget.status === 'graded' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                        }`}
+                      >
+                        {gradeTarget.status === 'graded' ? 'Already graded' : 'Needs review'}
+                      </span>
+                      {gradeTarget.lateSubmission ? (
+                        <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
+                          Late submission
+                        </span>
+                      ) : null}
+                      {gradeTarget.questionResults && gradeTarget.questionResults.length > 0 ? (
+                        <span className="rounded-full bg-[#3D08BA]/8 px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA]">
+                          Auto-scored classwork
+                        </span>
+                      ) : null}
+                    </div>
+                    {gradeTarget.submissionNote ? (
+                      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                        {gradeTarget.submissionNote}
+                      </div>
+                    ) : (
+                      <p className="mt-4 text-sm text-slate-500">No student note was added for this submission.</p>
+                    )}
+                  </div>
+
+                  <div className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.04)]">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Student work</p>
+                    {gradeTarget.submissionFiles && gradeTarget.submissionFiles.length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {gradeTarget.submissionFiles.map((file) => (
+                          <span
+                            key={`${gradeTarget.id}-${file.name}-${file.sizeBytes}`}
+                            className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600"
+                          >
+                            {file.name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-3 text-sm text-slate-500">No uploaded files for this submission.</p>
+                    )}
+
+                    {gradeTarget.questionResults && gradeTarget.questionResults.length > 0 ? (
+                      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                        {gradeTarget.questionResults.filter((result) => result.isCorrect).length} of {gradeTarget.questionResults.length} questions were correct.
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 

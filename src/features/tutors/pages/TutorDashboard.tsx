@@ -21,6 +21,11 @@ import { BellIcon as BellSolidIcon } from '@heroicons/react/24/solid';
 import { HiOutlineMenu, HiOutlineX } from 'react-icons/hi';
 import { signOutEverywhere } from '../../../utils/signOut';
 import {
+  loadTutorBranding,
+  persistTutorDisplayName,
+  persistTutorProfileImage,
+} from '../../../utils/tutorBranding';
+import {
   fetchTeachingSubscriptionState,
   type TeachingSubscriptionState,
 } from '../../subscriptions/utils/teachingSubscriptionApi';
@@ -122,13 +127,14 @@ const INDEPENDENT_CLASSES_STORAGE_KEY = 'edamaa_tutor_independent_classes';
 
 const TutorDashboard = () => {
   const navigate = useNavigate();
+  const initialTutorBranding = useMemo(() => loadTutorBranding(), []);
   const [activeTab, setActiveTab] = useState('classroom');
   const [showProfile, setShowProfile] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const [profileSrc, setProfileSrc] = useState<string | null>(null);
-  const [name, setName] = useState('Abdulrahman Farhan');
+  const [profileSrc, setProfileSrc] = useState<string | null>(initialTutorBranding.profileImage || null);
+  const [name, setName] = useState(initialTutorBranding.displayName || 'Abdulrahman Farhan');
   const [username, setUsername] = useState('abdulrahman');
   const [email, setEmail] = useState('abdulrahman@example.com');
   const [description, setDescription] = useState('Experienced tutor specializing in mathematics and science. Passionate about helping students achieve their academic goals and fostering a love for learning.');
@@ -161,6 +167,8 @@ const TutorDashboard = () => {
     setEmail(updatedProfile.email);
     setDescription(updatedProfile.bio);
     setProfileSrc(updatedProfile.profileImage);
+    persistTutorDisplayName(updatedProfile.name);
+    persistTutorProfileImage(updatedProfile.profileImage || '', updatedProfile.email);
   };
 
   const classroomId = '224091556';
@@ -187,6 +195,17 @@ const TutorDashboard = () => {
 
   const handleAssignmentsClick = () => {
     navigate('/tutor-assignments');
+  };
+
+  const handleHomeworkUpdateDrilldown = (notification: SchoolAssignmentNotification) => {
+    const params = new URLSearchParams({
+      assignmentId: notification.assignmentId,
+      focus: 'submissions',
+    });
+    if (notification.id) {
+      params.set('notificationId', notification.id);
+    }
+    navigate(`/tutor-assignments?${params.toString()}`);
   };
 
   const loadSubscriptionState = async () => {
@@ -764,7 +783,7 @@ const TutorDashboard = () => {
                   <button
                     key={update.id}
                     type="button"
-                    onClick={handleHomeworkUpdatesClick}
+                    onClick={() => handleHomeworkUpdateDrilldown(update)}
                     className="flex w-full items-start justify-between gap-3 rounded-xl border border-white bg-white px-3 py-3 text-left shadow-sm transition hover:border-[#3D08BA]/15 hover:shadow-md"
                   >
                     <div className="min-w-0">

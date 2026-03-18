@@ -1423,6 +1423,10 @@ const SchoolDashboard = () => {
     navigate('/school-assignments');
   };
 
+  const handleCertificatesClick = () => {
+    navigate('/school-certificates');
+  };
+
   const handleWaecPrepClick = () => {
     if (!isSubscriptionActive) {
       goToSubscription('Premium WAEC prep delivery is available on Edamaa Pro.');
@@ -1708,7 +1712,7 @@ const SchoolDashboard = () => {
           <div className='grid grid-cols-3 gap-3'>
             <QuickActionButton icon={FaIdCard} label="Student Lists" onClick={handleStudentListClick}/>
             <QuickActionButton icon={FaUsers} label="Find Tutors" onClick={handleTutorListClick} />
-            <QuickActionButton icon={FaCertificate} label="WAEC Prep" badge="NEW" onClick={handleWaecPrepClick} />
+            <QuickActionButton icon={FaCertificate} label="Certificates" badge="NEW" onClick={handleCertificatesClick} />
             <QuickActionButton icon={FaChartLine} label="Revenue" onClick={handleFinanceClick} />
             <QuickActionButton icon={FaCalendarAlt} label="Schedule" onClick={handleScheduleClick} />
             <QuickActionButton icon={FaFileAlt} label="Exams" onClick={handleExamManagementClick} />
@@ -1869,6 +1873,15 @@ const SchoolDashboard = () => {
                     <button
                       type='button'
                       onClick={() => navigate('/school-assignments')}
+                      className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
+                    >
+                      Open
+                    </button>
+                  )}
+                  {activeSchoolModule.id === 'student-certificates' && (
+                    <button
+                      type='button'
+                      onClick={() => navigate('/school-certificates')}
                       className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
                     >
                       Open
