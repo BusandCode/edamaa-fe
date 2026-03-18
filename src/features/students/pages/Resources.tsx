@@ -24,7 +24,13 @@ import {
 } from '../../../utils/authSession';
 
 type ResourceType = 'pdf' | 'video' | 'image' | 'audio' | 'document';
-type ResourceCategory = 'assignment' | 'classwork' | 'note' | 'library' | 'official_document';
+type ResourceCategory =
+  | 'assignment'
+  | 'classwork'
+  | 'note'
+  | 'library'
+  | 'live_recording'
+  | 'official_document';
 type ResourcePricingType = 'free' | 'paid';
 type ResourcePriority = 'high' | 'medium' | 'low';
 
@@ -170,6 +176,8 @@ const formatResourceCategoryLabel = (category: ResourceCategory) => {
       return 'Classwork support';
     case 'library':
       return 'E-Book';
+    case 'live_recording':
+      return 'Live recording';
     case 'official_document':
       return 'Official document';
     case 'note':
@@ -999,7 +1007,15 @@ const Resources = () => {
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {(
-                    ['all', 'assignment', 'classwork', 'note', 'library', 'official_document'] as Array<
+                    [
+                      'all',
+                      'assignment',
+                      'classwork',
+                      'note',
+                      'library',
+                      'live_recording',
+                      'official_document',
+                    ] as Array<
                       'all' | ResourceCategory
                     >
                   ).map((category) => (

@@ -9,6 +9,7 @@ export type ResourceCategory =
   | 'classwork'
   | 'note'
   | 'library'
+  | 'live_recording'
   | 'official_document';
 export type ResourcePricingType = 'free' | 'paid';
 export type ResourcePriority = 'high' | 'medium' | 'low';

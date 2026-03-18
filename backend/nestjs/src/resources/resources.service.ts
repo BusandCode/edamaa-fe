@@ -17,7 +17,13 @@ type AuthUser = {
 };
 
 type ResourceType = 'pdf' | 'video' | 'image' | 'audio' | 'document';
-type ResourceCategory = 'assignment' | 'classwork' | 'note' | 'library' | 'official_document';
+type ResourceCategory =
+  | 'assignment'
+  | 'classwork'
+  | 'note'
+  | 'library'
+  | 'live_recording'
+  | 'official_document';
 type ResourcePricingType = 'free' | 'paid';
 type UploaderRole = 'tutor' | 'school';
 type ResourcePriority = 'high' | 'medium' | 'low';
@@ -360,6 +366,9 @@ export class ResourcesService implements OnModuleInit {
     }
 
     const resourceType = this.normalizeResourceType(input.type, String(uploadedFile.mimetype || ''));
+    if (category === 'live_recording' && resourceType !== 'video') {
+      throw new BadRequestException('Live recordings must be uploaded as video files.');
+    }
     const safeOriginalName = sanitizeFileName(String(uploadedFile.originalname || 'resource-file')) || 'resource-file';
     const resourceId = makeId('res');
     const createdAt = new Date();
@@ -457,6 +466,9 @@ export class ResourcesService implements OnModuleInit {
           this.defaultNameFromEmail(email);
 
     const validatedFile = this.validateOptionalUploadedFile(uploadedFile);
+    if (nextCategory === 'live_recording' && nextType !== 'video') {
+      throw new BadRequestException('Live recordings must be uploaded as video files.');
+    }
 
     resource.title = nextTitle;
     resource.subject = nextSubject;
@@ -825,6 +837,9 @@ export class ResourcesService implements OnModuleInit {
     if (normalized === 'library') {
       return 'library';
     }
+    if (normalized === 'live_recording' || normalized === 'live-recording') {
+      return 'live_recording';
+    }
     if (normalized === 'official_document' || normalized === 'official-document') {
       return 'official_document';
     }
@@ -962,6 +977,8 @@ export class ResourcesService implements OnModuleInit {
         ? 'classwork support'
         : resource.category === 'library'
         ? 'e-library resource'
+        : resource.category === 'live_recording'
+        ? 'live class recording'
         : resource.category === 'official_document'
         ? 'official school document'
         : 'class notes';
@@ -1144,6 +1161,22 @@ export class ResourcesService implements OnModuleInit {
         createdAtOffsetMs: 1000 * 60 * 80,
         bodyText:
           'Premium SAT Math Drill Pack\n\nSections:\n- Timed algebra drills\n- Data interpretation\n- Worked answer review',
+      },
+      {
+        id: 'resource_seed_chemistry_titration_live_recording',
+        title: 'SS2 Chemistry Titration Live Class Recording',
+        description: 'Replay of the live titration lesson with the worked practical steps and teacher commentary.',
+        subject: 'Chemistry',
+        type: 'video',
+        category: 'live_recording',
+        uploaderName: 'Edamaa Science School',
+        uploaderRole: 'school',
+        uploaderEmail: 'school@edamaa.dev',
+        fileName: 'chemistry-titration-live-recording.txt',
+        mimeType: 'text/plain',
+        createdAtOffsetMs: 1000 * 60 * 95,
+        bodyText:
+          'Chemistry Titration Live Class Recording\n\nSegment markers:\n- Apparatus setup\n- End-point explanation\n- Observation table review',
       },
       {
         id: 'resource_seed_enrollment_letter_pack',

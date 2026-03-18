@@ -50,6 +50,34 @@ type UploadFormState = {
 };
 
 type ResourceWorkspaceView = 'all' | 'textbooks' | 'video-lessons' | 'documents';
+type VideoLibraryLane = 'all' | 'uploaded' | 'recordings';
+
+const OFFICIAL_DOCUMENT_TEMPLATES = [
+  {
+    id: 'enrollment-letter',
+    label: 'Enrollment letter',
+    title: 'Enrollment Letter',
+    subject: 'School Admin',
+    description:
+      'Official enrollment confirmation letter for a newly admitted student, ready for download and printing.',
+  },
+  {
+    id: 'admission-letter',
+    label: 'Admission letter',
+    title: 'Admission Letter',
+    subject: 'School Admin',
+    description:
+      'Official admission letter issued to confirm acceptance into the school or programme.',
+  },
+  {
+    id: 'completion-letter',
+    label: 'Completion letter',
+    title: 'Completion Letter',
+    subject: 'School Admin',
+    description:
+      'Official completion letter issued after a student finishes a programme, course, or school session.',
+  },
+] as const;
 
 const formatResourceCategoryLabel = (category: ResourceCategory) => {
   switch (category) {
@@ -59,6 +87,8 @@ const formatResourceCategoryLabel = (category: ResourceCategory) => {
       return 'Classwork support';
     case 'library':
       return 'E-Book';
+    case 'live_recording':
+      return 'Live recording';
     case 'official_document':
       return 'Official document';
     case 'note':
@@ -71,6 +101,10 @@ const isEbookResource = (resource: ResourceItem) =>
   resource.category === 'library' && (resource.type === 'document' || resource.type === 'pdf');
 
 const isVideoLessonResource = (resource: ResourceItem) => resource.type === 'video';
+const isLiveRecordingResource = (resource: ResourceItem) =>
+  resource.type === 'video' && resource.category === 'live_recording';
+const isUploadedVideoResource = (resource: ResourceItem) =>
+  resource.type === 'video' && resource.category !== 'live_recording';
 
 const isOfficialDocumentResource = (resource: ResourceItem) =>
   resource.category === 'official_document';
@@ -181,6 +215,7 @@ const SchoolResources = () => {
   const [pricingFilter, setPricingFilter] = useState<'all' | ResourcePricingType>('all');
   const [showFilters, setShowFilters] = useState(false);
   const [workspaceView, setWorkspaceView] = useState<ResourceWorkspaceView>('all');
+  const [videoLane, setVideoLane] = useState<VideoLibraryLane>('all');
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -236,6 +271,12 @@ const SchoolResources = () => {
     setWorkspaceView(viewParam);
   }, [viewParam]);
 
+  useEffect(() => {
+    if (workspaceView !== 'video-lessons') {
+      setVideoLane('all');
+    }
+  }, [workspaceView]);
+
   const filteredUploads = useMemo(() => {
     const normalizedSearch = searchQuery.trim().toLowerCase();
     return uploads.filter((resource) => {
@@ -249,10 +290,23 @@ const SchoolResources = () => {
       const matchesCategory = categoryFilter === 'all' || resource.category === categoryFilter;
       const matchesPricing = pricingFilter === 'all' || resource.pricingType === pricingFilter;
       const matchesWorkspacePreset = matchesWorkspaceView(resource, workspaceView);
+      const matchesVideoLane =
+        workspaceView !== 'video-lessons' || videoLane === 'all'
+          ? true
+          : videoLane === 'uploaded'
+          ? isUploadedVideoResource(resource)
+          : isLiveRecordingResource(resource);
 
-      return matchesSearch && matchesType && matchesCategory && matchesPricing && matchesWorkspacePreset;
+      return (
+        matchesSearch &&
+        matchesType &&
+        matchesCategory &&
+        matchesPricing &&
+        matchesWorkspacePreset &&
+        matchesVideoLane
+      );
     });
-  }, [uploads, searchQuery, typeFilter, categoryFilter, pricingFilter, workspaceView]);
+  }, [uploads, searchQuery, typeFilter, categoryFilter, pricingFilter, workspaceView, videoLane]);
 
   const unreadNotifications = useMemo(
     () => notifications.filter((notification) => !notification.isRead),
@@ -264,11 +318,29 @@ const SchoolResources = () => {
       total: uploads.length,
       ebooks: uploads.filter(isEbookResource).length,
       videos: uploads.filter(isVideoLessonResource).length,
+      uploadedVideos: uploads.filter(isUploadedVideoResource).length,
+      liveRecordings: uploads.filter(isLiveRecordingResource).length,
       officialDocuments: uploads.filter(isOfficialDocumentResource).length,
       unread: unreadNotifications.length,
     }),
     [uploads, unreadNotifications.length]
   );
+
+  const applyOfficialDocumentTemplate = (templateId: (typeof OFFICIAL_DOCUMENT_TEMPLATES)[number]['id']) => {
+    const template = OFFICIAL_DOCUMENT_TEMPLATES.find((item) => item.id === templateId);
+    if (!template) {
+      return;
+    }
+
+    setUploadForm((previous) => ({
+      ...previous,
+      category: 'official_document',
+      type: previous.type === 'video' ? 'document' : previous.type,
+      title: previous.title.trim() ? previous.title : template.title,
+      subject: previous.subject.trim() ? previous.subject : template.subject,
+      description: previous.description.trim() ? previous.description : template.description,
+    }));
+  };
 
   const libraryPreview = useMemo(() => libraryResources.slice(0, 4), [libraryResources]);
 
@@ -283,6 +355,24 @@ const SchoolResources = () => {
 
   const openCreateDialog = () => {
     resetUpload();
+    if (workspaceView === 'textbooks') {
+      setUploadForm((previous) => ({
+        ...previous,
+        type: 'pdf',
+        category: 'library',
+      }));
+    } else if (workspaceView === 'video-lessons') {
+      setUploadForm((previous) => ({
+        ...previous,
+        type: 'video',
+      }));
+    } else if (workspaceView === 'documents') {
+      setUploadForm((previous) => ({
+        ...previous,
+        type: 'document',
+        category: 'official_document',
+      }));
+    }
     setUploadOpen(true);
     setNotice(null);
   };
@@ -543,7 +633,9 @@ const SchoolResources = () => {
                 Video lessons
               </p>
               <p className="mt-2 text-2xl font-semibold text-emerald-700">{myStats.videos}</p>
-              <p className="mt-1 text-xs text-slate-500">Uploaded course videos and class recordings.</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Uploaded videos {myStats.uploadedVideos} • Live recordings {myStats.liveRecordings}
+              </p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
@@ -619,6 +711,7 @@ const SchoolResources = () => {
                     setCategoryFilter('all');
                     setPricingFilter('all');
                     setWorkspaceView('all');
+                    setVideoLane('all');
                   }}
                   className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
                 >
@@ -627,20 +720,44 @@ const SchoolResources = () => {
               </div>
 
               {workspaceView !== 'all' ? (
-                <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-[#3D08BA]/12 bg-[#3D08BA]/5 px-4 py-3 text-sm text-slate-700">
-                  <span className="inline-flex items-center rounded-full bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">
-                    {workspaceViewLabel[workspaceView]}
-                  </span>
-                  <p className="text-sm text-slate-600">
-                    Showing materials opened from the school dashboard resource card.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setWorkspaceView('all')}
-                    className="ml-auto rounded-full border border-[#3D08BA]/15 bg-white px-3 py-1.5 text-xs font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/5"
-                  >
-                    Show all materials
-                  </button>
+                <div className="mt-4 space-y-3 rounded-2xl border border-[#3D08BA]/12 bg-[#3D08BA]/5 px-4 py-3 text-sm text-slate-700">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="inline-flex items-center rounded-full bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">
+                      {workspaceViewLabel[workspaceView]}
+                    </span>
+                    <p className="text-sm text-slate-600">
+                      Showing materials opened from the school dashboard resource card.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setWorkspaceView('all')}
+                      className="ml-auto rounded-full border border-[#3D08BA]/15 bg-white px-3 py-1.5 text-xs font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/5"
+                    >
+                      Show all materials
+                    </button>
+                  </div>
+                  {workspaceView === 'video-lessons' ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {([
+                        ['all', `All videos (${myStats.videos})`],
+                        ['uploaded', `Uploaded videos (${myStats.uploadedVideos})`],
+                        ['recordings', `Live recordings (${myStats.liveRecordings})`],
+                      ] as Array<[VideoLibraryLane, string]>).map(([lane, label]) => (
+                        <button
+                          key={lane}
+                          type="button"
+                          onClick={() => setVideoLane(lane)}
+                          className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                            videoLane === lane
+                              ? 'bg-[#3D08BA] text-white'
+                              : 'border border-white/80 bg-white text-slate-600 hover:border-[#3D08BA]/15 hover:text-[#3D08BA]'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -674,7 +791,15 @@ const SchoolResources = () => {
                     </label>
                     <div className="flex flex-wrap gap-2">
                       {(
-                        ['all', 'assignment', 'classwork', 'note', 'library', 'official_document'] as Array<
+                        [
+                          'all',
+                          'assignment',
+                          'classwork',
+                          'note',
+                          'library',
+                          'live_recording',
+                          'official_document',
+                        ] as Array<
                           'all' | ResourceCategory
                         >
                       ).map((category) => (
@@ -727,7 +852,7 @@ const SchoolResources = () => {
                     </div>
                     <h3 className="mt-4 text-lg font-semibold text-slate-900">No school materials match this view</h3>
                     <p className="mt-2 text-sm text-slate-500">
-                      Change the filters or publish a new material for students.
+                      Change the filters or publish a new e-book, video lesson, live recording, or official document.
                     </p>
                   </div>
                 ) : (
@@ -1036,6 +1161,10 @@ const SchoolResources = () => {
                       setUploadForm((previous) => ({
                         ...previous,
                         type: event.target.value as ResourceType,
+                        category:
+                          previous.category === 'live_recording' && event.target.value !== 'video'
+                            ? 'note'
+                            : previous.category,
                       }))
                     }
                     className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
@@ -1055,10 +1184,14 @@ const SchoolResources = () => {
                   <select
                     value={uploadForm.category}
                     onChange={(event) =>
-                      setUploadForm((previous) => ({
-                        ...previous,
-                        category: event.target.value as ResourceCategory,
-                      }))
+                      setUploadForm((previous) => {
+                        const nextCategory = event.target.value as ResourceCategory;
+                        return {
+                          ...previous,
+                          category: nextCategory,
+                          type: nextCategory === 'live_recording' ? 'video' : previous.type,
+                        };
+                      })
                     }
                     className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
                   >
@@ -1066,12 +1199,44 @@ const SchoolResources = () => {
                     <option value="classwork">Classwork support</option>
                     <option value="note">Class notes</option>
                     <option value="library">E-Book / Library material</option>
+                    <option value="live_recording">Live recording</option>
                     <option value="official_document">Official document</option>
                   </select>
                   <p className="mt-1.5 text-xs text-slate-500">
-                    Use official documents for enrollment letters, notices, forms, and other school-issued files.
+                    {uploadForm.category === 'live_recording'
+                      ? 'Live recordings are kept inside the video lessons lane and must stay as video files.'
+                      : uploadForm.category === 'official_document'
+                      ? 'Use official documents for enrollment letters, notices, forms, and other school-issued files.'
+                      : 'Choose the lane that best matches how students should find this material.'}
                   </p>
                 </div>
+
+                {uploadForm.category === 'official_document' ? (
+                  <div className="sm:col-span-2 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                          Quick document templates
+                        </p>
+                        <p className="mt-1 text-sm text-slate-600">
+                          Use a starter template to prefill the title and description before you attach the real file.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {OFFICIAL_DOCUMENT_TEMPLATES.map((template) => (
+                          <button
+                            key={template.id}
+                            type="button"
+                            onClick={() => applyOfficialDocumentTemplate(template.id)}
+                            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[#3D08BA]/15 hover:text-[#3D08BA]"
+                          >
+                            {template.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
 
                 <div>
                   <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">

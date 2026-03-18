@@ -57,6 +57,8 @@ const formatResourceCategoryLabel = (category: ResourceCategory) => {
       return 'Classwork support';
     case 'library':
       return 'E-Book';
+    case 'live_recording':
+      return 'Live recording';
     case 'official_document':
       return 'Official document';
     case 'note':
@@ -643,7 +645,15 @@ const TutorResources = () => {
                     </label>
                     <div className="flex flex-wrap gap-2">
                       {(
-                        ['all', 'assignment', 'classwork', 'note', 'library', 'official_document'] as Array<
+                        [
+                          'all',
+                          'assignment',
+                          'classwork',
+                          'note',
+                          'library',
+                          'live_recording',
+                          'official_document',
+                        ] as Array<
                           'all' | ResourceCategory
                         >
                       ).map((category) => (
