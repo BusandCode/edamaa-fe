@@ -1784,52 +1784,80 @@ const SchoolAssignments = () => {
       {gradeTarget ? (
         <div className="fixed inset-0 z-[60] bg-slate-950/55 px-4 py-6 backdrop-blur-sm">
           <div className="mx-auto flex h-full max-w-xl items-center justify-center">
-            <div className="w-full rounded-[30px] border border-white/70 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.24)]">
-              <div className="border-b border-slate-200 px-5 py-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#3D08BA]">Grade submission</p>
-                <h2 className="mt-1 text-xl font-semibold text-slate-900">{gradeTarget.studentName}</h2>
-                <p className="mt-1 text-sm text-slate-500">Submitted {formatDateTime(gradeTarget.submittedAt)}</p>
+            <div className="w-full overflow-hidden rounded-[32px] border border-white/70 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.24)]">
+              <div className="relative overflow-hidden border-b border-slate-200/80 bg-[linear-gradient(135deg,_rgba(255,255,255,0.98),_rgba(248,250,252,0.96)_58%,_rgba(245,243,255,0.94))] px-5 py-4">
+                <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-44 bg-[radial-gradient(circle_at_center,_rgba(61,8,186,0.09),_transparent_72%)] sm:block" />
+                <div className="relative">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-[#3D08BA]/18 bg-[#3D08BA]/7 px-2.5 py-1 text-[11px] font-semibold text-[#3D08BA]">
+                      Grade submission
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-white/92 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                      Max {gradeTarget.maxScore} marks
+                    </span>
+                  </div>
+                  <h2 className="mt-3 text-xl font-semibold text-slate-900">{gradeTarget.studentName}</h2>
+                  <p className="mt-1 text-sm text-slate-500">Submitted {formatDateTime(gradeTarget.submittedAt)}</p>
+                </div>
               </div>
-              <div className="space-y-4 px-5 py-5">
-                <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-700">Score</span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={gradeTarget.maxScore}
-                    value={gradeScore}
-                    onChange={(event) => setGradeScore(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                  />
-                  <p className="text-xs text-slate-500">Maximum available marks: {gradeTarget.maxScore}</p>
-                </label>
-                <label className="space-y-2">
-                  <span className="text-sm font-medium text-slate-700">Teacher note</span>
-                  <textarea
-                    rows={4}
-                    value={gradeFeedback}
-                    onChange={(event) => setGradeFeedback(event.target.value)}
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
-                    placeholder="Add feedback for the student"
-                  />
-                </label>
+              <div className="space-y-4 bg-[linear-gradient(180deg,_rgba(255,255,255,0.94),_rgba(248,250,252,0.82))] px-5 py-5">
+                <div className="grid gap-4 sm:grid-cols-[160px_minmax(0,1fr)]">
+                  <div className="rounded-[24px] border border-[#3D08BA]/12 bg-[#3D08BA]/5 px-4 py-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]/70">Score</p>
+                    <p className="mt-2 text-2xl font-semibold text-[#3D08BA]">
+                      {gradeScore.trim() ? gradeScore : '--'}
+                    </p>
+                    <p className="mt-1 text-xs text-[#3D08BA]/70">out of {gradeTarget.maxScore}</p>
+                  </div>
+
+                  <div className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.04)]">
+                    <label className="space-y-2">
+                      <span className="text-sm font-medium text-slate-700">Score</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={gradeTarget.maxScore}
+                        value={gradeScore}
+                        onChange={(event) => setGradeScore(event.target.value)}
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                      />
+                      <p className="text-xs text-slate-500">Maximum available marks: {gradeTarget.maxScore}</p>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.04)]">
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-slate-700">Teacher note</span>
+                    <textarea
+                      rows={4}
+                      value={gradeFeedback}
+                      onChange={(event) => setGradeFeedback(event.target.value)}
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-[#3D08BA]/30 focus:bg-white focus:ring-4 focus:ring-[#3D08BA]/10"
+                      placeholder="Add feedback for the student"
+                    />
+                  </label>
+                </div>
               </div>
-              <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-5 py-4">
-                <button
-                  type="button"
-                  onClick={closeGradeModal}
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={gradeSaving}
-                  onClick={() => void handleGradeSubmission()}
-                  className="rounded-2xl bg-[#3D08BA] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2D0690] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {gradeSaving ? 'Saving...' : 'Save grade'}
-                </button>
+              <div className="flex flex-col gap-3 border-t border-slate-200/80 bg-slate-50/85 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-slate-500">Save the score and feedback so the student can see the updated result.</p>
+                <div className="flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={closeGradeModal}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={gradeSaving}
+                    onClick={() => void handleGradeSubmission()}
+                    className="rounded-2xl bg-[#3D08BA] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2D0690] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {gradeSaving ? 'Saving...' : 'Save grade'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

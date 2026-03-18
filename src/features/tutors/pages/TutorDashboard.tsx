@@ -361,7 +361,7 @@ const TutorDashboard = () => {
   };
 
   const handleResourceUploadClick = () => {
-    navigate('/resources?actor=tutor&mode=upload');
+    navigate('/tutor-resources?mode=upload');
   };
 
   const handleLogout = async () => {
