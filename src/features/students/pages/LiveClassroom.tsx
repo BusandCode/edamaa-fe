@@ -47,11 +47,13 @@ import {
   fetchTeachingSubscriptionState,
   type TeachingActor,
 } from '../../subscriptions/utils/teachingSubscriptionApi';
+import { uploadResourceForActor } from '../../schools/utils/resourcesApi';
 import { loadStudentIdentity } from '../utils/studentIdentity';
 import {
   fetchSchoolScheduleSessions,
   type SchoolScheduleSession,
 } from '../../schools/utils/schoolScheduleApi';
+import { downloadFile } from '../../../utils/exportFiles';
 
 type ClassLevel = 'Beginner' | 'Intermediate' | 'Advanced';
 type RoomRole = 'teacher' | 'student';
@@ -528,6 +530,13 @@ const getBadgeForTotalGiftedCoins = (totalGiftedCoins: number) => {
 const sanitizeCardNumber = (value: string) => value.replace(/[^\d]/g, '').slice(0, 16);
 const sanitizeExpiry = (value: string) => value.replace(/[^\d/]/g, '').slice(0, 5);
 const sanitizeCvv = (value: string) => value.replace(/[^\d]/g, '').slice(0, 4);
+const LIVE_RECORDING_UPLOAD_LIMIT_BYTES = 25 * 1024 * 1024;
+const sanitizeFilePart = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'recording';
 
 const LiveClassroom = () => {
   const navigate = useNavigate();
@@ -572,6 +581,7 @@ const LiveClassroom = () => {
   const channelName = useMemo(() => `live-class:${liveClass.id}`, [liveClass.id]);
   const hasTeacherAuthSession = useMemo(() => hasPersistedAuthSession(), []);
   const canManageLinkedAssignments = isTeacher && hasTeacherAuthSession && Boolean(liveClass.id);
+  const canAutoPublishLiveRecording = isTeacher && hasTeacherAuthSession && Boolean(liveClass.id);
 
   const clientIdRef = useRef(`client-${Date.now()}-${Math.floor(Math.random() * 100000)}`);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -579,6 +589,11 @@ const LiveClassroom = () => {
   const stageLocalVideoRef = useRef<HTMLVideoElement | null>(null);
   const stageRemoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const liveRecordingMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const liveRecordingChunksRef = useRef<BlobPart[]>([]);
+  const liveRecordingStartMsRef = useRef<number | null>(null);
+  const liveRecordingTickerRef = useRef<number | null>(null);
+  const liveRecordingStopResolverRef = useRef<(() => void) | null>(null);
 
   const chatBodyRef = useRef<HTMLDivElement | null>(null);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
@@ -869,6 +884,9 @@ const LiveClassroom = () => {
   const [screenShared, setScreenShared] = useState(false);
   const [mediaError, setMediaError] = useState('');
   const [settingsToastVisible, setSettingsToastVisible] = useState(false);
+  const [isLiveRecording, setIsLiveRecording] = useState(false);
+  const [isPublishingLiveRecording, setIsPublishingLiveRecording] = useState(false);
+  const [liveRecordingSeconds, setLiveRecordingSeconds] = useState(0);
 
   const pushNotice = useCallback((text: string, type: NoticeTone = 'info') => {
     setNoticeState({ type, text });
@@ -877,6 +895,119 @@ const LiveClassroom = () => {
   const clearNotice = useCallback(() => {
     setNoticeState(null);
   }, []);
+
+  const clearLiveRecordingTicker = useCallback(() => {
+    if (liveRecordingTickerRef.current !== null) {
+      window.clearInterval(liveRecordingTickerRef.current);
+      liveRecordingTickerRef.current = null;
+    }
+  }, []);
+
+  const publishCapturedLiveRecording = useCallback(
+    async (blob: Blob, startedAtMs: number | null) => {
+      const startedAt = startedAtMs ? new Date(startedAtMs) : new Date();
+      const startedAtLabel = startedAt.toLocaleString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      const baseTitle = `${liveClass.subject} live class recording`;
+      const fileName = `${sanitizeFilePart(liveClass.subject)}-live-recording-${startedAt
+        .toISOString()
+        .replace(/[:.]/g, '-')}.webm`;
+      const file = new File([blob], fileName, {
+        type: blob.type || 'video/webm',
+      });
+
+      if (file.size > LIVE_RECORDING_UPLOAD_LIMIT_BYTES) {
+        downloadFile(blob, fileName);
+        pushNotice(
+          'Recording saved to your device. It is too large for direct resource upload, so publish it manually if needed.',
+          'warning'
+        );
+        return;
+      }
+
+      if (!canAutoPublishLiveRecording) {
+        downloadFile(blob, fileName);
+        pushNotice(
+          'Recording saved to your device. Sign in with a school or tutor account to auto-publish replays.',
+          'warning'
+        );
+        return;
+      }
+
+      setIsPublishingLiveRecording(true);
+      try {
+        const instructorName =
+          teacherActor === 'school'
+            ? schoolBranding?.schoolName || selfParticipant.name || liveClass.instructor
+            : selfParticipant.name || liveClass.instructor;
+
+        await uploadResourceForActor(
+          {
+            title: `${baseTitle} • ${startedAtLabel}`,
+            description: `Replay of ${liveClass.name} recorded on ${startedAtLabel}. Students can use this to revisit the live lesson and key explanations.`,
+            subject: linkedAssignmentSession?.subject || liveClass.subject,
+            type: 'video',
+            category: 'live_recording',
+            pricingType: 'free',
+            price: '',
+            uploaderRole: teacherActor,
+            instructorName,
+            file,
+          },
+          teacherActor
+        );
+
+        pushNotice(
+          teacherActor === 'school'
+            ? 'Live recording published to school resources.'
+            : 'Live recording published to tutor resources.',
+          'success'
+        );
+      } catch (error) {
+        downloadFile(blob, fileName);
+        pushNotice(
+          error instanceof Error
+            ? `${error.message} Recording was saved to your device instead.`
+            : 'Could not auto-publish the recording. It was saved to your device instead.',
+          'warning'
+        );
+      } finally {
+        setIsPublishingLiveRecording(false);
+      }
+    },
+    [
+      canAutoPublishLiveRecording,
+      linkedAssignmentSession?.subject,
+      liveClass.instructor,
+      liveClass.name,
+      liveClass.subject,
+      pushNotice,
+      schoolBranding?.schoolName,
+      selfParticipant.name,
+      teacherActor,
+    ]
+  );
+
+  const finalizeLiveRecording = useCallback(async () => {
+    const recorder = liveRecordingMediaRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') {
+      return;
+    }
+
+    clearLiveRecordingTicker();
+    setIsLiveRecording(false);
+
+    const completion = new Promise<void>((resolve) => {
+      liveRecordingStopResolverRef.current = resolve;
+    });
+
+    recorder.stop();
+    await completion;
+  }, [clearLiveRecordingTicker]);
 
   const refreshSchoolAttendanceState = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -1352,6 +1483,15 @@ const LiveClassroom = () => {
   );
 
   const stopLocalStream = useCallback(() => {
+    const recorder = liveRecordingMediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      try {
+        recorder.stop();
+      } catch {
+        // Ignore recorder shutdown errors during stream teardown.
+      }
+    }
+
     const stream = localStreamRef.current;
     if (stream) {
       stream.getTracks().forEach((track) => track.stop());
@@ -1815,6 +1955,13 @@ const LiveClassroom = () => {
       }
     };
   }, []);
+
+  useEffect(() => {
+    return () => {
+      clearLiveRecordingTicker();
+      liveRecordingStopResolverRef.current = null;
+    };
+  }, [clearLiveRecordingTicker]);
 
   useEffect(() => {
     const chatBody = chatBodyRef.current;
@@ -2801,6 +2948,109 @@ const LiveClassroom = () => {
     setMicOn((previous) => !previous);
   };
 
+  const toggleLiveRecording = async () => {
+    if (!isTeacher) {
+      pushNotice('Only the host can record this live class.', 'warning');
+      return;
+    }
+
+    if (isPublishingLiveRecording) {
+      pushNotice('Please wait while the current recording is being published.', 'warning');
+      return;
+    }
+
+    if (isLiveRecording) {
+      pushNotice('Stopping recording and preparing the replay file...', 'info');
+      await finalizeLiveRecording();
+      return;
+    }
+
+    if (typeof window === 'undefined' || typeof MediaRecorder === 'undefined') {
+      pushNotice('This browser does not support live class recording.', 'warning');
+      return;
+    }
+
+    const stream = localStreamRef.current;
+    if (!stream || stream.getTracks().length === 0) {
+      pushNotice('Go live with your camera before starting a recording.', 'warning');
+      return;
+    }
+
+    const hasVideoTrack = stream.getVideoTracks().some((track) => track.readyState === 'live');
+    if (!hasVideoTrack) {
+      pushNotice('Turn camera on before recording. Live recordings must include video.', 'warning');
+      return;
+    }
+
+    try {
+      const recorder = new MediaRecorder(stream, {
+        mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
+          ? 'video/webm;codecs=vp8,opus'
+          : 'video/webm',
+      });
+
+      liveRecordingChunksRef.current = [];
+      liveRecordingStartMsRef.current = Date.now();
+      setLiveRecordingSeconds(0);
+      setIsLiveRecording(true);
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          liveRecordingChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(liveRecordingChunksRef.current, {
+          type: recorder.mimeType || 'video/webm',
+        });
+        liveRecordingMediaRecorderRef.current = null;
+        liveRecordingChunksRef.current = [];
+        const startedAt = liveRecordingStartMsRef.current;
+        liveRecordingStartMsRef.current = null;
+        clearLiveRecordingTicker();
+        setIsLiveRecording(false);
+        setLiveRecordingSeconds(0);
+
+        void (async () => {
+          if (blob.size > 0) {
+            await publishCapturedLiveRecording(blob, startedAt);
+          } else {
+            pushNotice('No recording data was captured for this class session.', 'warning');
+          }
+          const resolve = liveRecordingStopResolverRef.current;
+          liveRecordingStopResolverRef.current = null;
+          resolve?.();
+        })();
+      };
+
+      recorder.onerror = () => {
+        pushNotice('Live class recording stopped because the browser could not keep recording.', 'warning');
+      };
+
+      liveRecordingMediaRecorderRef.current = recorder;
+      recorder.start(1000);
+      clearLiveRecordingTicker();
+      liveRecordingTickerRef.current = window.setInterval(() => {
+        const startedAt = liveRecordingStartMsRef.current;
+        if (!startedAt) {
+          setLiveRecordingSeconds(0);
+          return;
+        }
+        setLiveRecordingSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+      }, 1000);
+
+      pushNotice(
+        canAutoPublishLiveRecording
+          ? 'Recording started. It will be added to resources when you stop.'
+          : 'Recording started. If auto-publish is unavailable, the replay will download locally.',
+        'success'
+      );
+    } catch {
+      pushNotice('Could not start live class recording on this browser.', 'warning');
+    }
+  };
+
   const toggleCamera = () => {
     if (!isTeacher) {
       pushNotice('Tutor controls live media in this stream mode.');
@@ -3465,10 +3715,17 @@ const LiveClassroom = () => {
     navigate(isTeacher ? (teacherActor === 'school' ? '/school-dashboard' : '/tutor-dashboard') : '/join-class');
   };
 
-  const handleClassroomExit = () => {
+  const handleClassroomExit = async () => {
     // Keep one exit flow, but present host/student intent clearly in the UI.
     if (isTeacher) {
       pushNotice('Ending class for all participants...');
+    }
+    if (isPublishingLiveRecording) {
+      pushNotice('Please wait while the class recording finishes publishing.', 'warning');
+      return;
+    }
+    if (isLiveRecording) {
+      await finalizeLiveRecording();
     }
     leaveClassroom();
   };
@@ -4058,6 +4315,22 @@ const LiveClassroom = () => {
 
               <div className="absolute left-3 top-3 flex items-center gap-2">
                 <span className="rounded-full bg-red-500 px-2.5 py-1 text-[11px] font-bold">LIVE</span>
+                {(isLiveRecording || isPublishingLiveRecording) && (
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                      isLiveRecording ? 'bg-rose-500/90 text-white' : 'bg-amber-400/90 text-slate-950'
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${isLiveRecording ? 'animate-pulse bg-white' : 'bg-slate-950'}`}
+                    ></span>
+                    {isLiveRecording
+                      ? `REC ${Math.floor(liveRecordingSeconds / 60)
+                          .toString()
+                          .padStart(2, '0')}:${(liveRecordingSeconds % 60).toString().padStart(2, '0')}`
+                      : 'Publishing replay'}
+                  </span>
+                )}
                 <span className="rounded-full bg-black/35 px-2.5 py-1 text-[11px] text-white/90">{viewerCount} viewers</span>
               </div>
 
@@ -4122,7 +4395,7 @@ const LiveClassroom = () => {
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-2 border-t border-white/10 bg-black/25 p-3 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="grid grid-cols-2 gap-2 border-t border-white/10 bg-black/25 p-3 sm:grid-cols-3 lg:grid-cols-7">
               <button
                 onClick={toggleMic}
                 className={`rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${
@@ -4177,6 +4450,25 @@ const LiveClassroom = () => {
                   <HandRaisedIcon className="h-4 w-4" />
                 </span>
                 {handRaised ? 'Lower Hand' : 'Raise Hand'}
+              </button>
+
+              <button
+                onClick={() => void toggleLiveRecording()}
+                disabled={!isTeacher || isPublishingLiveRecording}
+                className={`rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${
+                  isLiveRecording
+                    ? 'border-rose-400/45 bg-rose-500/20 text-rose-100'
+                    : 'border-white/20 bg-white/10 text-white/85 hover:bg-white/15'
+                } ${!isTeacher || isPublishingLiveRecording ? 'cursor-not-allowed opacity-60' : ''}`}
+              >
+                <span className="mx-auto mb-1 block w-fit">
+                  <VideoCameraIcon className="h-4 w-4" />
+                </span>
+                {isPublishingLiveRecording
+                  ? 'Publishing...'
+                  : isLiveRecording
+                  ? 'Stop Rec'
+                  : 'Record'}
               </button>
 
               {giftingEnabled && (
