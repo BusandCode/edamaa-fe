@@ -13,6 +13,7 @@ API_COMPAT_PATH="${API_COMPAT_PATH:-/school-finance/me/reminders/health?days=7}"
 API_COMPAT_POST_PATH="${API_COMPAT_POST_PATH:-/school-finance/me/reminders/exports/audit}"
 API_COMPAT_EXAMS_PATH="${API_COMPAT_EXAMS_PATH:-/school-exams/notifications}"
 API_COMPAT_ASSIGNMENTS_PATH="${API_COMPAT_ASSIGNMENTS_PATH:-/school-assignments/notifications}"
+API_COMPAT_TUTOR_ASSIGNMENTS_PATH="${API_COMPAT_TUTOR_ASSIGNMENTS_PATH:-/tutor-assignments/notifications}"
 API_COMPAT_POST_DEV_EMAIL="${API_COMPAT_POST_DEV_EMAIL:-compat.school@edamaa.dev}"
 API_COMPAT_POST_DEV_ROLE="${API_COMPAT_POST_DEV_ROLE:-school}"
 API_SKIP_PRISMA_CONNECT="${API_SKIP_PRISMA_CONNECT:-1}"
@@ -53,16 +54,23 @@ if [ "$api_health_code" = "200" ]; then
       -H "x-dev-user-role: ${API_COMPAT_POST_DEV_ROLE}" \
       "$compat_assignments_url" || true
   )"
+  compat_tutor_assignments_url="http://${API_HOST}:${API_PORT}${API_COMPAT_TUTOR_ASSIGNMENTS_PATH}"
+  compat_tutor_assignments_code="$(
+    curl -s -o /dev/null -w '%{http_code}' \
+      -H "x-dev-user-email: ${API_COMPAT_POST_DEV_EMAIL}" \
+      -H "x-dev-user-role: ${API_COMPAT_POST_DEV_ROLE}" \
+      "$compat_tutor_assignments_url" || true
+  )"
 
   # A 404 on either probe usually means an old/stale NestJS build is running.
   # Non-404 responses (200/201/400/401/403/etc.) are considered route-compatible.
-  if [ "$compat_code" != "404" ] && [ "$compat_post_code" != "404" ] && [ "$compat_exams_code" != "404" ] && [ "$compat_assignments_code" != "404" ]; then
+  if [ "$compat_code" != "404" ] && [ "$compat_post_code" != "404" ] && [ "$compat_exams_code" != "404" ] && [ "$compat_assignments_code" != "404" ] && [ "$compat_tutor_assignments_code" != "404" ]; then
     echo "API already running: http://${API_HOST}:${API_PORT}"
     exit 0
   fi
 
   echo "API is running but missing one or more compatibility routes."
-  echo "GET ${API_COMPAT_PATH} -> ${compat_code}, POST ${API_COMPAT_POST_PATH} -> ${compat_post_code}, GET ${API_COMPAT_EXAMS_PATH} -> ${compat_exams_code}, GET ${API_COMPAT_ASSIGNMENTS_PATH} -> ${compat_assignments_code}"
+  echo "GET ${API_COMPAT_PATH} -> ${compat_code}, POST ${API_COMPAT_POST_PATH} -> ${compat_post_code}, GET ${API_COMPAT_EXAMS_PATH} -> ${compat_exams_code}, GET ${API_COMPAT_ASSIGNMENTS_PATH} -> ${compat_assignments_code}, GET ${API_COMPAT_TUTOR_ASSIGNMENTS_PATH} -> ${compat_tutor_assignments_code}"
   echo "Restarting stale process..."
   stale_pid=""
   if [ -f "$NEST_PID_FILE" ]; then

@@ -13,8 +13,18 @@ export class AssignmentsController {
     return this.assignmentsService.listSchoolAssignments(this.getAuthUser(request));
   }
 
+  @Get('tutor-assignments')
+  listTutorAssignments(@Req() request: Request) {
+    return this.assignmentsService.listSchoolAssignments(this.getAuthUser(request));
+  }
+
   @Post('school-assignments')
   createSchoolAssignment(@Req() request: Request, @Body() body: Record<string, unknown>) {
+    return this.assignmentsService.createSchoolAssignment(this.getAuthUser(request), body);
+  }
+
+  @Post('tutor-assignments')
+  createTutorAssignment(@Req() request: Request, @Body() body: Record<string, unknown>) {
     return this.assignmentsService.createSchoolAssignment(this.getAuthUser(request), body);
   }
 
@@ -27,8 +37,22 @@ export class AssignmentsController {
     return this.assignmentsService.updateSchoolAssignment(this.getAuthUser(request), assignmentId, body);
   }
 
+  @Patch('tutor-assignments/:assignmentId')
+  updateTutorAssignment(
+    @Req() request: Request,
+    @Param('assignmentId') assignmentId: string,
+    @Body() body: Record<string, unknown>
+  ) {
+    return this.assignmentsService.updateSchoolAssignment(this.getAuthUser(request), assignmentId, body);
+  }
+
   @Delete('school-assignments/:assignmentId')
   deleteSchoolAssignment(@Req() request: Request, @Param('assignmentId') assignmentId: string) {
+    return this.assignmentsService.deleteSchoolAssignment(this.getAuthUser(request), assignmentId);
+  }
+
+  @Delete('tutor-assignments/:assignmentId')
+  deleteTutorAssignment(@Req() request: Request, @Param('assignmentId') assignmentId: string) {
     return this.assignmentsService.deleteSchoolAssignment(this.getAuthUser(request), assignmentId);
   }
 
@@ -37,13 +61,28 @@ export class AssignmentsController {
     return this.assignmentsService.listSchoolAssignmentSubmissions(this.getAuthUser(request), assignmentId || '');
   }
 
+  @Get('tutor-assignments/submissions')
+  listTutorAssignmentSubmissions(@Req() request: Request, @Query('assignmentId') assignmentId?: string) {
+    return this.assignmentsService.listSchoolAssignmentSubmissions(this.getAuthUser(request), assignmentId || '');
+  }
+
   @Post('school-assignments/grade')
   gradeSchoolAssignmentSubmission(@Req() request: Request, @Body() body: Record<string, unknown>) {
     return this.assignmentsService.gradeSchoolAssignmentSubmission(this.getAuthUser(request), body);
   }
 
+  @Post('tutor-assignments/grade')
+  gradeTutorAssignmentSubmission(@Req() request: Request, @Body() body: Record<string, unknown>) {
+    return this.assignmentsService.gradeSchoolAssignmentSubmission(this.getAuthUser(request), body);
+  }
+
   @Get('school-assignments/notifications')
   listSchoolAssignmentNotifications(@Req() request: Request) {
+    return this.assignmentsService.listSchoolAssignmentNotifications(this.getAuthUser(request));
+  }
+
+  @Get('tutor-assignments/notifications')
+  listTutorAssignmentNotifications(@Req() request: Request) {
     return this.assignmentsService.listSchoolAssignmentNotifications(this.getAuthUser(request));
   }
 
@@ -58,13 +97,40 @@ export class AssignmentsController {
     );
   }
 
+  @Post('tutor-assignments/notifications/:notificationId/read')
+  markTutorAssignmentNotificationAsRead(
+    @Req() request: Request,
+    @Param('notificationId') notificationId: string
+  ) {
+    return this.assignmentsService.markSchoolAssignmentNotificationAsRead(
+      this.getAuthUser(request),
+      notificationId
+    );
+  }
+
   @Post('school-assignments/notifications/read-all')
   markAllSchoolAssignmentNotificationsAsRead(@Req() request: Request) {
     return this.assignmentsService.markAllSchoolAssignmentNotificationsAsRead(this.getAuthUser(request));
   }
 
+  @Post('tutor-assignments/notifications/read-all')
+  markAllTutorAssignmentNotificationsAsRead(@Req() request: Request) {
+    return this.assignmentsService.markAllSchoolAssignmentNotificationsAsRead(this.getAuthUser(request));
+  }
+
   @Delete('school-assignments/notifications/:notificationId')
   archiveSchoolAssignmentNotification(
+    @Req() request: Request,
+    @Param('notificationId') notificationId: string
+  ) {
+    return this.assignmentsService.archiveSchoolAssignmentNotification(
+      this.getAuthUser(request),
+      notificationId
+    );
+  }
+
+  @Delete('tutor-assignments/notifications/:notificationId')
+  archiveTutorAssignmentNotification(
     @Req() request: Request,
     @Param('notificationId') notificationId: string
   ) {

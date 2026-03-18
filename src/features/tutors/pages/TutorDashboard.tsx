@@ -364,6 +364,10 @@ const TutorDashboard = () => {
     navigate('/tutor-resources?mode=upload');
   };
 
+  const handleAssignmentsClick = () => {
+    navigate('/tutor-assignments');
+  };
+
   const handleLogout = async () => {
     await signOutEverywhere();
     navigate('/signin', { replace: true });
@@ -582,6 +586,12 @@ const TutorDashboard = () => {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
+                  onClick={handleAssignmentsClick}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
+                >
+                  Manage Homework
+                </button>
+                <button
                   onClick={handleResourceUploadClick}
                   className="rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10"
                 >
@@ -605,6 +615,12 @@ const TutorDashboard = () => {
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleAssignmentsClick}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
+                >
+                  Manage Homework
+                </button>
                 <button
                   onClick={handleResourceUploadClick}
                   className="rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10"

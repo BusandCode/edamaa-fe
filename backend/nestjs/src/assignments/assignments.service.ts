@@ -185,7 +185,7 @@ export class AssignmentsService {
     );
 
     if (index === -1) {
-      throw new NotFoundException('Assignment was not found for this school.');
+      throw new NotFoundException('Assignment was not found for this account.');
     }
 
     const existing = state.assignments[index];
@@ -214,7 +214,7 @@ export class AssignmentsService {
     );
 
     if (!target) {
-      throw new NotFoundException('Assignment was not found for this school.');
+      throw new NotFoundException('Assignment was not found for this account.');
     }
 
     state.assignments = state.assignments.filter((assignment) => assignment.id !== normalizedAssignmentId);
@@ -236,7 +236,7 @@ export class AssignmentsService {
     );
 
     if (!assignment) {
-      throw new NotFoundException('Assignment was not found for this school.');
+      throw new NotFoundException('Assignment was not found for this account.');
     }
 
     const submissions = state.submissions
@@ -262,7 +262,7 @@ export class AssignmentsService {
     const submission = state.submissions[submissionIndex];
     const assignment = state.assignments.find((item) => item.id === submission.assignmentId);
     if (!assignment || assignment.schoolUserId !== schoolUserId) {
-      throw new ForbiddenException('This submission does not belong to your school.');
+      throw new ForbiddenException('This submission does not belong to your account.');
     }
 
     const score = this.normalizeNumber(input.score, 'Score');
@@ -341,7 +341,7 @@ export class AssignmentsService {
     const exists = payload.notifications.some((notification) => notification.id === normalizedNotificationId);
 
     if (!exists) {
-      throw new NotFoundException('Notification was not found for this school.');
+      throw new NotFoundException('Notification was not found for this account.');
     }
 
     const state = this.loadState();
@@ -402,7 +402,7 @@ export class AssignmentsService {
     const exists = payload.notifications.some((notification) => notification.id === normalizedNotificationId);
 
     if (!exists) {
-      throw new NotFoundException('Notification was not found for this school.');
+      throw new NotFoundException('Notification was not found for this account.');
     }
 
     const state = this.loadState();
@@ -775,12 +775,12 @@ export class AssignmentsService {
 
   private resolveSchoolUserId(authUser: AuthUserContext) {
     const role = this.normalizeRole(authUser.role);
-    if (!this.isSchoolManagerRole(role)) {
-      throw new ForbiddenException('Only school or admin accounts can manage homework.');
+    if (!this.isAssignmentManagerRole(role)) {
+      throw new ForbiddenException('Only school, tutor, or admin accounts can manage homework.');
     }
     const identifier = authUser.id || authUser.email;
     if (!identifier) {
-      throw new ForbiddenException('School account identity could not be verified.');
+      throw new ForbiddenException('Account identity could not be verified.');
     }
     return identifier;
   }
@@ -799,8 +799,17 @@ export class AssignmentsService {
       .replace(/[\s_]+/g, '-');
   }
 
-  private isSchoolManagerRole(role: string) {
-    return role === 'school' || role === 'admin' || role === 'school-admin' || role === 'school-owner';
+  private isAssignmentManagerRole(role: string) {
+    return (
+      role === 'school' ||
+      role === 'admin' ||
+      role === 'school-admin' ||
+      role === 'school-owner' ||
+      role === 'tutor' ||
+      role === 'teacher' ||
+      role === 'instructor' ||
+      role === 'tutor-admin'
+    );
   }
 
   private resolveStudentId(authUser: AuthUserContext, input?: unknown) {

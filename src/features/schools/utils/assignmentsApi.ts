@@ -136,6 +136,8 @@ export type SubmitStudentAssignmentInput = {
   answers?: { questionId: string; optionId: string }[];
 };
 
+export type AssignmentActor = 'school' | 'tutor';
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
 
 const isLocalhostHost = (host: string) => host === '127.0.0.1' || host === 'localhost';
@@ -337,6 +339,134 @@ export const archiveSchoolAssignmentNotification = async (notificationId: string
   );
   return response.json() as Promise<{ notificationId: string; unreadCount: number; archived: true }>;
 };
+
+const fetchActorAssignments = async (actor: AssignmentActor) => {
+  const response = await requestWithAuth(`/${actor}-assignments`, undefined, actor);
+  return response.json() as Promise<{
+    assignments: SchoolAssignment[];
+    summary: { total: number; active: number; awaitingReview: number };
+  }>;
+};
+
+const createActorAssignment = async (actor: AssignmentActor, input: CreateSchoolAssignmentInput) => {
+  const response = await requestWithAuth(`/${actor}-assignments`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }, actor);
+  return response.json() as Promise<{
+    message: string;
+    assignment: SchoolAssignment;
+    assignments: SchoolAssignment[];
+  }>;
+};
+
+const updateActorAssignment = async (actor: AssignmentActor, assignmentId: string, input: UpdateSchoolAssignmentInput) => {
+  const response = await requestWithAuth(`/${actor}-assignments/${encodeURIComponent(assignmentId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  }, actor);
+  return response.json() as Promise<{
+    message: string;
+    assignment: SchoolAssignment;
+    assignments: SchoolAssignment[];
+  }>;
+};
+
+const deleteActorAssignment = async (actor: AssignmentActor, assignmentId: string) => {
+  const response = await requestWithAuth(`/${actor}-assignments/${encodeURIComponent(assignmentId)}`, {
+    method: 'DELETE',
+  }, actor);
+  return response.json() as Promise<{
+    message: string;
+    assignments: SchoolAssignment[];
+  }>;
+};
+
+const fetchActorAssignmentSubmissions = async (actor: AssignmentActor, assignmentId: string) => {
+  const response = await requestWithAuth(
+    `/${actor}-assignments/submissions?assignmentId=${encodeURIComponent(assignmentId)}`,
+    undefined,
+    actor
+  );
+  return response.json() as Promise<{
+    assignment: SchoolAssignment;
+    submissions: AssignmentSubmission[];
+  }>;
+};
+
+const gradeActorAssignmentSubmission = async (
+  actor: AssignmentActor,
+  input: { submissionId: string; score: number; feedback?: string }
+) => {
+  const response = await requestWithAuth(`/${actor}-assignments/grade`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }, actor);
+  return response.json() as Promise<{
+    message: string;
+    submission: AssignmentSubmission;
+  }>;
+};
+
+const fetchActorAssignmentNotifications = async (actor: AssignmentActor) => {
+  const response = await requestWithAuth(`/${actor}-assignments/notifications`, undefined, actor);
+  return response.json() as Promise<{
+    unreadCount: number;
+    notifications: SchoolAssignmentNotification[];
+  }>;
+};
+
+const markActorAssignmentNotificationAsRead = async (actor: AssignmentActor, notificationId: string) => {
+  const response = await requestWithAuth(
+    `/${actor}-assignments/notifications/${encodeURIComponent(notificationId)}/read`,
+    {
+      method: 'POST',
+      body: JSON.stringify({}),
+    },
+    actor
+  );
+  return response.json() as Promise<{ notificationId: string; unreadCount: number }>;
+};
+
+const markAllActorAssignmentNotificationsAsRead = async (actor: AssignmentActor) => {
+  const response = await requestWithAuth(
+    `/${actor}-assignments/notifications/read-all`,
+    {
+      method: 'POST',
+      body: JSON.stringify({}),
+    },
+    actor
+  );
+  return response.json() as Promise<{ updated: number; unreadCount: number }>;
+};
+
+const archiveActorAssignmentNotification = async (actor: AssignmentActor, notificationId: string) => {
+  const response = await requestWithAuth(
+    `/${actor}-assignments/notifications/${encodeURIComponent(notificationId)}`,
+    {
+      method: 'DELETE',
+    },
+    actor
+  );
+  return response.json() as Promise<{ notificationId: string; unreadCount: number; archived: true }>;
+};
+
+export const fetchTutorAssignments = async () => fetchActorAssignments('tutor');
+export const createTutorAssignment = async (input: CreateSchoolAssignmentInput) => createActorAssignment('tutor', input);
+export const updateTutorAssignment = async (assignmentId: string, input: UpdateSchoolAssignmentInput) =>
+  updateActorAssignment('tutor', assignmentId, input);
+export const deleteTutorAssignment = async (assignmentId: string) => deleteActorAssignment('tutor', assignmentId);
+export const fetchTutorAssignmentSubmissions = async (assignmentId: string) =>
+  fetchActorAssignmentSubmissions('tutor', assignmentId);
+export const gradeTutorAssignmentSubmission = async (input: { submissionId: string; score: number; feedback?: string }) =>
+  gradeActorAssignmentSubmission('tutor', input);
+export const fetchTutorAssignmentNotifications = async () => fetchActorAssignmentNotifications('tutor');
+export const markTutorAssignmentNotificationAsRead = async (notificationId: string) =>
+  markActorAssignmentNotificationAsRead('tutor', notificationId);
+export const markAllTutorAssignmentNotificationsAsRead = async () =>
+  markAllActorAssignmentNotificationsAsRead('tutor');
+export const archiveTutorAssignmentNotification = async (notificationId: string) =>
+  archiveActorAssignmentNotification('tutor', notificationId);
 
 export const fetchStudentAssignments = async (params: {
   department: string;
