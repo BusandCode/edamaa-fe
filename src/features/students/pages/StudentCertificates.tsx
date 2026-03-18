@@ -210,6 +210,11 @@ const StudentCertificates = () => {
                   <p className='mt-2 text-sm font-semibold text-slate-900'>{formatDate(latestCertificate.issueDate)}</p>
                 </div>
               </div>
+              <div className='mt-4 rounded-2xl bg-white p-4 shadow-sm'>
+                <p className='text-xs font-semibold uppercase tracking-[0.16em] text-slate-500'>Signed by</p>
+                <p className='mt-2 text-sm font-semibold text-slate-900'>{latestCertificate.signatoryName}</p>
+                <p className='mt-1 text-xs text-slate-500'>{latestCertificate.signatoryTitle}</p>
+              </div>
             </div>
           </section>
         )}
@@ -304,6 +309,13 @@ const StudentCertificates = () => {
                       <div className='flex items-start justify-between gap-4'>
                         <dt className='text-slate-500'>Verification code</dt>
                         <dd className='text-right text-slate-700'>{certificate.verificationCode}</dd>
+                      </div>
+                      <div className='flex items-start justify-between gap-4'>
+                        <dt className='text-slate-500'>Signed by</dt>
+                        <dd className='text-right'>
+                          <span className='block font-semibold text-slate-900'>{certificate.signatoryName}</span>
+                          <span className='text-xs text-slate-500'>{certificate.signatoryTitle}</span>
+                        </dd>
                       </div>
                     </dl>
                     <div className='mt-5 flex flex-wrap gap-2'>

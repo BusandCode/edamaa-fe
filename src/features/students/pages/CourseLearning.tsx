@@ -742,7 +742,7 @@ const CourseLearning = () => {
                 </div>
                 <h2 className="mt-3 text-lg font-bold text-gray-900">Your course certificate has been issued.</h2>
                 <p className="mt-1 text-sm text-gray-600">
-                  {issuedCertificate.issuerName} issued this certificate via Edamaa3D after you completed all lessons and passed every module checkpoint.
+                  {issuedCertificate.issuerName} issued this certificate via Edamaa3D after you completed all lessons and passed every module checkpoint. It is signed by {issuedCertificate.signatoryName}.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">

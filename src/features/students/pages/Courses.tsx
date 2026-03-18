@@ -3,6 +3,7 @@ import {
   MagnifyingGlassIcon,
   BookOpenIcon,
   AcademicCapIcon,
+  CheckBadgeIcon,
   VideoCameraIcon,
   PlayCircleIcon,
   ArrowRightIcon,
@@ -204,6 +205,9 @@ const MyCourses = () => {
                       {subject.level}
                     </span>
                   </div>
+                  <div className="absolute bottom-3 left-3 rounded-full bg-emerald-500/95 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white shadow-sm">
+                    Certificate on completion
+                  </div>
                 </div>
 
                 {/* Content */}
@@ -233,6 +237,11 @@ const MyCourses = () => {
                     <div className="text-gray-500">
                       {subject.totalStudents.toLocaleString()} students
                     </div>
+                  </div>
+
+                  <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700">
+                    <CheckBadgeIcon className="h-4 w-4" />
+                    Finish this course to unlock your certificate.
                   </div>
 
                   {/* Progress Bar */}
@@ -314,6 +323,11 @@ const MyCourses = () => {
                       </span>
                     </div>
 
+                    <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700">
+                      <CheckBadgeIcon className="h-4 w-4" />
+                      Certificate on completion
+                    </div>
+
                     <p className="text-sm text-gray-600 mb-3 flex items-center gap-2">
                       <AcademicCapIcon className="w-4 h-4" />
                       {subject.instructor}
@@ -332,6 +346,10 @@ const MyCourses = () => {
                       </div>
                       <div className="text-gray-500">Last accessed: {subject.lastAccessed}</div>
                     </div>
+
+                    <p className="mb-3 text-xs font-medium text-emerald-700">
+                      Complete every lesson and pass each module checkpoint to receive your certificate.
+                    </p>
 
                     {/* Progress Bar */}
                     <div className="mb-3">

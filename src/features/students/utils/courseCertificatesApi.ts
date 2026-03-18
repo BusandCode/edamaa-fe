@@ -2,6 +2,7 @@ import { type RecordedCourse } from '../data/recordedCourses';
 import { loadStudentIdentity } from './studentIdentity';
 import { loadPersistedAuthEmail, loadSchoolBrandingNames, loadSchoolProfileImage } from '../../../utils/schoolBranding';
 import { loadTutorBranding } from '../../../utils/tutorBranding';
+import { loadEdamaaCertificateSignatorySettings } from '../../../utils/edamaaCertificateSettings';
 
 export type CourseCertificateIssuerType = 'edamaa' | 'school' | 'tutor';
 
@@ -22,6 +23,9 @@ export type CourseCertificateRecord = {
   issuerLogoDataUrl: string;
   issuerInitials: string;
   issuerRoleLabel: string;
+  signatoryName: string;
+  signatoryTitle: string;
+  signatorySignatureDataUrl: string;
   certificateTitle: string;
   achievementLine: string;
   issueDate: string;
@@ -38,6 +42,17 @@ type CourseBrandOwner = {
   issuerType: CourseCertificateIssuerType;
   fallbackName?: string;
   roleLabel: string;
+};
+
+type CourseCertificateIssuerSnapshot = {
+  issuerType: CourseCertificateIssuerType;
+  issuerName: string;
+  issuerLogoDataUrl: string;
+  issuerInitials: string;
+  issuerRoleLabel: string;
+  signatoryName: string;
+  signatoryTitle: string;
+  signatorySignatureDataUrl: string;
 };
 
 const STORAGE_KEY = 'edamaa_course_certificates_v1';
@@ -65,6 +80,105 @@ const deriveInitials = (value: string) => {
   return initials || 'ED';
 };
 
+const buildFallbackIssuerSnapshot = (
+  issuerType: CourseCertificateIssuerType,
+  issuerName: string,
+  issuerRoleLabel: string
+): CourseCertificateIssuerSnapshot => {
+  if (issuerType === 'school') {
+    const schoolBranding = loadSchoolBrandingNames();
+    return {
+      issuerType,
+      issuerName: issuerName || schoolBranding.schoolName || 'School',
+      issuerLogoDataUrl: loadSchoolProfileImage(),
+      issuerInitials: deriveInitials(issuerName || schoolBranding.schoolName || 'School'),
+      issuerRoleLabel: issuerRoleLabel || 'School academic office',
+      signatoryName: schoolBranding.adminName || 'School Admin',
+      signatoryTitle: 'School Admin',
+      signatorySignatureDataUrl: '',
+    };
+  }
+
+  if (issuerType === 'edamaa') {
+    const signatory = loadEdamaaCertificateSignatorySettings();
+    return {
+      issuerType,
+      issuerName: issuerName || signatory.issuerName,
+      issuerLogoDataUrl: signatory.issuerLogoDataUrl,
+      issuerInitials: signatory.issuerInitials || 'E3',
+      issuerRoleLabel: issuerRoleLabel || 'Platform issuer',
+      signatoryName: signatory.signatoryName,
+      signatoryTitle: signatory.signatoryTitle,
+      signatorySignatureDataUrl: signatory.signatureDataUrl,
+    };
+  }
+
+  const tutorBranding = loadTutorBranding();
+  const tutorName = issuerName || tutorBranding.displayName || 'Tutor';
+  return {
+    issuerType: 'tutor',
+    issuerName: tutorName,
+    issuerLogoDataUrl: tutorBranding.profileImage,
+    issuerInitials: tutorBranding.initials || deriveInitials(tutorName),
+    issuerRoleLabel: issuerRoleLabel || 'Course tutor',
+    signatoryName: tutorName,
+    signatoryTitle: 'Lead Tutor',
+    signatorySignatureDataUrl: '',
+  };
+};
+
+const normalizeStoredRecord = (value: unknown): CourseCertificateRecord | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const record = value as Partial<CourseCertificateRecord>;
+  const issuerType = (normalizeText(record.issuerType) as CourseCertificateIssuerType) || 'edamaa';
+  const issuerSnapshot = buildFallbackIssuerSnapshot(
+    issuerType,
+    normalizeText(record.issuerName),
+    normalizeText(record.issuerRoleLabel)
+  );
+
+  const id = normalizeText(record.id);
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    certificateCode: normalizeText(record.certificateCode),
+    verificationCode: normalizeText(record.verificationCode),
+    learnerKey: normalizeText(record.learnerKey),
+    studentId: Number(record.studentId) || 0,
+    studentName: normalizeText(record.studentName),
+    studentEmail: normalizeText(record.studentEmail),
+    courseId: Number(record.courseId) || 0,
+    courseTitle: normalizeText(record.courseTitle),
+    courseCategory: normalizeText(record.courseCategory),
+    instructorName: normalizeText(record.instructorName),
+    issuerType,
+    issuerName: normalizeText(record.issuerName) || issuerSnapshot.issuerName,
+    issuerLogoDataUrl: normalizeText(record.issuerLogoDataUrl) || issuerSnapshot.issuerLogoDataUrl,
+    issuerInitials: normalizeText(record.issuerInitials) || issuerSnapshot.issuerInitials,
+    issuerRoleLabel: normalizeText(record.issuerRoleLabel) || issuerSnapshot.issuerRoleLabel,
+    signatoryName: normalizeText(record.signatoryName) || issuerSnapshot.signatoryName,
+    signatoryTitle: normalizeText(record.signatoryTitle) || issuerSnapshot.signatoryTitle,
+    signatorySignatureDataUrl:
+      normalizeText(record.signatorySignatureDataUrl) || issuerSnapshot.signatorySignatureDataUrl,
+    certificateTitle: normalizeText(record.certificateTitle),
+    achievementLine: normalizeText(record.achievementLine),
+    issueDate: normalizeText(record.issueDate),
+    completionDate: normalizeText(record.completionDate),
+    issuedAt: normalizeText(record.issuedAt),
+    durationLabel: normalizeText(record.durationLabel),
+    totalLessons: Number(record.totalLessons) || 0,
+    completedLessons: Number(record.completedLessons) || 0,
+    moduleCount: Number(record.moduleCount) || 0,
+    passedModules: Number(record.passedModules) || 0,
+  };
+};
+
 const readStore = (): CourseCertificateRecord[] => {
   if (typeof window === 'undefined') {
     return [];
@@ -76,7 +190,7 @@ const readStore = (): CourseCertificateRecord[] => {
       return [];
     }
     const parsed = JSON.parse(rawValue) as unknown;
-    return Array.isArray(parsed) ? (parsed as CourseCertificateRecord[]) : [];
+    return Array.isArray(parsed) ? parsed.map(normalizeStoredRecord).filter(Boolean) as CourseCertificateRecord[] : [];
   } catch {
     return [];
   }
@@ -110,7 +224,7 @@ const resolveStudentScope = () => {
   };
 };
 
-const resolveIssuerSnapshot = (course: RecordedCourse) => {
+const resolveIssuerSnapshot = (course: RecordedCourse): CourseCertificateIssuerSnapshot => {
   const override = COURSE_BRAND_OVERRIDES[course.id] || {
     issuerType: 'tutor' as CourseCertificateIssuerType,
     roleLabel: 'Course tutor',
@@ -125,17 +239,24 @@ const resolveIssuerSnapshot = (course: RecordedCourse) => {
       issuerLogoDataUrl: loadSchoolProfileImage(),
       issuerInitials: deriveInitials(issuerName),
       issuerRoleLabel: override.roleLabel,
+      signatoryName: schoolBranding.adminName || 'School Admin',
+      signatoryTitle: 'School Admin',
+      signatorySignatureDataUrl: '',
     };
   }
 
   if (override.issuerType === 'edamaa') {
-    const issuerName = override.fallbackName || 'Edamaa3D';
+    const edamaaSignatory = loadEdamaaCertificateSignatorySettings();
+    const issuerName = edamaaSignatory.issuerName || override.fallbackName || 'Edamaa3D';
     return {
       issuerType: 'edamaa' as const,
       issuerName,
-      issuerLogoDataUrl: '',
-      issuerInitials: 'E3',
+      issuerLogoDataUrl: edamaaSignatory.issuerLogoDataUrl,
+      issuerInitials: edamaaSignatory.issuerInitials || 'E3',
       issuerRoleLabel: override.roleLabel,
+      signatoryName: edamaaSignatory.signatoryName,
+      signatoryTitle: edamaaSignatory.signatoryTitle,
+      signatorySignatureDataUrl: edamaaSignatory.signatureDataUrl,
     };
   }
 
@@ -147,6 +268,9 @@ const resolveIssuerSnapshot = (course: RecordedCourse) => {
     issuerLogoDataUrl: tutorBranding.profileImage,
     issuerInitials: tutorBranding.initials || deriveInitials(issuerName),
     issuerRoleLabel: override.roleLabel,
+    signatoryName: issuerName,
+    signatoryTitle: 'Lead Tutor',
+    signatorySignatureDataUrl: '',
   };
 };
 
@@ -249,6 +373,9 @@ export const issueCourseCertificateIfEligible = async (input: {
     issuerLogoDataUrl: issuer.issuerLogoDataUrl,
     issuerInitials: issuer.issuerInitials,
     issuerRoleLabel: issuer.issuerRoleLabel,
+    signatoryName: issuer.signatoryName,
+    signatoryTitle: issuer.signatoryTitle,
+    signatorySignatureDataUrl: issuer.signatorySignatureDataUrl,
     certificateTitle: 'Certificate of Completion',
     achievementLine: buildAchievementLine(course),
     issueDate: completionDate,
@@ -303,6 +430,24 @@ export const buildCourseCertificateDocDefinition = (certificate: CourseCertifica
         },
         layout: 'noBorders',
       };
+
+  const signatoryBlock = certificate.signatorySignatureDataUrl
+    ? [
+        {
+          image: certificate.signatorySignatureDataUrl,
+          fit: [120, 42],
+          margin: [0, 0, 0, 8],
+        },
+      ]
+    : [
+        {
+          text: 'Signature on file',
+          fontSize: 10,
+          italics: true,
+          color: '#64748b',
+          margin: [0, 0, 0, 8],
+        },
+      ];
 
   return {
     pageSize: 'A4',
@@ -373,9 +518,10 @@ export const buildCourseCertificateDocDefinition = (certificate: CourseCertifica
           {
             width: '*',
             stack: [
+              ...signatoryBlock,
               { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 180, y2: 0, lineColor: '#94a3b8', lineWidth: 0.8 }] },
-              { text: certificate.issuerName, fontSize: 12, bold: true, color: '#0f172a', margin: [0, 8, 0, 2] },
-              { text: certificate.issuerRoleLabel, fontSize: 10, color: '#64748b' },
+              { text: certificate.signatoryName, fontSize: 12, bold: true, color: '#0f172a', margin: [0, 8, 0, 2] },
+              { text: certificate.signatoryTitle, fontSize: 10, color: '#64748b' },
             ],
           },
           {
