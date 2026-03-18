@@ -14,6 +14,7 @@ export type ResourceCategory =
 export type ResourcePricingType = 'free' | 'paid';
 export type ResourcePriority = 'high' | 'medium' | 'low';
 export type ResourceUploaderRole = 'tutor' | 'school';
+export type FreeLibraryProvider = 'open_library' | 'google_books';
 
 export type ResourceItem = {
   id: string;
@@ -117,6 +118,37 @@ export type UpdateResourceResponse = {
   resource: ResourceItem;
   notification: ResourceNotification;
   message?: string;
+};
+
+export type FreeLibraryItem = {
+  id: string;
+  source: FreeLibraryProvider;
+  sourceLabel: string;
+  title: string;
+  authors: string[];
+  description: string;
+  subject: string;
+  coverImageUrl: string | null;
+  actionUrl: string;
+  actionLabel: string;
+  accessLabel: string;
+  licenseLabel: string;
+  publishedAt: string | null;
+};
+
+export type FreeLibraryProviderStatus = {
+  source: FreeLibraryProvider;
+  sourceLabel: string;
+  status: 'ok' | 'unavailable';
+  note: string;
+};
+
+export type FreeLibraryResponse = {
+  generatedAt: string;
+  query: string;
+  subject: string;
+  items: FreeLibraryItem[];
+  providers: FreeLibraryProviderStatus[];
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
@@ -401,4 +433,27 @@ export const fetchResourceDownload = async (
     { method: 'GET' },
     { actor }
   );
+};
+
+export const fetchFreeLibraryBooks = async (
+  params?: { q?: string; subject?: string; limit?: number },
+  actor?: ResourceUploaderRole
+) => {
+  const query = new URLSearchParams();
+  if (params?.q?.trim()) {
+    query.set('q', params.q.trim());
+  }
+  if (params?.subject?.trim()) {
+    query.set('subject', params.subject.trim());
+  }
+  if (typeof params?.limit === 'number' && Number.isFinite(params.limit)) {
+    query.set('limit', String(params.limit));
+  }
+
+  const response = await requestWithAuth(
+    `/resources/discover/free-books${query.size > 0 ? `?${query.toString()}` : ''}`,
+    undefined,
+    { actor }
+  );
+  return (await response.json()) as FreeLibraryResponse;
 };

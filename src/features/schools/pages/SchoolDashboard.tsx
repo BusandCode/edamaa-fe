@@ -222,13 +222,22 @@ const ResourceLibraryOverview = () => {
             Open the exact material view your school wants to manage.
           </p>
         </div>
-        <button
-          type='button'
-          onClick={() => navigate('/school-resources')}
-          className='text-xs text-[#3D08BA] font-medium hover:underline'
-        >
-          View All
-        </button>
+        <div className='flex items-center gap-3'>
+          <button
+            type='button'
+            onClick={() => navigate('/school-resources?view=free-library')}
+            className='text-xs text-[#3D08BA] font-medium hover:underline'
+          >
+            Free Library
+          </button>
+          <button
+            type='button'
+            onClick={() => navigate('/school-resources')}
+            className='text-xs text-[#3D08BA] font-medium hover:underline'
+          >
+            View All
+          </button>
+        </div>
       </div>
       {notice ? (
         <div className='mb-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs text-gray-600 shadow-sm'>
@@ -260,6 +269,27 @@ const ResourceLibraryOverview = () => {
             </button>
           );
         })}
+      </div>
+      <div className='mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm'>
+        <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+          <div>
+            <p className='text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]'>
+              Edamaa Free Library
+            </p>
+            <h4 className='mt-1 text-sm font-semibold text-gray-900'>Safe free books from approved sources</h4>
+            <p className='mt-1 text-xs text-gray-600'>
+              Discover open and previewable books from trusted education catalogs without sending students to unsafe download sites.
+            </p>
+          </div>
+          <button
+            type='button'
+            onClick={() => navigate('/school-resources?view=free-library')}
+            className='inline-flex items-center gap-2 rounded-lg border border-[#3D08BA]/15 bg-[#3D08BA]/6 px-3 py-2 text-xs font-semibold text-[#3D08BA] shadow-sm transition hover:border-[#3D08BA]/30 hover:bg-[#F7F4FF]'
+          >
+            <FaBook className='text-xs' />
+            Discover free books
+          </button>
+        </div>
       </div>
       <div className='mt-4 rounded-2xl border border-[#3D08BA]/10 bg-linear-to-r from-[#F7F4FF] via-white to-[#EEF2FF] p-4 shadow-sm'>
         <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>

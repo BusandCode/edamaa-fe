@@ -23,9 +23,12 @@ import {
 } from '@heroicons/react/24/outline';
 import {
   deleteResourceForActor,
+  fetchFreeLibraryBooks,
   fetchMyResourceUploads,
   fetchResourceDownload,
   fetchResourcesFeed,
+  type FreeLibraryItem,
+  type FreeLibraryProviderStatus,
   markAllResourceNotificationsAsRead,
   markResourceNotificationAsRead,
   parseFilenameFromContentDisposition,
@@ -49,9 +52,17 @@ type UploadFormState = {
   instructorName: string;
 };
 
-type ResourceWorkspaceView = 'all' | 'textbooks' | 'video-lessons' | 'documents';
+type ResourceWorkspaceView = 'all' | 'textbooks' | 'video-lessons' | 'documents' | 'free-library';
 type VideoLibraryLane = 'all' | 'uploaded' | 'recordings';
 type OfficialDocumentTemplateId = (typeof OFFICIAL_DOCUMENT_TEMPLATES)[number]['id'] | '';
+
+const FREE_LIBRARY_SUBJECTS = [
+  'Mathematics',
+  'Science',
+  'English',
+  'History',
+  'Computer Studies',
+] as const;
 
 const OFFICIAL_DOCUMENT_TEMPLATES = [
   {
@@ -105,6 +116,11 @@ const createOfficialDocumentDraft = (): OfficialDocumentDraftState => ({
   signatoryName: '',
   signatoryTitle: 'Registrar',
 });
+
+const getProviderStatusTone = (status: FreeLibraryProviderStatus['status']) =>
+  status === 'ok'
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : 'border-amber-200 bg-amber-50 text-amber-700';
 
 const escapeHtml = (value: string) =>
   value
@@ -312,6 +328,7 @@ const resolveWorkspaceView = (value: string): ResourceWorkspaceView => {
     case 'textbooks':
     case 'video-lessons':
     case 'documents':
+    case 'free-library':
       return value;
     default:
       return 'all';
@@ -336,6 +353,8 @@ const matchesWorkspaceView = (resource: ResourceItem, view: ResourceWorkspaceVie
       return isVideoLessonResource(resource);
     case 'documents':
       return isOfficialDocumentResource(resource);
+    case 'free-library':
+      return true;
     case 'all':
     default:
       return true;
@@ -346,6 +365,7 @@ const workspaceViewLabel: Record<Exclude<ResourceWorkspaceView, 'all'>, string> 
   textbooks: 'E-Books',
   'video-lessons': 'Video lessons',
   documents: 'Official documents',
+  'free-library': 'Edamaa Free Library',
 };
 
 const SchoolResources = () => {
@@ -358,6 +378,12 @@ const SchoolResources = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [freeLibraryQuery, setFreeLibraryQuery] = useState('');
+  const [freeLibrarySubject, setFreeLibrarySubject] = useState<string>(FREE_LIBRARY_SUBJECTS[0]);
+  const [freeLibraryItems, setFreeLibraryItems] = useState<FreeLibraryItem[]>([]);
+  const [freeLibraryProviders, setFreeLibraryProviders] = useState<FreeLibraryProviderStatus[]>([]);
+  const [freeLibraryLoading, setFreeLibraryLoading] = useState(true);
+  const [freeLibraryError, setFreeLibraryError] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | ResourceType>('all');
@@ -409,8 +435,44 @@ const SchoolResources = () => {
     }
   };
 
+  const refreshFreeLibrary = async (overrides?: { query?: string; subject?: string }) => {
+    const nextQuery =
+      overrides && Object.prototype.hasOwnProperty.call(overrides, 'query')
+        ? overrides.query || ''
+        : freeLibraryQuery;
+    const nextSubject =
+      overrides && Object.prototype.hasOwnProperty.call(overrides, 'subject')
+        ? overrides.subject || ''
+        : freeLibrarySubject;
+
+    setFreeLibraryLoading(true);
+    setFreeLibraryError(null);
+
+    try {
+      const payload = await fetchFreeLibraryBooks(
+        {
+          q: nextQuery.trim() || undefined,
+          subject: nextSubject.trim() || undefined,
+          limit: 6,
+        },
+        'school'
+      );
+      setFreeLibraryItems(Array.isArray(payload.items) ? payload.items : []);
+      setFreeLibraryProviders(Array.isArray(payload.providers) ? payload.providers : []);
+    } catch (error) {
+      setFreeLibraryItems([]);
+      setFreeLibraryProviders([]);
+      setFreeLibraryError(
+        error instanceof Error ? error.message : 'Could not load the free-library shelf right now.'
+      );
+    } finally {
+      setFreeLibraryLoading(false);
+    }
+  };
+
   useEffect(() => {
     void refreshWorkspace(false);
+    void refreshFreeLibrary();
   }, []);
 
   useEffect(() => {
@@ -507,6 +569,15 @@ const SchoolResources = () => {
   const libraryPreview = useMemo(() => libraryResources.slice(0, 4), [libraryResources]);
 
   const isEditing = editingResource !== null;
+
+  const handleFreeLibrarySubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await refreshFreeLibrary();
+  };
+
+  const handleOpenFreeLibraryItem = (item: FreeLibraryItem) => {
+    window.open(item.actionUrl, '_blank', 'noopener,noreferrer');
+  };
 
   const resetUpload = () => {
     setUploadForm(createUploadForm());
@@ -800,6 +871,13 @@ const SchoolResources = () => {
                 {refreshing ? 'Refreshing...' : 'Refresh'}
               </button>
               <button
+                onClick={() => navigate('/school-resources?view=free-library')}
+                className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
+              >
+                <BookOpenIcon className="h-4 w-4" />
+                Discover free books
+              </button>
+              <button
                 onClick={() => navigate('/resources')}
                 className="inline-flex items-center gap-2 rounded-2xl border border-[#3D08BA]/15 bg-[#3D08BA]/6 px-4 py-3 text-sm font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/10"
               >
@@ -875,6 +953,173 @@ const SchoolResources = () => {
 
         <main className="mt-6 grid gap-6 xl:grid-cols-[1.5fr_1fr]">
           <section className="space-y-6">
+            <div
+              className={`rounded-[28px] border bg-white/90 p-5 shadow-[0_20px_70px_rgba(15,23,42,0.08)] backdrop-blur ${
+                workspaceView === 'free-library'
+                  ? 'border-[#3D08BA]/20 ring-2 ring-[#3D08BA]/8'
+                  : 'border-white/70'
+              }`}
+            >
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="max-w-2xl">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]">
+                    Edamaa Free Library
+                  </p>
+                  <h2 className="mt-2 text-xl font-semibold text-slate-950">
+                    Safe free books from approved education sources
+                  </h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">
+                    Discover open and previewable books from the same trusted sources students use,
+                    then recommend them without pushing learners to unsafe download sites.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {freeLibraryProviders.map((provider) => (
+                    <span
+                      key={provider.source}
+                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold ${getProviderStatusTone(
+                        provider.status
+                      )}`}
+                      title={provider.note}
+                    >
+                      {provider.sourceLabel}
+                      <span className="text-[10px] uppercase tracking-[0.16em]">
+                        {provider.status === 'ok' ? 'Live' : 'Limited'}
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <form
+                onSubmit={(event) => void handleFreeLibrarySubmit(event)}
+                className="mt-4 rounded-[24px] border border-[#3D08BA]/10 bg-gradient-to-r from-[#F8F5FF] via-white to-[#F5F7FF] p-4 shadow-inner"
+              >
+                <div className="flex flex-col gap-3 lg:flex-row">
+                  <div className="relative flex-1">
+                    <MagnifyingGlassIcon className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={freeLibraryQuery}
+                      onChange={(event) => setFreeLibraryQuery(event.target.value)}
+                      placeholder="Search free books by title, topic, or author..."
+                      className="w-full rounded-2xl border border-white bg-white/90 py-3 pl-12 pr-4 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#3D08BA]/20 focus:ring-4 focus:ring-[#3D08BA]/10"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={freeLibraryLoading}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#3D08BA] px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_40px_rgba(61,8,186,0.20)] transition hover:bg-[#2d0690] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {freeLibraryLoading ? 'Searching...' : 'Search free books'}
+                  </button>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {FREE_LIBRARY_SUBJECTS.map((subject) => (
+                    <button
+                      key={subject}
+                      type="button"
+                      onClick={() => {
+                        setFreeLibrarySubject(subject);
+                        void refreshFreeLibrary({ subject });
+                      }}
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                        freeLibrarySubject === subject
+                          ? 'bg-[#3D08BA] text-white shadow-sm'
+                          : 'bg-white text-slate-600 shadow-sm hover:bg-slate-100'
+                      }`}
+                    >
+                      {subject}
+                    </button>
+                  ))}
+                </div>
+              </form>
+
+              {freeLibraryError ? (
+                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  {freeLibraryError}
+                </div>
+              ) : null}
+
+              <div className="mt-4">
+                {freeLibraryLoading ? (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center text-sm text-slate-500">
+                    Loading the free-library shelf...
+                  </div>
+                ) : freeLibraryItems.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center text-sm text-slate-500">
+                    No free books matched this search yet.
+                  </div>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {freeLibraryItems.map((item) => (
+                      <article
+                        key={item.id}
+                        className="group overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_14px_40px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_20px_50px_rgba(15,23,42,0.10)]"
+                      >
+                        <div className="flex h-44 items-center justify-center bg-gradient-to-br from-[#F5F0FF] via-white to-[#EEF2FF] p-4">
+                          {item.coverImageUrl ? (
+                            <img
+                              src={item.coverImageUrl}
+                              alt={item.title}
+                              className="h-full max-h-36 rounded-xl border border-slate-200 object-contain shadow-sm transition duration-300 group-hover:scale-[1.02]"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full max-w-[10rem] flex-col items-center justify-center rounded-2xl border border-dashed border-[#3D08BA]/20 bg-white text-center">
+                              <BookOpenIcon className="h-8 w-8 text-[#3D08BA]" />
+                              <p className="mt-2 px-3 text-xs font-semibold text-slate-600">
+                                Free book preview
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="space-y-3 p-4">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full bg-[#3D08BA]/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#3D08BA]">
+                              {item.sourceLabel}
+                            </span>
+                            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                              {item.accessLabel}
+                            </span>
+                          </div>
+
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                              {item.subject}
+                            </p>
+                            <h3 className="mt-1 line-clamp-2 text-base font-semibold text-slate-950">
+                              {item.title}
+                            </h3>
+                            <p className="mt-1 text-xs text-slate-600">
+                              {item.authors.length > 0 ? item.authors.join(', ') : 'Author not listed'}
+                            </p>
+                          </div>
+
+                          <p className="line-clamp-3 text-sm leading-6 text-slate-600">{item.description}</p>
+
+                          <div className="flex items-center justify-between gap-3 text-[11px] text-slate-500">
+                            <span>{item.licenseLabel}</span>
+                            <span>{item.publishedAt || 'Date unavailable'}</span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleOpenFreeLibraryItem(item)}
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#3D08BA]"
+                          >
+                            <BookOpenIcon className="h-4 w-4" />
+                            {item.actionLabel}
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div className="rounded-[28px] border border-white/70 bg-white/90 p-5 shadow-[0_20px_70px_rgba(15,23,42,0.08)] backdrop-blur">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                 <div>
@@ -929,7 +1174,9 @@ const SchoolResources = () => {
                       {workspaceViewLabel[workspaceView]}
                     </span>
                     <p className="text-sm text-slate-600">
-                      Showing materials opened from the school dashboard resource card.
+                      {workspaceView === 'free-library'
+                        ? 'Showing the school discovery shelf for safe free books from approved sources.'
+                        : 'Showing materials opened from the school dashboard resource card.'}
                     </p>
                     <button
                       type="button"
