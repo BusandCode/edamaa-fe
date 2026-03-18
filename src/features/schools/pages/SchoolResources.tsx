@@ -318,6 +318,16 @@ const resolveWorkspaceView = (value: string): ResourceWorkspaceView => {
   }
 };
 
+const resolveVideoLane = (value: string): VideoLibraryLane => {
+  switch (value) {
+    case 'uploaded':
+    case 'recordings':
+      return value;
+    default:
+      return 'all';
+  }
+};
+
 const matchesWorkspaceView = (resource: ResourceItem, view: ResourceWorkspaceView) => {
   switch (view) {
     case 'textbooks':
@@ -373,6 +383,7 @@ const SchoolResources = () => {
 
   const modeParam = (searchParams.get('mode') || '').trim().toLowerCase();
   const viewParam = resolveWorkspaceView((searchParams.get('view') || '').trim().toLowerCase());
+  const laneParam = resolveVideoLane((searchParams.get('lane') || '').trim().toLowerCase());
 
   const refreshWorkspace = async (silent = false) => {
     if (silent) {
@@ -415,10 +426,12 @@ const SchoolResources = () => {
   }, [viewParam]);
 
   useEffect(() => {
-    if (workspaceView !== 'video-lessons') {
+    if (workspaceView === 'video-lessons') {
+      setVideoLane(laneParam);
+    } else {
       setVideoLane('all');
     }
-  }, [workspaceView]);
+  }, [laneParam, workspaceView]);
 
   const filteredUploads = useMemo(() => {
     const normalizedSearch = searchQuery.trim().toLowerCase();

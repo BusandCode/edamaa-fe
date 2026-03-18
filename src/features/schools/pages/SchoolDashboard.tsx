@@ -96,6 +96,8 @@ type ResourceLibraryView = 'textbooks' | 'video-lessons' | 'documents';
 
 const isTextbookResource = (resource: ResourceItem) =>
   resource.category === 'library' && (resource.type === 'document' || resource.type === 'pdf');
+const isLiveRecordingResource = (resource: ResourceItem) =>
+  resource.type === 'video' && resource.category === 'live_recording';
 
 const ResourceLibraryOverview = () => {
   const navigate = useNavigate();
@@ -147,8 +149,21 @@ const ResourceLibraryOverview = () => {
     () => ({
       ebooks: uploads.filter(isTextbookResource).length,
       videoLessons: uploads.filter((resource) => resource.type === 'video').length,
+      liveRecordings: uploads.filter(isLiveRecordingResource).length,
       officialDocuments: uploads.filter((resource) => resource.category === 'official_document').length,
     }),
+    [uploads]
+  );
+
+  const recentLiveRecordings = useMemo(
+    () =>
+      uploads
+        .filter(isLiveRecordingResource)
+        .sort(
+          (left, right) =>
+            new Date(right.uploadedAt).getTime() - new Date(left.uploadedAt).getTime()
+        )
+        .slice(0, 3),
     [uploads]
   );
 
@@ -192,6 +207,10 @@ const ResourceLibraryOverview = () => {
 
   const handleOpenView = (view: ResourceLibraryView) => {
     navigate(`/school-resources?view=${encodeURIComponent(view)}`);
+  };
+
+  const handleOpenLiveRecordings = () => {
+    navigate('/school-resources?view=video-lessons&lane=recordings');
   };
 
   return (
@@ -241,6 +260,67 @@ const ResourceLibraryOverview = () => {
             </button>
           );
         })}
+      </div>
+      <div className='mt-4 rounded-2xl border border-[#3D08BA]/10 bg-linear-to-r from-[#F7F4FF] via-white to-[#EEF2FF] p-4 shadow-sm'>
+        <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
+          <div>
+            <p className='text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]'>
+              Live class replays
+            </p>
+            <h4 className='mt-1 text-sm font-semibold text-gray-900'>Recent recordings ready to reuse</h4>
+            <p className='mt-1 text-xs text-gray-600'>
+              {stats.liveRecordings > 0
+                ? `${stats.liveRecordings} replay${stats.liveRecordings === 1 ? '' : 's'} published from recorded classes.`
+                : 'No live class recordings have been published yet.'}
+            </p>
+          </div>
+          <button
+            type='button'
+            onClick={handleOpenLiveRecordings}
+            className='inline-flex items-center gap-2 rounded-lg border border-[#3D08BA]/15 bg-white px-3 py-2 text-xs font-semibold text-[#3D08BA] shadow-sm transition hover:border-[#3D08BA]/30 hover:bg-[#F7F4FF]'
+          >
+            <FaCamera className='text-xs' />
+            Open recordings
+          </button>
+        </div>
+        {isLoading ? (
+          <p className='mt-4 text-sm text-gray-600'>Loading recent replays...</p>
+        ) : recentLiveRecordings.length === 0 ? (
+          <div className='mt-4 rounded-xl border border-dashed border-[#3D08BA]/15 bg-white/80 px-4 py-3 text-xs text-gray-600'>
+            Start recording from the live classroom to automatically build a replay library for your school.
+          </div>
+        ) : (
+          <div className='mt-4 space-y-2'>
+            {recentLiveRecordings.map((recording) => (
+              <button
+                key={recording.id}
+                type='button'
+                onClick={handleOpenLiveRecordings}
+                className='flex w-full items-start justify-between gap-3 rounded-xl border border-white bg-white/90 px-4 py-3 text-left shadow-sm transition hover:border-[#3D08BA]/15 hover:shadow-md'
+              >
+                <div className='min-w-0'>
+                  <div className='flex items-center gap-2'>
+                    <span className='rounded-lg bg-[#3D08BA]/8 p-2 text-[#3D08BA]'>
+                      <FaVideo className='text-sm' />
+                    </span>
+                    <div className='min-w-0'>
+                      <p className='truncate text-sm font-semibold text-gray-900'>{recording.title}</p>
+                      <p className='mt-1 text-xs text-gray-600'>
+                        {recording.subject} · {recording.instructor || 'School host'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className='shrink-0 text-right'>
+                  <p className='text-[11px] font-medium text-gray-500'>
+                    {formatCompactDateTime(recording.uploadedAt)}
+                  </p>
+                  <p className='mt-1 text-[11px] text-gray-400'>{recording.sizeLabel}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -35,6 +35,10 @@ import {
   type SchoolAssignmentNotification,
 } from '../../schools/utils/assignmentsApi';
 import {
+  fetchMyResourceUploads,
+  type ResourceItem,
+} from '../../schools/utils/resourcesApi';
+import {
   fetchSchoolScheduleFeed,
   type SchoolScheduleFeedSession,
 } from '../../schools/utils/schoolScheduleApi';
@@ -102,6 +106,9 @@ const formatRelativeUpdateTime = (value: string) => {
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 };
 
+const isLiveRecordingUpload = (resource: ResourceItem) =>
+  resource.type === 'video' && resource.category === 'live_recording';
+
 const mapAssignedSessionToTutorClass = (
   session: SchoolScheduleFeedSession
 ): NewClassData => ({
@@ -148,6 +155,9 @@ const TutorDashboard = () => {
   const [homeworkUpdates, setHomeworkUpdates] = useState<SchoolAssignmentNotification[]>([]);
   const [isHomeworkLoading, setIsHomeworkLoading] = useState(false);
   const [homeworkNotice, setHomeworkNotice] = useState('');
+  const [replayUploads, setReplayUploads] = useState<ResourceItem[]>([]);
+  const [isReplayLoading, setIsReplayLoading] = useState(false);
+  const [replayNotice, setReplayNotice] = useState('');
   const [editingClass, setEditingClass] = useState<NewClassData | null>(null);
   const [activeClassActionId, setActiveClassActionId] = useState<string | null>(null);
   const [independentClasses, setIndependentClasses] = useState<NewClassData[]>([]);
@@ -195,6 +205,10 @@ const TutorDashboard = () => {
 
   const handleAssignmentsClick = () => {
     navigate('/tutor-assignments');
+  };
+
+  const handleReplayHubClick = () => {
+    navigate('/tutor-resources?category=live_recording');
   };
 
   const handleHomeworkUpdateDrilldown = (notification: SchoolAssignmentNotification) => {
@@ -267,6 +281,31 @@ const TutorDashboard = () => {
     }
   };
 
+  const loadReplayOverview = async () => {
+    setIsReplayLoading(true);
+    setReplayNotice('');
+    try {
+      const payload = await fetchMyResourceUploads('tutor');
+      const nextUploads = Array.isArray(payload.uploads)
+        ? payload.uploads
+            .filter(isLiveRecordingUpload)
+            .sort(
+              (left, right) =>
+                new Date(right.uploadedAt).getTime() - new Date(left.uploadedAt).getTime()
+            )
+        : [];
+      setReplayUploads(nextUploads);
+      if (nextUploads.length === 0) {
+        setReplayNotice('No live class replays published yet.');
+      }
+    } catch {
+      setReplayUploads([]);
+      setReplayNotice('Replay uploads are not available right now.');
+    } finally {
+      setIsReplayLoading(false);
+    }
+  };
+
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(INDEPENDENT_CLASSES_STORAGE_KEY);
@@ -282,7 +321,22 @@ const TutorDashboard = () => {
     void loadSubscriptionState();
     void loadUpcomingClasses();
     void loadHomeworkOverview();
+    void loadReplayOverview();
   }, []);
+
+  const recentReplayUploads = useMemo(() => replayUploads.slice(0, 3), [replayUploads]);
+
+  const replaySummary = useMemo(() => {
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return {
+      total: replayUploads.length,
+      thisWeek: replayUploads.filter(
+        (resource) => new Date(resource.uploadedAt).getTime() >= weekAgo
+      ).length,
+      latestLabel:
+        replayUploads[0]?.uploadedAt ? formatRelativeUpdateTime(replayUploads[0].uploadedAt) : '--',
+    };
+  }, [replayUploads]);
 
   const copyToClipboard = async () => {
     try {
@@ -804,6 +858,92 @@ const TutorDashboard = () => {
                     </div>
                     <span className="shrink-0 text-[11px] font-medium text-gray-500">
                       {formatRelativeUpdateTime(update.createdAt)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mb-5 sm:mb-6 rounded-2xl border border-[#3D08BA]/10 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3D08BA]">
+                Class replays
+              </p>
+              <h2 className="mt-1 text-lg font-bold text-gray-900">Recent live recordings</h2>
+              <p className="mt-1 text-sm text-gray-600">
+                Review class replays and reopen the tutor recording library without leaving the dashboard.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleReplayHubClick}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
+              >
+                Open recordings
+              </button>
+              <button
+                onClick={handleResourceUploadClick}
+                className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2c0691]"
+              >
+                Upload video
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            {[
+              { label: 'Published replays', value: replaySummary.total, tone: 'text-[#3D08BA] bg-[#3D08BA]/5 border-[#3D08BA]/10' },
+              { label: 'Added this week', value: replaySummary.thisWeek, tone: 'text-sky-700 bg-sky-50 border-sky-100' },
+              { label: 'Latest upload', value: replaySummary.latestLabel, tone: 'text-emerald-700 bg-emerald-50 border-emerald-100' },
+            ].map((item) => (
+              <div key={item.label} className={`rounded-xl border px-4 py-3 ${item.tone}`}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em]">{item.label}</p>
+                <p className="mt-2 text-2xl font-bold">{item.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Latest replay uploads</p>
+                <p className="text-xs text-gray-500">Recent class recordings published from the live room.</p>
+              </div>
+            </div>
+
+            {isReplayLoading ? (
+              <p className="mt-3 text-sm text-gray-600">Loading class replays...</p>
+            ) : replayNotice && recentReplayUploads.length === 0 ? (
+              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {replayNotice}
+              </p>
+            ) : recentReplayUploads.length === 0 ? (
+              <p className="mt-3 text-sm text-gray-600">No class replays yet.</p>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {recentReplayUploads.map((recording) => (
+                  <button
+                    key={recording.id}
+                    type="button"
+                    onClick={handleReplayHubClick}
+                    className="flex w-full items-start justify-between gap-3 rounded-xl border border-white bg-white px-3 py-3 text-left shadow-sm transition hover:border-[#3D08BA]/15 hover:shadow-md"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-semibold text-gray-900">{recording.title}</p>
+                        <span className="rounded-full bg-[#3D08BA]/10 px-2 py-0.5 text-[10px] font-semibold text-[#3D08BA]">
+                          Replay
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-gray-600">
+                        {recording.subject} · {recording.sizeLabel}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-[11px] font-medium text-gray-500">
+                      {formatRelativeUpdateTime(recording.uploadedAt)}
                     </span>
                   </button>
                 ))}

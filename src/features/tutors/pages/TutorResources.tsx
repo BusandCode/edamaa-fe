@@ -125,6 +125,20 @@ const getResourceColor = (type: ResourceType) => {
   }
 };
 
+const resolveCategoryFilter = (value: string): 'all' | ResourceCategory => {
+  switch (value) {
+    case 'assignment':
+    case 'classwork':
+    case 'note':
+    case 'library':
+    case 'live_recording':
+    case 'official_document':
+      return value;
+    default:
+      return 'all';
+  }
+};
+
 const TutorResources = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -161,6 +175,7 @@ const TutorResources = () => {
   const [activeNotificationId, setActiveNotificationId] = useState<string | 'all' | null>(null);
 
   const modeParam = (searchParams.get('mode') || '').trim().toLowerCase();
+  const categoryParam = resolveCategoryFilter((searchParams.get('category') || '').trim().toLowerCase());
 
   const refreshWorkspace = async (silent = false) => {
     if (silent) {
@@ -198,6 +213,10 @@ const TutorResources = () => {
       setNotice(null);
     }
   }, [modeParam]);
+
+  useEffect(() => {
+    setCategoryFilter(categoryParam);
+  }, [categoryParam]);
 
   const filteredUploads = useMemo(() => {
     const normalizedSearch = searchQuery.trim().toLowerCase();
