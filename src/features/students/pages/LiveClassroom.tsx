@@ -34,7 +34,9 @@ import {
   type SchoolScheduleAttendanceResponse,
 } from '../../schools/utils/schoolScheduleApi';
 import {
+  createTutorAssignment,
   createSchoolAssignment,
+  fetchTutorAssignments,
   fetchSchoolAssignments,
   type CreateSchoolAssignmentInput,
   fetchStudentAssignments,
@@ -568,11 +570,8 @@ const LiveClassroom = () => {
   const schoolSupportId = useMemo(() => `school-${liveClass.id}`, [liveClass.id]);
   const schoolSupportName = useMemo(() => `${liveClass.subject} School Support`, [liveClass.subject]);
   const channelName = useMemo(() => `live-class:${liveClass.id}`, [liveClass.id]);
-  const hasSchoolAuthSession = useMemo(
-    () => teacherActor === 'school' && hasPersistedAuthSession(),
-    [teacherActor]
-  );
-  const canManageLinkedAssignments = isTeacher && hasSchoolAuthSession && Boolean(liveClass.id);
+  const hasTeacherAuthSession = useMemo(() => hasPersistedAuthSession(), []);
+  const canManageLinkedAssignments = isTeacher && hasTeacherAuthSession && Boolean(liveClass.id);
 
   const clientIdRef = useRef(`client-${Date.now()}-${Math.floor(Math.random() * 100000)}`);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -1182,12 +1181,13 @@ const LiveClassroom = () => {
     setIsLinkedAssignmentsLoading(true);
     try {
       if (isTeacher) {
-        if (!hasSchoolAuthSession) {
+        if (!hasTeacherAuthSession) {
           setLinkedPostClassAssignments([]);
           return;
         }
 
-        const payload = await fetchSchoolAssignments();
+        const payload =
+          teacherActor === 'school' ? await fetchSchoolAssignments() : await fetchTutorAssignments();
         setLinkedPostClassAssignments(
           payload.assignments.filter((assignment) => assignment.sessionId === liveClass.id)
         );
@@ -1214,7 +1214,7 @@ const LiveClassroom = () => {
       setIsLinkedAssignmentsLoading(false);
     }
   }, [
-    hasSchoolAuthSession,
+    hasTeacherAuthSession,
     isTeacher,
     liveClass.id,
     studentIdentity.classGroup,
@@ -1288,7 +1288,10 @@ const LiveClassroom = () => {
 
     setIsLinkedAssignmentSaving(true);
     try {
-      const response = await createSchoolAssignment(payload);
+      const response =
+        teacherActor === 'school'
+          ? await createSchoolAssignment(payload)
+          : await createTutorAssignment(payload);
       setLinkedPostClassAssignments(
         response.assignments.filter((assignment) => assignment.sessionId === liveClass.id)
       );
@@ -1302,15 +1305,16 @@ const LiveClassroom = () => {
     } finally {
       setIsLinkedAssignmentSaving(false);
     }
-  }, [linkedAssignmentDraft, liveClass.id, pushNotice]);
+  }, [linkedAssignmentDraft, liveClass.id, pushNotice, teacherActor]);
 
   const releasedLinkedAssignments = useMemo(
     () => linkedPostClassAssignments.filter((assignment) => assignment.isReleased),
     [linkedPostClassAssignments]
   );
   const shouldShowLinkedAssignmentsPanel =
-    teacherActor === 'school' &&
-    (isLinkedAssignmentsLoading || linkedPostClassAssignments.length > 0);
+    (isTeacher && Boolean(liveClass.id)) ||
+    isLinkedAssignmentsLoading ||
+    linkedPostClassAssignments.length > 0;
 
   const rememberEventId = useCallback((eventId: string) => {
     if (!eventId) {
@@ -4464,17 +4468,20 @@ const LiveClassroom = () => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => navigate('/school-assignments')}
+                        onClick={() =>
+                          navigate(teacherActor === 'school' ? '/school-assignments' : '/tutor-assignments')
+                        }
                         className="inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white/90 transition-colors hover:bg-white/15"
                       >
                         Open homework hub
                       </button>
                     </>
-                  ) : teacherActor === 'school' ? (
+                  ) : (
                     <div className="rounded-xl border border-white/10 bg-white/8 px-3 py-2 text-[11px] text-emerald-100/85">
-                      Start this class from the school dashboard if you want to attach school homework directly inside the live room.
+                      Start this class from the {teacherActor === 'school' ? 'school' : 'tutor'} dashboard if you want
+                      to attach homework directly inside the live room.
                     </div>
-                  ) : null}
+                  )}
                 </div>
               ) : (
                 <div className="mt-3">
