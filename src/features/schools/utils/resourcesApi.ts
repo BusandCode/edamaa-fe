@@ -149,6 +149,26 @@ export type FreeLibraryResponse = {
   subject: string;
   items: FreeLibraryItem[];
   providers: FreeLibraryProviderStatus[];
+  cache?: {
+    status: 'fresh' | 'refreshed' | 'stale-fallback' | 'miss';
+    cachedAt: string | null;
+    ageSeconds: number | null;
+  };
+};
+
+export type FreeLibraryRecommendation = FreeLibraryItem & {
+  recommendationId: string | null;
+  curatedAt: string;
+  curatedAtLabel: string;
+  curatedByCount: number;
+  curatedByLabel: string;
+  isRecommendedByCurrentUser: boolean;
+};
+
+export type FreeLibraryRecommendationsResponse = {
+  generatedAt: string;
+  count: number;
+  items: FreeLibraryRecommendation[];
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
@@ -456,4 +476,45 @@ export const fetchFreeLibraryBooks = async (
     { actor }
   );
   return (await response.json()) as FreeLibraryResponse;
+};
+
+export const fetchRecommendedFreeLibraryBooks = async (actor?: ResourceUploaderRole) => {
+  const response = await requestWithAuth('/resources/free-books/recommended', undefined, { actor });
+  return (await response.json()) as FreeLibraryRecommendationsResponse;
+};
+
+export const recommendFreeLibraryBook = async (
+  item: FreeLibraryItem,
+  actor?: ResourceUploaderRole
+) => {
+  const response = await requestWithAuth(
+    '/resources/free-books/recommended',
+    {
+      method: 'POST',
+      body: JSON.stringify(item),
+    },
+    { actor }
+  );
+
+  return (await response.json()) as {
+    item: FreeLibraryRecommendation;
+    message?: string;
+  };
+};
+
+export const removeFreeLibraryRecommendation = async (
+  recommendationId: string,
+  actor?: ResourceUploaderRole
+) => {
+  const response = await requestWithAuth(
+    `/resources/free-books/recommended/${encodeURIComponent(recommendationId)}`,
+    { method: 'DELETE' },
+    { actor }
+  );
+
+  return (await response.json()) as {
+    removed: boolean;
+    recommendationId: string;
+    message?: string;
+  };
 };

@@ -30,6 +30,22 @@ type UploadResourceBody = {
   instructorName?: string;
 };
 
+type FreeLibraryRecommendationBody = {
+  id?: string;
+  source?: string;
+  sourceLabel?: string;
+  title?: string;
+  authors?: string[];
+  description?: string;
+  subject?: string;
+  coverImageUrl?: string | null;
+  actionUrl?: string;
+  actionLabel?: string;
+  accessLabel?: string;
+  licenseLabel?: string;
+  publishedAt?: string | null;
+};
+
 @UseGuards(SupabaseAuthGuard)
 @Controller('resources')
 export class ResourcesController {
@@ -78,6 +94,30 @@ export class ResourcesController {
       subject,
       limit,
     });
+  }
+
+  @Get('free-books/recommended')
+  getRecommendedFreeBooks(@Req() request: Request) {
+    return this.resourcesService.getRecommendedFreeBooksForAuthUser(this.getAuthUser(request));
+  }
+
+  @Post('free-books/recommended')
+  recommendFreeBook(
+    @Req() request: Request,
+    @Body() body: FreeLibraryRecommendationBody
+  ) {
+    return this.resourcesService.recommendFreeBookForAuthUser(this.getAuthUser(request), body);
+  }
+
+  @Delete('free-books/recommended/:recommendationId')
+  removeRecommendedFreeBook(
+    @Req() request: Request,
+    @Param('recommendationId') recommendationId: string
+  ) {
+    return this.resourcesService.removeRecommendedFreeBookForAuthUser(
+      this.getAuthUser(request),
+      recommendationId
+    );
   }
 
   @Post('me/upload')

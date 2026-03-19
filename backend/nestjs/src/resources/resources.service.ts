@@ -148,6 +148,39 @@ type FreeLibraryBookItemResponse = {
   publishedAt: string | null;
 };
 
+type FreeLibraryRecommendationInput = {
+  id?: string;
+  source?: string;
+  sourceLabel?: string;
+  title?: string;
+  authors?: string[];
+  description?: string;
+  subject?: string;
+  coverImageUrl?: string | null;
+  actionUrl?: string;
+  actionLabel?: string;
+  accessLabel?: string;
+  licenseLabel?: string;
+  publishedAt?: string | null;
+};
+
+type FreeLibraryRecommendationRecord = FreeLibraryBookItemResponse & {
+  recommendationId: string;
+  curatorEmail: string;
+  curatorName: string;
+  curatorRole: 'school';
+  createdAt: Date;
+};
+
+type FreeLibraryRecommendationItemResponse = FreeLibraryBookItemResponse & {
+  recommendationId: string | null;
+  curatedAt: string;
+  curatedAtLabel: string;
+  curatedByCount: number;
+  curatedByLabel: string;
+  isRecommendedByCurrentUser: boolean;
+};
+
 type FreeLibraryProviderStatus = {
   source: FreeLibraryProvider;
   sourceLabel: string;
@@ -266,6 +299,7 @@ export class ResourcesService implements OnModuleInit {
   private readonly notifications: ResourceNotificationRecord[] = [];
   private readonly readNotificationIdsByEmail = new Map<string, Set<string>>();
   private readonly freeLibraryCache = new Map<string, FreeLibraryCacheEntry>();
+  private readonly freeLibraryRecommendations: FreeLibraryRecommendationRecord[] = [];
   private purchasesHydrated = false;
   private purchaseStoreBackoffUntil = 0;
   private seeded = false;
@@ -445,6 +479,92 @@ export class ResourcesService implements OnModuleInit {
       cachedAt: null,
       ageSeconds: null,
     });
+  }
+
+  getRecommendedFreeBooksForAuthUser(authUser: AuthUser) {
+    const email = this.requireEmail(authUser);
+    const items = this.buildRecommendedFreeBookItems(email);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      count: items.length,
+      items,
+    };
+  }
+
+  recommendFreeBookForAuthUser(authUser: AuthUser, input: FreeLibraryRecommendationInput) {
+    const email = this.requireEmail(authUser);
+    this.requireSchoolCuratorRole(authUser.role);
+
+    const normalizedItem = this.normalizeFreeLibraryRecommendationInput(input);
+    const existing = this.freeLibraryRecommendations.find(
+      (recommendation) =>
+        recommendation.curatorEmail === email && recommendation.id === normalizedItem.id
+    );
+
+    if (existing) {
+      const currentItem = this
+        .buildRecommendedFreeBookItems(email)
+        .find(
+          (item) =>
+            item.recommendationId === existing.recommendationId ||
+            (item.id === existing.id && item.isRecommendedByCurrentUser)
+        );
+
+      return {
+        item: currentItem || this.toFreeLibraryRecommendationItemResponse([existing], email),
+        message: `${existing.title} is already recommended to students.`,
+      };
+    }
+
+    const curatorName =
+      this.normalizeOptionalText(authUser.name || '', 80) || this.defaultNameFromEmail(email);
+    const recommendation: FreeLibraryRecommendationRecord = {
+      ...normalizedItem,
+      recommendationId: makeId('freerec'),
+      curatorEmail: email,
+      curatorName,
+      curatorRole: 'school',
+      createdAt: new Date(),
+    };
+
+    this.freeLibraryRecommendations.unshift(recommendation);
+
+    return {
+      item: this.toFreeLibraryRecommendationItemResponse([recommendation], email),
+      message: `${recommendation.title} is now recommended to students.`,
+    };
+  }
+
+  removeRecommendedFreeBookForAuthUser(authUser: AuthUser, recommendationId: string) {
+    const email = this.requireEmail(authUser);
+    this.requireSchoolCuratorRole(authUser.role);
+    const normalizedRecommendationId = String(recommendationId || '').trim();
+
+    if (!normalizedRecommendationId) {
+      throw new BadRequestException('Recommendation id is required.');
+    }
+
+    const recommendationIndex = this.freeLibraryRecommendations.findIndex(
+      (recommendation) => recommendation.recommendationId === normalizedRecommendationId
+    );
+
+    if (recommendationIndex < 0) {
+      throw new NotFoundException('Recommendation could not be found.');
+    }
+
+    const recommendation = this.freeLibraryRecommendations[recommendationIndex];
+    if (recommendation.curatorEmail !== email) {
+      throw new ForbiddenException('You can only remove recommendations added from your account.');
+    }
+
+    this.freeLibraryRecommendations.splice(recommendationIndex, 1);
+
+    return {
+      removed: true,
+      recommendationId: normalizedRecommendationId,
+      message: `${recommendation.title} is no longer pinned for students.`,
+    };
   }
 
   uploadResourceForAuthUser(
@@ -954,8 +1074,38 @@ export class ResourcesService implements OnModuleInit {
     return Math.max(4, Math.min(12, Math.round(numeric)));
   }
 
+  private requireSchoolCuratorRole(roleValue?: string | null) {
+    const resolvedRole = this.resolveUploaderRoleFromAuth(roleValue);
+    if (resolvedRole !== 'school') {
+      throw new ForbiddenException(
+        'Only schools can recommend free-library books to students.'
+      );
+    }
+  }
+
   private buildFreeLibraryCacheKey(query: string, subject: string, limit: number) {
     return [query.trim().toLowerCase(), subject.trim().toLowerCase(), String(limit)].join('::');
+  }
+
+  private buildRecommendedFreeBookItems(currentEmail: string) {
+    const groups = new Map<string, FreeLibraryRecommendationRecord[]>();
+
+    this.freeLibraryRecommendations.forEach((recommendation) => {
+      const existing = groups.get(recommendation.id);
+      if (existing) {
+        existing.push(recommendation);
+      } else {
+        groups.set(recommendation.id, [recommendation]);
+      }
+    });
+
+    return Array.from(groups.values())
+      .sort((left, right) => {
+        const leftTime = Math.max(...left.map((item) => item.createdAt.getTime()));
+        const rightTime = Math.max(...right.map((item) => item.createdAt.getTime()));
+        return rightTime - leftTime;
+      })
+      .map((group) => this.toFreeLibraryRecommendationItemResponse(group, currentEmail));
   }
 
   private getUsableFreeLibraryCacheEntry(cacheKey: string) {
@@ -1069,6 +1219,48 @@ export class ResourcesService implements OnModuleInit {
       items,
       providers,
       cache,
+    };
+  }
+
+  private toFreeLibraryRecommendationItemResponse(
+    group: FreeLibraryRecommendationRecord[],
+    currentEmail: string
+  ): FreeLibraryRecommendationItemResponse {
+    const sortedGroup = [...group].sort(
+      (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
+    );
+    const primary = sortedGroup[0];
+
+    if (!primary) {
+      throw new NotFoundException('Recommendation group is empty.');
+    }
+
+    const currentUserRecommendation =
+      sortedGroup.find((item) => item.curatorEmail === currentEmail) || null;
+    const curatedByCount = sortedGroup.length;
+
+    return {
+      id: primary.id,
+      source: primary.source,
+      sourceLabel: primary.sourceLabel,
+      title: primary.title,
+      authors: primary.authors,
+      description: primary.description,
+      subject: primary.subject,
+      coverImageUrl: primary.coverImageUrl,
+      actionUrl: primary.actionUrl,
+      actionLabel: primary.actionLabel,
+      accessLabel: primary.accessLabel,
+      licenseLabel: primary.licenseLabel,
+      publishedAt: primary.publishedAt,
+      recommendationId: currentUserRecommendation?.recommendationId ?? null,
+      curatedAt: primary.createdAt.toISOString(),
+      curatedAtLabel: toRelativeLabel(primary.createdAt),
+      curatedByCount,
+      curatedByLabel: `Recommended by ${curatedByCount} school admin${
+        curatedByCount === 1 ? '' : 's'
+      }`,
+      isRecommendedByCurrentUser: Boolean(currentUserRecommendation),
     };
   }
 
@@ -1307,6 +1499,72 @@ export class ResourcesService implements OnModuleInit {
       return 'official_document';
     }
     return 'note';
+  }
+
+  private normalizeFreeLibraryRecommendationInput(
+    input: FreeLibraryRecommendationInput
+  ): FreeLibraryBookItemResponse {
+    const source = this.normalizeFreeLibraryProvider(input.source);
+    const title = this.normalizeRequiredText(
+      input.title,
+      'A free-book title is required before recommending it.',
+      180
+    );
+    const actionUrl = this.normalizeRequiredText(
+      input.actionUrl,
+      'A valid source link is required before recommending this book.',
+      800
+    );
+
+    if (!/^https?:\/\//i.test(actionUrl)) {
+      throw new BadRequestException('Recommended books must use a valid source link.');
+    }
+
+    const normalizedId =
+      this.normalizeOptionalText(input.id, 160) ||
+      `${source}_${title.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+
+    return {
+      id: normalizedId,
+      source,
+      sourceLabel:
+        this.normalizeOptionalText(input.sourceLabel, 60) ||
+        (source === 'open_library' ? 'Open Library' : 'Google Books'),
+      title,
+      authors: Array.isArray(input.authors)
+        ? input.authors
+            .map((author) => this.normalizeOptionalText(author, 80))
+            .filter((author) => author.length > 0)
+            .slice(0, 4)
+        : [],
+      description:
+        this.normalizeOptionalText(input.description, 500) ||
+        'Free title from a trusted education source.',
+      subject: this.normalizeOptionalText(input.subject, 80) || 'General',
+      coverImageUrl: this.normalizeOptionalText(String(input.coverImageUrl || ''), 1000) || null,
+      actionUrl,
+      actionLabel: this.normalizeOptionalText(input.actionLabel, 60) || 'Open book',
+      accessLabel: this.normalizeOptionalText(input.accessLabel, 60) || 'Free access',
+      licenseLabel: this.normalizeOptionalText(input.licenseLabel, 80) || 'Free access',
+      publishedAt: this.normalizeOptionalText(String(input.publishedAt || ''), 40) || null,
+    };
+  }
+
+  private normalizeFreeLibraryProvider(value: string | undefined): FreeLibraryProvider {
+    const normalized = String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, '_');
+
+    if (normalized === 'open_library') {
+      return 'open_library';
+    }
+
+    if (normalized === 'google_books') {
+      return 'google_books';
+    }
+
+    throw new BadRequestException('Only approved free-library sources can be recommended.');
   }
 
   private resolveUploaderRoleFromAuth(roleValue?: string | null): UploaderRole {

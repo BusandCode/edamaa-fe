@@ -135,6 +135,15 @@ type FreeLibraryProviderStatus = {
   note: string;
 };
 
+type FreeLibraryRecommendation = FreeLibraryItem & {
+  recommendationId: string | null;
+  curatedAt: string;
+  curatedAtLabel: string;
+  curatedByCount: number;
+  curatedByLabel: string;
+  isRecommendedByCurrentUser: boolean;
+};
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
 
 const isLocalhostHost = (host: string) => host === '127.0.0.1' || host === 'localhost';
@@ -366,6 +375,13 @@ const Resources = () => {
   const [freeLibraryProviders, setFreeLibraryProviders] = useState<FreeLibraryProviderStatus[]>([]);
   const [isFreeLibraryLoading, setIsFreeLibraryLoading] = useState(true);
   const [freeLibraryError, setFreeLibraryError] = useState<string | null>(null);
+  const [recommendedFreeLibraryItems, setRecommendedFreeLibraryItems] = useState<
+    FreeLibraryRecommendation[]
+  >([]);
+  const [isRecommendedFreeLibraryLoading, setIsRecommendedFreeLibraryLoading] = useState(true);
+  const [recommendedFreeLibraryError, setRecommendedFreeLibraryError] = useState<string | null>(
+    null
+  );
 
   const [activeResourceActionId, setActiveResourceActionId] = useState<string | null>(null);
   const [activePurchaseResourceId, setActivePurchaseResourceId] = useState<string | null>(null);
@@ -584,9 +600,37 @@ const Resources = () => {
     }
   };
 
+  const refreshRecommendedFreeLibrary = async () => {
+    if (!hasAuthSession) {
+      setRecommendedFreeLibraryError('Sign in first to view school recommendations.');
+      setIsRecommendedFreeLibraryLoading(false);
+      return;
+    }
+
+    setIsRecommendedFreeLibraryLoading(true);
+    setRecommendedFreeLibraryError(null);
+
+    try {
+      const response = await requestWithAuth('/resources/free-books/recommended');
+      const payload = (await response.json()) as {
+        items?: FreeLibraryRecommendation[];
+      };
+
+      setRecommendedFreeLibraryItems(Array.isArray(payload.items) ? payload.items : []);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not load school recommendations right now.';
+      setRecommendedFreeLibraryItems([]);
+      setRecommendedFreeLibraryError(message);
+    } finally {
+      setIsRecommendedFreeLibraryLoading(false);
+    }
+  };
+
   useEffect(() => {
     void refreshFeed(false);
     void refreshFreeLibrary();
+    void refreshRecommendedFreeLibrary();
   }, []);
 
   useEffect(() => {
@@ -1127,6 +1171,91 @@ const Resources = () => {
             </div>
           </section>
         )}
+
+        <section className="overflow-hidden rounded-[28px] border border-white/80 bg-white/85 p-4 shadow-[0_20px_60px_-42px_rgba(61,8,186,0.28)] backdrop-blur sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                <SparklesIcon className="h-4 w-4" />
+                School Recommended
+              </div>
+              <h2 className="mt-3 text-xl font-bold text-gray-950">
+                Free books pinned for students
+              </h2>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-gray-600">
+                Start with the titles school admins have already recommended from trusted education
+                sources.
+              </p>
+            </div>
+            <span className="inline-flex self-start rounded-full border border-white/90 bg-white px-3 py-1.5 text-xs font-semibold text-[#3D08BA] shadow-sm">
+              {recommendedFreeLibraryItems.length} curated picks
+            </span>
+          </div>
+
+          {recommendedFreeLibraryError ? (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {recommendedFreeLibraryError}
+            </div>
+          ) : null}
+
+          {isRecommendedFreeLibraryLoading ? (
+            <div className="mt-4 rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-600">
+              Loading school recommendations...
+            </div>
+          ) : recommendedFreeLibraryItems.length === 0 ? (
+            <div className="mt-4 rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-600">
+              No school recommendations yet. Use the free-library search below to discover books.
+            </div>
+          ) : (
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {recommendedFreeLibraryItems.map((item) => (
+                <article
+                  key={`recommended-${item.id}`}
+                  className="group overflow-hidden rounded-[24px] border border-emerald-100 bg-gradient-to-b from-white via-white to-emerald-50/60 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-[0_26px_60px_-34px_rgba(16,185,129,0.22)]"
+                >
+                  <div className="space-y-3 p-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                        {item.curatedByLabel}
+                      </span>
+                      <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-[#3D08BA] shadow-sm">
+                        {item.sourceLabel}
+                      </span>
+                    </div>
+
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        {item.subject}
+                      </p>
+                      <h3 className="mt-1 line-clamp-2 text-base font-bold text-gray-900">
+                        {item.title}
+                      </h3>
+                      <p className="mt-1 text-xs text-gray-600">
+                        {item.authors.length > 0 ? item.authors.join(', ') : 'Author not listed'}
+                      </p>
+                    </div>
+
+                    <p className="line-clamp-3 text-sm text-gray-600">{item.description}</p>
+
+                    <div className="flex items-center justify-between gap-3 text-[11px] text-gray-500">
+                      <span>{item.licenseLabel}</span>
+                      <span>{item.curatedAtLabel}</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleOpenFreeLibraryItem(item)}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                    >
+                      <BookOpenIcon className="h-4 w-4" />
+                      {item.actionLabel}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section className="overflow-hidden rounded-[28px] border border-white/80 bg-white/85 p-4 shadow-[0_24px_70px_-46px_rgba(61,8,186,0.38)] backdrop-blur sm:p-5">
           <div className="flex flex-col gap-4">

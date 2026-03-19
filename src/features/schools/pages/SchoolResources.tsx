@@ -24,14 +24,18 @@ import {
 import {
   deleteResourceForActor,
   fetchFreeLibraryBooks,
+  fetchRecommendedFreeLibraryBooks,
   fetchMyResourceUploads,
   fetchResourceDownload,
   fetchResourcesFeed,
   type FreeLibraryItem,
+  type FreeLibraryRecommendation,
   type FreeLibraryProviderStatus,
   markAllResourceNotificationsAsRead,
   markResourceNotificationAsRead,
   parseFilenameFromContentDisposition,
+  recommendFreeLibraryBook,
+  removeFreeLibraryRecommendation,
   type ResourceCategory,
   type ResourceItem,
   type ResourceNotification,
@@ -384,6 +388,16 @@ const SchoolResources = () => {
   const [freeLibraryProviders, setFreeLibraryProviders] = useState<FreeLibraryProviderStatus[]>([]);
   const [freeLibraryLoading, setFreeLibraryLoading] = useState(true);
   const [freeLibraryError, setFreeLibraryError] = useState<string | null>(null);
+  const [recommendedFreeLibraryItems, setRecommendedFreeLibraryItems] = useState<
+    FreeLibraryRecommendation[]
+  >([]);
+  const [recommendedFreeLibraryLoading, setRecommendedFreeLibraryLoading] = useState(true);
+  const [recommendedFreeLibraryError, setRecommendedFreeLibraryError] = useState<string | null>(
+    null
+  );
+  const [activeRecommendationActionId, setActiveRecommendationActionId] = useState<string | null>(
+    null
+  );
 
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | ResourceType>('all');
@@ -470,9 +484,29 @@ const SchoolResources = () => {
     }
   };
 
+  const refreshRecommendedFreeLibrary = async () => {
+    setRecommendedFreeLibraryLoading(true);
+    setRecommendedFreeLibraryError(null);
+
+    try {
+      const payload = await fetchRecommendedFreeLibraryBooks('school');
+      setRecommendedFreeLibraryItems(Array.isArray(payload.items) ? payload.items : []);
+    } catch (error) {
+      setRecommendedFreeLibraryItems([]);
+      setRecommendedFreeLibraryError(
+        error instanceof Error
+          ? error.message
+          : 'Could not load school recommendations right now.'
+      );
+    } finally {
+      setRecommendedFreeLibraryLoading(false);
+    }
+  };
+
   useEffect(() => {
     void refreshWorkspace(false);
     void refreshFreeLibrary();
+    void refreshRecommendedFreeLibrary();
   }, []);
 
   useEffect(() => {
@@ -526,6 +560,11 @@ const SchoolResources = () => {
     });
   }, [uploads, searchQuery, typeFilter, categoryFilter, pricingFilter, workspaceView, videoLane]);
 
+  const recommendedFreeLibraryLookup = useMemo(
+    () => new Map(recommendedFreeLibraryItems.map((item) => [item.id, item])),
+    [recommendedFreeLibraryItems]
+  );
+
   const unreadNotifications = useMemo(
     () => notifications.filter((notification) => !notification.isRead),
     [notifications]
@@ -577,6 +616,52 @@ const SchoolResources = () => {
 
   const handleOpenFreeLibraryItem = (item: FreeLibraryItem) => {
     window.open(item.actionUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleRecommendFreeLibraryItem = async (item: FreeLibraryItem) => {
+    if (activeRecommendationActionId) {
+      return;
+    }
+
+    setActiveRecommendationActionId(`add:${item.id}`);
+    setNotice(null);
+
+    try {
+      const payload = await recommendFreeLibraryBook(item, 'school');
+      await refreshRecommendedFreeLibrary();
+      setNotice(payload.message || `${item.title} is now recommended to students.`);
+    } catch (error) {
+      setFreeLibraryError(
+        error instanceof Error
+          ? error.message
+          : 'Could not recommend this free book right now.'
+      );
+    } finally {
+      setActiveRecommendationActionId(null);
+    }
+  };
+
+  const handleRemoveFreeLibraryRecommendation = async (item: FreeLibraryRecommendation) => {
+    if (!item.recommendationId || activeRecommendationActionId) {
+      return;
+    }
+
+    setActiveRecommendationActionId(`remove:${item.recommendationId}`);
+    setNotice(null);
+
+    try {
+      const payload = await removeFreeLibraryRecommendation(item.recommendationId, 'school');
+      await refreshRecommendedFreeLibrary();
+      setNotice(payload.message || `${item.title} is no longer pinned for students.`);
+    } catch (error) {
+      setRecommendedFreeLibraryError(
+        error instanceof Error
+          ? error.message
+          : 'Could not remove this recommendation right now.'
+      );
+    } finally {
+      setActiveRecommendationActionId(null);
+    }
   };
 
   const resetUpload = () => {
@@ -1036,6 +1121,98 @@ const SchoolResources = () => {
                 </div>
               </form>
 
+              <div className="mt-4 rounded-[24px] border border-slate-200 bg-slate-50/80 p-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]">
+                      Recommended To Students
+                    </p>
+                    <h3 className="mt-1 text-base font-semibold text-slate-950">
+                      School-curated free books
+                    </h3>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Pin strong free titles here so students see them first in their own resources
+                      workspace.
+                    </p>
+                  </div>
+                  <span className="inline-flex items-center rounded-full border border-[#3D08BA]/15 bg-white px-3 py-1.5 text-xs font-semibold text-[#3D08BA] shadow-sm">
+                    {recommendedFreeLibraryItems.length} recommended
+                  </span>
+                </div>
+
+                {recommendedFreeLibraryError ? (
+                  <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    {recommendedFreeLibraryError}
+                  </div>
+                ) : null}
+
+                {recommendedFreeLibraryLoading ? (
+                  <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-8 text-center text-sm text-slate-500">
+                    Loading recommended free books...
+                  </div>
+                ) : recommendedFreeLibraryItems.length === 0 ? (
+                  <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-8 text-center text-sm text-slate-500">
+                    No free books have been pinned yet. Use the cards below to recommend titles to
+                    students.
+                  </div>
+                ) : (
+                  <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {recommendedFreeLibraryItems.map((item) => (
+                      <article
+                        key={`recommended-${item.id}`}
+                        className="overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_12px_34px_rgba(15,23,42,0.06)]"
+                      >
+                        <div className="space-y-3 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#3D08BA]">
+                                {item.sourceLabel}
+                              </p>
+                              <h4 className="mt-1 line-clamp-2 text-base font-semibold text-slate-950">
+                                {item.title}
+                              </h4>
+                            </div>
+                            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                              Pinned
+                            </span>
+                          </div>
+                          <p className="line-clamp-2 text-sm text-slate-600">{item.description}</p>
+                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                            <span>{item.curatedByLabel}</span>
+                            <span className="text-slate-300">•</span>
+                            <span>{item.curatedAtLabel}</span>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenFreeLibraryItem(item)}
+                              className="inline-flex flex-1 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#3D08BA]"
+                            >
+                              <BookOpenIcon className="h-4 w-4" />
+                              {item.actionLabel}
+                            </button>
+                            {item.recommendationId ? (
+                              <button
+                                type="button"
+                                onClick={() => void handleRemoveFreeLibraryRecommendation(item)}
+                                disabled={
+                                  activeRecommendationActionId === `remove:${item.recommendationId}`
+                                }
+                                className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-rose-200 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {activeRecommendationActionId === `remove:${item.recommendationId}`
+                                  ? 'Removing...'
+                                  : 'Remove'}
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {freeLibraryError ? (
                 <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                   {freeLibraryError}
@@ -1103,15 +1280,53 @@ const SchoolResources = () => {
                             <span>{item.licenseLabel}</span>
                             <span>{item.publishedAt || 'Date unavailable'}</span>
                           </div>
-
-                          <button
-                            type="button"
-                            onClick={() => handleOpenFreeLibraryItem(item)}
-                            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#3D08BA]"
-                          >
-                            <BookOpenIcon className="h-4 w-4" />
-                            {item.actionLabel}
-                          </button>
+                          {recommendedFreeLibraryLookup.get(item.id)?.curatedByLabel ? (
+                            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
+                              {recommendedFreeLibraryLookup.get(item.id)?.curatedByLabel}
+                            </div>
+                          ) : null}
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenFreeLibraryItem(item)}
+                              className="inline-flex flex-1 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#3D08BA]"
+                            >
+                              <BookOpenIcon className="h-4 w-4" />
+                              {item.actionLabel}
+                            </button>
+                            {recommendedFreeLibraryLookup.get(item.id)?.isRecommendedByCurrentUser &&
+                            recommendedFreeLibraryLookup.get(item.id)?.recommendationId ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleRemoveFreeLibraryRecommendation(
+                                    recommendedFreeLibraryLookup.get(item.id) as FreeLibraryRecommendation
+                                  )
+                                }
+                                disabled={
+                                  activeRecommendationActionId ===
+                                  `remove:${recommendedFreeLibraryLookup.get(item.id)?.recommendationId}`
+                                }
+                                className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-rose-200 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {activeRecommendationActionId ===
+                                `remove:${recommendedFreeLibraryLookup.get(item.id)?.recommendationId}`
+                                  ? 'Removing...'
+                                  : 'Pinned'}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => void handleRecommendFreeLibraryItem(item)}
+                                disabled={activeRecommendationActionId === `add:${item.id}`}
+                                className="inline-flex items-center justify-center rounded-2xl border border-[#3D08BA]/15 bg-[#3D08BA]/6 px-3 py-2.5 text-sm font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {activeRecommendationActionId === `add:${item.id}`
+                                  ? 'Saving...'
+                                  : 'Recommend'}
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </article>
                     ))}
