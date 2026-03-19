@@ -172,9 +172,28 @@ export type FreeLibraryRecommendation = FreeLibraryItem & {
   isGlobalRecommendation: boolean;
 };
 
+export type FreeLibraryAudiencePreset = {
+  presetId: string;
+  label: string;
+  targetSchoolLevel: RecommendationTargetSchoolLevel;
+  targetDepartment: string;
+  targetClassGroup: string;
+  audienceLabel: string;
+  createdAt: string;
+  updatedAt: string;
+  updatedAtLabel: string;
+};
+
 export type RecommendFreeLibraryBookInput = {
   item: FreeLibraryItem;
   note?: string;
+  targetSchoolLevel?: RecommendationTargetSchoolLevel;
+  targetDepartment?: string;
+  targetClassGroup?: string;
+};
+
+export type SaveFreeLibraryAudiencePresetInput = {
+  label: string;
   targetSchoolLevel?: RecommendationTargetSchoolLevel;
   targetDepartment?: string;
   targetClassGroup?: string;
@@ -184,6 +203,12 @@ export type FreeLibraryRecommendationsResponse = {
   generatedAt: string;
   count: number;
   items: FreeLibraryRecommendation[];
+};
+
+export type FreeLibraryAudiencePresetsResponse = {
+  generatedAt: string;
+  count: number;
+  items: FreeLibraryAudiencePreset[];
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
@@ -498,6 +523,13 @@ export const fetchRecommendedFreeLibraryBooks = async (actor?: ResourceUploaderR
   return (await response.json()) as FreeLibraryRecommendationsResponse;
 };
 
+export const fetchFreeLibraryAudiencePresets = async (actor?: ResourceUploaderRole) => {
+  const response = await requestWithAuth('/resources/free-books/recommendation-presets', undefined, {
+    actor,
+  });
+  return (await response.json()) as FreeLibraryAudiencePresetsResponse;
+};
+
 export const recommendFreeLibraryBook = async (
   input: RecommendFreeLibraryBookInput,
   actor?: ResourceUploaderRole
@@ -523,6 +555,30 @@ export const recommendFreeLibraryBook = async (
   };
 };
 
+export const saveFreeLibraryAudiencePreset = async (
+  input: SaveFreeLibraryAudiencePresetInput,
+  actor?: ResourceUploaderRole
+) => {
+  const response = await requestWithAuth(
+    '/resources/free-books/recommendation-presets',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        label: input.label,
+        targetSchoolLevel: input.targetSchoolLevel || '',
+        targetDepartment: input.targetDepartment || '',
+        targetClassGroup: input.targetClassGroup || '',
+      }),
+    },
+    { actor }
+  );
+
+  return (await response.json()) as {
+    item: FreeLibraryAudiencePreset;
+    message?: string;
+  };
+};
+
 export const removeFreeLibraryRecommendation = async (
   recommendationId: string,
   actor?: ResourceUploaderRole
@@ -536,6 +592,23 @@ export const removeFreeLibraryRecommendation = async (
   return (await response.json()) as {
     removed: boolean;
     recommendationId: string;
+    message?: string;
+  };
+};
+
+export const removeFreeLibraryAudiencePreset = async (
+  presetId: string,
+  actor?: ResourceUploaderRole
+) => {
+  const response = await requestWithAuth(
+    `/resources/free-books/recommendation-presets/${encodeURIComponent(presetId)}`,
+    { method: 'DELETE' },
+    { actor }
+  );
+
+  return (await response.json()) as {
+    removed: boolean;
+    presetId: string;
     message?: string;
   };
 };

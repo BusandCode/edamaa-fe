@@ -618,3 +618,20 @@ model ResourceFreeBookRecommendation {
   @@index([curatorEmail, recommendedAt])
   @@index([bookId, recommendedAt])
 }
+
+// Stores reusable school-side audience targets for free-book recommendations.
+model ResourceFreeBookAudiencePreset {
+  id                Int      @id @default(autoincrement())
+  publicId          String   @unique
+  curatorEmail      String
+  curatorName       String
+  label             String
+  targetSchoolLevel String?
+  targetDepartment  String?
+  targetClassGroup  String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([curatorEmail, label])
+  @@index([curatorEmail, updatedAt])
+}

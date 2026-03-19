@@ -42,11 +42,15 @@ import {
   type SchoolExamNotification,
 } from '../utils/examsApi';
 import {
+  fetchFreeLibraryAudiencePresets,
   fetchFreeLibraryBooks,
   fetchMyResourceUploads,
   fetchRecommendedFreeLibraryBooks,
+  type FreeLibraryAudiencePreset,
   recommendFreeLibraryBook,
+  removeFreeLibraryAudiencePreset,
   removeFreeLibraryRecommendation,
+  saveFreeLibraryAudiencePreset,
   type FreeLibraryItem,
   type FreeLibraryRecommendation,
   type RecommendationTargetSchoolLevel,
@@ -128,6 +132,19 @@ const createDashboardRecommendationSetup = (): DashboardRecommendationSetup => (
   targetClassGroup: '',
 });
 
+const normalizeAudienceValue = (value: string) => value.trim().toLowerCase();
+
+const presetMatchesDashboardRecommendationSetup = (
+  preset: Pick<
+    FreeLibraryAudiencePreset,
+    'targetSchoolLevel' | 'targetDepartment' | 'targetClassGroup'
+  >,
+  setup: DashboardRecommendationSetup
+) =>
+  preset.targetSchoolLevel === setup.targetSchoolLevel &&
+  normalizeAudienceValue(preset.targetDepartment) === normalizeAudienceValue(setup.targetDepartment) &&
+  normalizeAudienceValue(preset.targetClassGroup) === normalizeAudienceValue(setup.targetClassGroup);
+
 const ResourceLibraryOverview = () => {
   const navigate = useNavigate();
   const [uploads, setUploads] = useState<ResourceItem[]>([]);
@@ -150,6 +167,14 @@ const ResourceLibraryOverview = () => {
   const [recommendationSetup, setRecommendationSetup] = useState<DashboardRecommendationSetup>(
     createDashboardRecommendationSetup()
   );
+  const [recommendationPresetLabel, setRecommendationPresetLabel] = useState('');
+  const [recommendationAudiencePresets, setRecommendationAudiencePresets] = useState<
+    FreeLibraryAudiencePreset[]
+  >([]);
+  const [recommendationAudiencePresetsLoading, setRecommendationAudiencePresetsLoading] =
+    useState(false);
+  const [recommendationAudiencePresetsError, setRecommendationAudiencePresetsError] = useState('');
+  const [activePresetActionId, setActivePresetActionId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -241,8 +266,26 @@ const ResourceLibraryOverview = () => {
     }
   };
 
+  const refreshRecommendationAudiencePresets = async () => {
+    setRecommendationAudiencePresetsLoading(true);
+    setRecommendationAudiencePresetsError('');
+
+    try {
+      const payload = await fetchFreeLibraryAudiencePresets('school');
+      setRecommendationAudiencePresets(Array.isArray(payload.items) ? payload.items : []);
+    } catch (error) {
+      setRecommendationAudiencePresets([]);
+      setRecommendationAudiencePresetsError(
+        error instanceof Error ? error.message : 'Could not load saved audiences right now.'
+      );
+    } finally {
+      setRecommendationAudiencePresetsLoading(false);
+    }
+  };
+
   useEffect(() => {
     void refreshRecommendedFreeLibrary();
+    void refreshRecommendationAudiencePresets();
   }, []);
 
   useEffect(() => {
@@ -380,6 +423,67 @@ const ResourceLibraryOverview = () => {
       );
     } finally {
       setActiveRecommendationActionId(null);
+    }
+  };
+
+  const handleApplyRecommendationPreset = (preset: FreeLibraryAudiencePreset) => {
+    setRecommendationSetup((previous) => ({
+      ...previous,
+      targetSchoolLevel: preset.targetSchoolLevel,
+      targetDepartment: preset.targetDepartment,
+      targetClassGroup: preset.targetClassGroup,
+    }));
+    setNotice(`${preset.label} audience preset applied.`);
+  };
+
+  const handleSaveRecommendationPreset = async () => {
+    if (activePresetActionId) {
+      return;
+    }
+
+    setActivePresetActionId('save');
+    setNotice('');
+
+    try {
+      const payload = await saveFreeLibraryAudiencePreset(
+        {
+          label: recommendationPresetLabel,
+          targetSchoolLevel: recommendationSetup.targetSchoolLevel,
+          targetDepartment: recommendationSetup.targetDepartment,
+          targetClassGroup: recommendationSetup.targetClassGroup,
+        },
+        'school'
+      );
+      await refreshRecommendationAudiencePresets();
+      setRecommendationPresetLabel('');
+      setNotice(payload.message || `${payload.item.label} audience preset is ready to reuse.`);
+    } catch (error) {
+      setRecommendationAudiencePresetsError(
+        error instanceof Error ? error.message : 'Could not save this audience preset right now.'
+      );
+    } finally {
+      setActivePresetActionId(null);
+    }
+  };
+
+  const handleRemoveRecommendationPreset = async (preset: FreeLibraryAudiencePreset) => {
+    if (activePresetActionId) {
+      return;
+    }
+
+    setActivePresetActionId(`remove:${preset.presetId}`);
+    setNotice('');
+
+    try {
+      const payload = await removeFreeLibraryAudiencePreset(preset.presetId, 'school');
+      await refreshRecommendationAudiencePresets();
+      setNotice(payload.message || `${preset.label} audience preset has been removed.`);
+    } catch (error) {
+      setRecommendationAudiencePresetsError(
+        error instanceof Error ? error.message : 'Could not remove this audience preset right now.'
+      );
+    } finally {
+      setActivePresetActionId(null);
     }
   };
 
@@ -798,6 +902,89 @@ const ResourceLibraryOverview = () => {
                 </p>
 
                 <div className='mt-4 space-y-4'>
+                  <div className='rounded-2xl border border-[#3D08BA]/10 bg-white p-4'>
+                    <div className='flex flex-col gap-3'>
+                      <div className='flex flex-col gap-3 sm:flex-row sm:items-end'>
+                        <div className='flex-1'>
+                          <label className='text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500'>
+                            Audience preset name
+                          </label>
+                          <input
+                            value={recommendationPresetLabel}
+                            onChange={(event) => setRecommendationPresetLabel(event.target.value)}
+                            placeholder='JSS2 Gold, SS3 Science, Holiday Revision'
+                            className='mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10'
+                          />
+                        </div>
+                        <button
+                          type='button'
+                          onClick={() => void handleSaveRecommendationPreset()}
+                          disabled={activePresetActionId === 'save'}
+                          className='inline-flex items-center justify-center rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#3D08BA] disabled:cursor-not-allowed disabled:opacity-60'
+                        >
+                          {activePresetActionId === 'save' ? 'Saving preset...' : 'Save current audience'}
+                        </button>
+                      </div>
+                      <p className='text-xs text-slate-600'>
+                        Save the audience below once, then reuse it on the next book you pin.
+                      </p>
+                      {recommendationAudiencePresetsError ? (
+                        <div className='rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800'>
+                          {recommendationAudiencePresetsError}
+                        </div>
+                      ) : null}
+                      {recommendationAudiencePresetsLoading ? (
+                        <div className='rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-center text-xs text-slate-500'>
+                          Loading saved audiences...
+                        </div>
+                      ) : recommendationAudiencePresets.length === 0 ? (
+                        <div className='rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-center text-xs text-slate-500'>
+                          No saved audiences yet.
+                        </div>
+                      ) : (
+                        <div className='flex flex-wrap gap-2'>
+                          {recommendationAudiencePresets.map((preset) => {
+                            const isActivePreset = presetMatchesDashboardRecommendationSetup(
+                              preset,
+                              recommendationSetup
+                            );
+                            return (
+                              <div
+                                key={preset.presetId}
+                                className={`flex items-center gap-2 rounded-2xl border px-3 py-2 ${
+                                  isActivePreset
+                                    ? 'border-[#3D08BA]/20 bg-[#3D08BA]/8'
+                                    : 'border-slate-200 bg-white'
+                                }`}
+                              >
+                                <button
+                                  type='button'
+                                  onClick={() => handleApplyRecommendationPreset(preset)}
+                                  className='text-left'
+                                >
+                                  <p className='text-sm font-semibold text-slate-900'>{preset.label}</p>
+                                  <p className='text-[11px] text-slate-500'>
+                                    {preset.audienceLabel || 'All students'}
+                                  </p>
+                                </button>
+                                <button
+                                  type='button'
+                                  onClick={() => void handleRemoveRecommendationPreset(preset)}
+                                  disabled={activePresetActionId === `remove:${preset.presetId}`}
+                                  className='rounded-full border border-slate-200 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 transition hover:border-rose-200 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-60'
+                                >
+                                  {activePresetActionId === `remove:${preset.presetId}`
+                                    ? 'Removing'
+                                    : 'Remove'}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
                   <div>
                     <label className='text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500'>
                       Recommendation note

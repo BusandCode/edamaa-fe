@@ -50,6 +50,13 @@ type FreeLibraryRecommendationBody = {
   targetClassGroup?: string;
 };
 
+type FreeLibraryAudiencePresetBody = {
+  label?: string;
+  targetSchoolLevel?: string;
+  targetDepartment?: string;
+  targetClassGroup?: string;
+};
+
 @UseGuards(SupabaseAuthGuard)
 @Controller('resources')
 export class ResourcesController {
@@ -105,12 +112,30 @@ export class ResourcesController {
     return this.resourcesService.getRecommendedFreeBooksForAuthUser(this.getAuthUser(request));
   }
 
+  @Get('free-books/recommendation-presets')
+  getRecommendationPresets(@Req() request: Request) {
+    return this.resourcesService.getFreeLibraryAudiencePresetsForAuthUser(
+      this.getAuthUser(request)
+    );
+  }
+
   @Post('free-books/recommended')
   recommendFreeBook(
     @Req() request: Request,
     @Body() body: FreeLibraryRecommendationBody
   ) {
     return this.resourcesService.recommendFreeBookForAuthUser(this.getAuthUser(request), body);
+  }
+
+  @Post('free-books/recommendation-presets')
+  saveRecommendationPreset(
+    @Req() request: Request,
+    @Body() body: FreeLibraryAudiencePresetBody
+  ) {
+    return this.resourcesService.saveFreeLibraryAudiencePresetForAuthUser(
+      this.getAuthUser(request),
+      body
+    );
   }
 
   @Delete('free-books/recommended/:recommendationId')
@@ -121,6 +146,14 @@ export class ResourcesController {
     return this.resourcesService.removeRecommendedFreeBookForAuthUser(
       this.getAuthUser(request),
       recommendationId
+    );
+  }
+
+  @Delete('free-books/recommendation-presets/:presetId')
+  removeRecommendationPreset(@Req() request: Request, @Param('presetId') presetId: string) {
+    return this.resourcesService.removeFreeLibraryAudiencePresetForAuthUser(
+      this.getAuthUser(request),
+      presetId
     );
   }
 

@@ -181,6 +181,25 @@ type FreeLibraryRecommendationRecord = FreeLibraryBookItemResponse & {
   targetClassGroup: string;
 };
 
+type FreeLibraryAudiencePresetInput = {
+  label?: string;
+  targetSchoolLevel?: string;
+  targetDepartment?: string;
+  targetClassGroup?: string;
+};
+
+type FreeLibraryAudiencePresetRecord = {
+  presetId: string;
+  curatorEmail: string;
+  curatorName: string;
+  label: string;
+  targetSchoolLevel: StudentSchoolLevel;
+  targetDepartment: string;
+  targetClassGroup: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 type PersistedFreeLibraryRecommendationRecord = {
   publicId: string;
   bookId: string;
@@ -206,6 +225,18 @@ type PersistedFreeLibraryRecommendationRecord = {
   recommendedAt: Date;
 };
 
+type PersistedFreeLibraryAudiencePresetRecord = {
+  publicId: string;
+  curatorEmail: string;
+  curatorName: string;
+  label: string;
+  targetSchoolLevel: string | null;
+  targetDepartment: string | null;
+  targetClassGroup: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 type FreeLibraryRecommendationItemResponse = FreeLibraryBookItemResponse & {
   recommendationId: string | null;
   curatedAt: string;
@@ -219,6 +250,18 @@ type FreeLibraryRecommendationItemResponse = FreeLibraryBookItemResponse & {
   targetClassGroup: string;
   audienceLabel: string;
   isGlobalRecommendation: boolean;
+};
+
+type FreeLibraryAudiencePresetItemResponse = {
+  presetId: string;
+  label: string;
+  targetSchoolLevel: StudentSchoolLevel;
+  targetDepartment: string;
+  targetClassGroup: string;
+  audienceLabel: string;
+  createdAt: string;
+  updatedAt: string;
+  updatedAtLabel: string;
 };
 
 type FreeLibraryProviderStatus = {
@@ -236,6 +279,12 @@ type FreeLibraryCacheEntry = {
   items: FreeLibraryBookItemResponse[];
   providers: FreeLibraryProviderStatus[];
   cachedAtMs: number;
+};
+
+type FreeLibraryAudienceTarget = {
+  targetSchoolLevel: StudentSchoolLevel;
+  targetDepartment: string;
+  targetClassGroup: string;
 };
 
 const STANDARD_MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024;
@@ -340,10 +389,13 @@ export class ResourcesService implements OnModuleInit {
   private readonly readNotificationIdsByEmail = new Map<string, Set<string>>();
   private readonly freeLibraryCache = new Map<string, FreeLibraryCacheEntry>();
   private readonly freeLibraryRecommendations: FreeLibraryRecommendationRecord[] = [];
+  private readonly freeLibraryAudiencePresets: FreeLibraryAudiencePresetRecord[] = [];
   private purchasesHydrated = false;
   private recommendationsHydrated = false;
+  private recommendationPresetsHydrated = false;
   private purchaseStoreBackoffUntil = 0;
   private recommendationStoreBackoffUntil = 0;
+  private recommendationPresetStoreBackoffUntil = 0;
   private seeded = false;
 
   constructor(private readonly prisma: PrismaService) {
@@ -357,6 +409,7 @@ export class ResourcesService implements OnModuleInit {
     }
     await this.hydratePersistedPurchases();
     await this.hydratePersistedFreeLibraryRecommendations();
+    await this.hydratePersistedFreeLibraryAudiencePresets();
   }
 
   getFeedForAuthUser(authUser: AuthUser) {
@@ -535,6 +588,22 @@ export class ResourcesService implements OnModuleInit {
     };
   }
 
+  getFreeLibraryAudiencePresetsForAuthUser(authUser: AuthUser) {
+    const email = this.requireEmail(authUser);
+    this.requireSchoolCuratorRole(authUser.role);
+
+    const items = this.freeLibraryAudiencePresets
+      .filter((preset) => preset.curatorEmail === email)
+      .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
+      .map((preset) => this.toFreeLibraryAudiencePresetItemResponse(preset));
+
+    return {
+      generatedAt: new Date().toISOString(),
+      count: items.length,
+      items,
+    };
+  }
+
   async recommendFreeBookForAuthUser(authUser: AuthUser, input: FreeLibraryRecommendationInput) {
     const email = this.requireEmail(authUser);
     this.requireSchoolCuratorRole(authUser.role);
@@ -593,6 +662,56 @@ export class ResourcesService implements OnModuleInit {
     };
   }
 
+  async saveFreeLibraryAudiencePresetForAuthUser(
+    authUser: AuthUser,
+    input: FreeLibraryAudiencePresetInput
+  ) {
+    const email = this.requireEmail(authUser);
+    this.requireSchoolCuratorRole(authUser.role);
+
+    const normalizedPreset = this.normalizeFreeLibraryAudiencePresetInput(input);
+    const normalizedLabelKey = normalizedPreset.label.trim().toLowerCase();
+    const existing = this.freeLibraryAudiencePresets.find(
+      (preset) =>
+        preset.curatorEmail === email && preset.label.trim().toLowerCase() === normalizedLabelKey
+    );
+
+    if (existing) {
+      existing.targetSchoolLevel = normalizedPreset.targetSchoolLevel;
+      existing.targetDepartment = normalizedPreset.targetDepartment;
+      existing.targetClassGroup = normalizedPreset.targetClassGroup;
+      existing.updatedAt = new Date();
+      await this.persistFreeLibraryAudiencePresetRecord(existing);
+
+      return {
+        item: this.toFreeLibraryAudiencePresetItemResponse(existing),
+        message: `${existing.label} audience preset has been updated.`,
+      };
+    }
+
+    const curatorName =
+      this.normalizeOptionalText(authUser.name || '', 80) || this.defaultNameFromEmail(email);
+    const preset: FreeLibraryAudiencePresetRecord = {
+      presetId: makeId('freeaud'),
+      curatorEmail: email,
+      curatorName,
+      label: normalizedPreset.label,
+      targetSchoolLevel: normalizedPreset.targetSchoolLevel,
+      targetDepartment: normalizedPreset.targetDepartment,
+      targetClassGroup: normalizedPreset.targetClassGroup,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    this.freeLibraryAudiencePresets.unshift(preset);
+    await this.persistFreeLibraryAudiencePresetRecord(preset);
+
+    return {
+      item: this.toFreeLibraryAudiencePresetItemResponse(preset),
+      message: `${preset.label} audience preset is ready to reuse.`,
+    };
+  }
+
   async removeRecommendedFreeBookForAuthUser(authUser: AuthUser, recommendationId: string) {
     const email = this.requireEmail(authUser);
     this.requireSchoolCuratorRole(authUser.role);
@@ -622,6 +741,38 @@ export class ResourcesService implements OnModuleInit {
       removed: true,
       recommendationId: normalizedRecommendationId,
       message: `${recommendation.title} is no longer pinned for students.`,
+    };
+  }
+
+  async removeFreeLibraryAudiencePresetForAuthUser(authUser: AuthUser, presetId: string) {
+    const email = this.requireEmail(authUser);
+    this.requireSchoolCuratorRole(authUser.role);
+    const normalizedPresetId = String(presetId || '').trim();
+
+    if (!normalizedPresetId) {
+      throw new BadRequestException('Audience preset id is required.');
+    }
+
+    const presetIndex = this.freeLibraryAudiencePresets.findIndex(
+      (preset) => preset.presetId === normalizedPresetId
+    );
+
+    if (presetIndex < 0) {
+      throw new NotFoundException('Audience preset could not be found.');
+    }
+
+    const preset = this.freeLibraryAudiencePresets[presetIndex];
+    if (preset.curatorEmail !== email) {
+      throw new ForbiddenException('You can only remove presets saved from your account.');
+    }
+
+    this.freeLibraryAudiencePresets.splice(presetIndex, 1);
+    await this.deletePersistedFreeLibraryAudiencePresetRecord(preset);
+
+    return {
+      removed: true,
+      presetId: preset.presetId,
+      message: `${preset.label} audience preset has been removed.`,
     };
   }
 
@@ -1169,6 +1320,115 @@ export class ResourcesService implements OnModuleInit {
     }
   }
 
+  private async hydratePersistedFreeLibraryAudiencePresets() {
+    if (this.recommendationPresetsHydrated) {
+      return;
+    }
+    this.recommendationPresetsHydrated = true;
+
+    try {
+      const storedPresets = await this.prisma.resourceFreeBookAudiencePreset.findMany({
+        orderBy: [{ updatedAt: 'desc' }],
+        take: 2000,
+      });
+
+      storedPresets.forEach((preset) => {
+        this.freeLibraryAudiencePresets.push(this.toStoredFreeLibraryAudiencePresetRecord(preset));
+      });
+
+      if (storedPresets.length > 0) {
+        this.logger.log(`Loaded ${storedPresets.length} persisted free-library audience presets.`);
+      }
+    } catch (error) {
+      if (this.isResourcePersistenceUnavailableError(error)) {
+        this.logger.warn(
+          'Free-library audience preset persistence is unavailable. Falling back to in-memory presets only.'
+        );
+        return;
+      }
+
+      this.logger.warn(
+        `Could not hydrate free-library audience presets. Falling back to memory mode (${(error as Error).message}).`
+      );
+    }
+  }
+
+  private async persistFreeLibraryAudiencePresetRecord(preset: FreeLibraryAudiencePresetRecord) {
+    if (Date.now() < this.recommendationPresetStoreBackoffUntil) {
+      return;
+    }
+
+    try {
+      await this.prisma.resourceFreeBookAudiencePreset.upsert({
+        where: {
+          curatorEmail_label: {
+            curatorEmail: preset.curatorEmail,
+            label: preset.label,
+          },
+        },
+        create: {
+          publicId: preset.presetId,
+          curatorEmail: preset.curatorEmail,
+          curatorName: preset.curatorName,
+          label: preset.label,
+          targetSchoolLevel: preset.targetSchoolLevel || null,
+          targetDepartment: preset.targetDepartment || null,
+          targetClassGroup: preset.targetClassGroup || null,
+          createdAt: preset.createdAt,
+          updatedAt: preset.updatedAt,
+        },
+        update: {
+          curatorName: preset.curatorName,
+          targetSchoolLevel: preset.targetSchoolLevel || null,
+          targetDepartment: preset.targetDepartment || null,
+          targetClassGroup: preset.targetClassGroup || null,
+          updatedAt: preset.updatedAt,
+        },
+      });
+    } catch (error) {
+      if (this.isResourcePersistenceUnavailableError(error)) {
+        this.recommendationPresetStoreBackoffUntil = Date.now() + 60_000;
+        this.logger.warn(
+          'Free-library audience preset persistence failed. Retrying in 60s while keeping in-memory presets.'
+        );
+        return;
+      }
+
+      this.logger.warn(
+        `Persisting free-library audience preset failed (${(error as Error).message}). In-memory presets still work.`
+      );
+    }
+  }
+
+  private async deletePersistedFreeLibraryAudiencePresetRecord(
+    preset: FreeLibraryAudiencePresetRecord
+  ) {
+    if (Date.now() < this.recommendationPresetStoreBackoffUntil) {
+      return;
+    }
+
+    try {
+      await this.prisma.resourceFreeBookAudiencePreset.deleteMany({
+        where: {
+          curatorEmail: preset.curatorEmail,
+          label: preset.label,
+        },
+      });
+    } catch (error) {
+      if (this.isResourcePersistenceUnavailableError(error)) {
+        this.recommendationPresetStoreBackoffUntil = Date.now() + 60_000;
+        this.logger.warn(
+          'Free-library audience preset delete could not reach persistence. Retrying in 60s while keeping in-memory state.'
+        );
+        return;
+      }
+
+      this.logger.warn(
+        `Deleting free-library audience preset from persistence failed (${(error as Error).message}).`
+      );
+    }
+  }
+
   private isResourcePersistenceUnavailableError(error: unknown) {
     if (error instanceof Prisma.PrismaClientInitializationError) {
       return true;
@@ -1225,6 +1485,28 @@ export class ResourcesService implements OnModuleInit {
       targetSchoolLevel: this.normalizeStudentSchoolLevel(record.targetSchoolLevel || ''),
       targetDepartment: this.normalizeOptionalText(record.targetDepartment || '', 80),
       targetClassGroup: this.normalizeOptionalText(record.targetClassGroup || '', 80),
+    };
+  }
+
+  private toStoredFreeLibraryAudiencePresetRecord(
+    record: PersistedFreeLibraryAudiencePresetRecord
+  ): FreeLibraryAudiencePresetRecord {
+    return {
+      presetId: record.publicId,
+      curatorEmail: normalizeEmail(record.curatorEmail),
+      curatorName:
+        this.normalizeOptionalText(record.curatorName, 80) ||
+        this.defaultNameFromEmail(record.curatorEmail),
+      label: this.normalizeRequiredText(
+        record.label,
+        'Audience preset label is required.',
+        80
+      ),
+      targetSchoolLevel: this.normalizeStudentSchoolLevel(record.targetSchoolLevel || ''),
+      targetDepartment: this.normalizeOptionalText(record.targetDepartment || '', 80),
+      targetClassGroup: this.normalizeOptionalText(record.targetClassGroup || '', 80),
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
     };
   }
 
@@ -1822,6 +2104,35 @@ export class ResourcesService implements OnModuleInit {
     };
   }
 
+  private normalizeFreeLibraryAudiencePresetInput(input: FreeLibraryAudiencePresetInput): {
+    label: string;
+    targetSchoolLevel: StudentSchoolLevel;
+    targetDepartment: string;
+    targetClassGroup: string;
+  } {
+    const label = this.normalizeRequiredText(
+      input.label,
+      'Audience preset name is required.',
+      80
+    );
+    const targetSchoolLevel = this.normalizeStudentSchoolLevel(input.targetSchoolLevel);
+    const targetDepartment = this.normalizeOptionalText(input.targetDepartment, 80);
+    const targetClassGroup = this.normalizeOptionalText(input.targetClassGroup, 80);
+
+    if (!targetSchoolLevel && !targetDepartment && !targetClassGroup) {
+      throw new BadRequestException(
+        'Audience presets must target at least one school level, department, or class group.'
+      );
+    }
+
+    return {
+      label,
+      targetSchoolLevel,
+      targetDepartment,
+      targetClassGroup,
+    };
+  }
+
   private normalizeFreeLibraryProvider(value: string | undefined): FreeLibraryProvider {
     const normalized = String(value || '')
       .trim()
@@ -1851,12 +2162,7 @@ export class ResourcesService implements OnModuleInit {
     return '';
   }
 
-  private buildRecommendationAudienceLabel(
-    recommendation: Pick<
-      FreeLibraryRecommendationRecord,
-      'targetSchoolLevel' | 'targetDepartment' | 'targetClassGroup'
-    >
-  ) {
+  private buildRecommendationAudienceLabel(recommendation: FreeLibraryAudienceTarget) {
     const parts: string[] = [];
 
     if (recommendation.targetSchoolLevel) {
@@ -1875,6 +2181,22 @@ export class ResourcesService implements OnModuleInit {
     }
 
     return parts.join(' • ');
+  }
+
+  private toFreeLibraryAudiencePresetItemResponse(
+    preset: FreeLibraryAudiencePresetRecord
+  ): FreeLibraryAudiencePresetItemResponse {
+    return {
+      presetId: preset.presetId,
+      label: preset.label,
+      targetSchoolLevel: preset.targetSchoolLevel,
+      targetDepartment: preset.targetDepartment,
+      targetClassGroup: preset.targetClassGroup,
+      audienceLabel: this.buildRecommendationAudienceLabel(preset),
+      createdAt: preset.createdAt.toISOString(),
+      updatedAt: preset.updatedAt.toISOString(),
+      updatedAtLabel: toRelativeLabel(preset.updatedAt),
+    };
   }
 
   private resolveUploaderRoleFromAuth(roleValue?: string | null): UploaderRole {
