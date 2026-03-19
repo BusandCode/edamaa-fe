@@ -15,6 +15,7 @@ export type ResourcePricingType = 'free' | 'paid';
 export type ResourcePriority = 'high' | 'medium' | 'low';
 export type ResourceUploaderRole = 'tutor' | 'school';
 export type FreeLibraryProvider = 'open_library' | 'google_books';
+export type RecommendationTargetSchoolLevel = '' | 'primary' | 'secondary' | 'tertiary';
 
 export type ResourceItem = {
   id: string;
@@ -163,6 +164,20 @@ export type FreeLibraryRecommendation = FreeLibraryItem & {
   curatedByCount: number;
   curatedByLabel: string;
   isRecommendedByCurrentUser: boolean;
+  note: string;
+  targetSchoolLevel: RecommendationTargetSchoolLevel;
+  targetDepartment: string;
+  targetClassGroup: string;
+  audienceLabel: string;
+  isGlobalRecommendation: boolean;
+};
+
+export type RecommendFreeLibraryBookInput = {
+  item: FreeLibraryItem;
+  note?: string;
+  targetSchoolLevel?: RecommendationTargetSchoolLevel;
+  targetDepartment?: string;
+  targetClassGroup?: string;
 };
 
 export type FreeLibraryRecommendationsResponse = {
@@ -484,14 +499,20 @@ export const fetchRecommendedFreeLibraryBooks = async (actor?: ResourceUploaderR
 };
 
 export const recommendFreeLibraryBook = async (
-  item: FreeLibraryItem,
+  input: RecommendFreeLibraryBookInput,
   actor?: ResourceUploaderRole
 ) => {
   const response = await requestWithAuth(
     '/resources/free-books/recommended',
     {
       method: 'POST',
-      body: JSON.stringify(item),
+      body: JSON.stringify({
+        ...input.item,
+        note: input.note || '',
+        targetSchoolLevel: input.targetSchoolLevel || '',
+        targetDepartment: input.targetDepartment || '',
+        targetClassGroup: input.targetClassGroup || '',
+      }),
     },
     { actor }
   );

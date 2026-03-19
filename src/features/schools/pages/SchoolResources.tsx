@@ -34,6 +34,7 @@ import {
   markAllResourceNotificationsAsRead,
   markResourceNotificationAsRead,
   parseFilenameFromContentDisposition,
+  type RecommendationTargetSchoolLevel,
   recommendFreeLibraryBook,
   removeFreeLibraryRecommendation,
   type ResourceCategory,
@@ -108,6 +109,13 @@ type OfficialDocumentDraftState = {
   signatoryTitle: string;
 };
 
+type RecommendationSetupState = {
+  note: string;
+  targetSchoolLevel: RecommendationTargetSchoolLevel;
+  targetDepartment: string;
+  targetClassGroup: string;
+};
+
 const createOfficialDocumentDraft = (): OfficialDocumentDraftState => ({
   templateId: '',
   studentName: '',
@@ -119,6 +127,13 @@ const createOfficialDocumentDraft = (): OfficialDocumentDraftState => ({
   referenceCode: '',
   signatoryName: '',
   signatoryTitle: 'Registrar',
+});
+
+const createRecommendationSetup = (): RecommendationSetupState => ({
+  note: '',
+  targetSchoolLevel: '',
+  targetDepartment: '',
+  targetClassGroup: '',
 });
 
 const getProviderStatusTone = (status: FreeLibraryProviderStatus['status']) =>
@@ -398,6 +413,9 @@ const SchoolResources = () => {
   const [activeRecommendationActionId, setActiveRecommendationActionId] = useState<string | null>(
     null
   );
+  const [recommendationSetup, setRecommendationSetup] = useState<RecommendationSetupState>(
+    createRecommendationSetup()
+  );
 
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | ResourceType>('all');
@@ -627,9 +645,22 @@ const SchoolResources = () => {
     setNotice(null);
 
     try {
-      const payload = await recommendFreeLibraryBook(item, 'school');
+      const payload = await recommendFreeLibraryBook(
+        {
+          item,
+          note: recommendationSetup.note,
+          targetSchoolLevel: recommendationSetup.targetSchoolLevel,
+          targetDepartment: recommendationSetup.targetDepartment,
+          targetClassGroup: recommendationSetup.targetClassGroup,
+        },
+        'school'
+      );
       await refreshRecommendedFreeLibrary();
       setNotice(payload.message || `${item.title} is now recommended to students.`);
+      setRecommendationSetup((previous) => ({
+        ...previous,
+        note: '',
+      }));
     } catch (error) {
       setFreeLibraryError(
         error instanceof Error
@@ -1140,6 +1171,84 @@ const SchoolResources = () => {
                   </span>
                 </div>
 
+                <div className="mt-4 rounded-[22px] border border-[#3D08BA]/10 bg-white p-4 shadow-sm">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
+                    <div className="flex-1">
+                      <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        Recommendation note
+                      </label>
+                      <textarea
+                        value={recommendationSetup.note}
+                        onChange={(event) =>
+                          setRecommendationSetup((previous) => ({
+                            ...previous,
+                            note: event.target.value,
+                          }))
+                        }
+                        rows={2}
+                        placeholder="Best for JSS2 revision, exam prep, or holiday study."
+                        className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
+                      />
+                    </div>
+                    <div className="grid flex-1 gap-3 sm:grid-cols-3">
+                      <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        School level
+                        <select
+                          value={recommendationSetup.targetSchoolLevel}
+                          onChange={(event) =>
+                            setRecommendationSetup((previous) => ({
+                              ...previous,
+                              targetSchoolLevel: event.target.value as RecommendationTargetSchoolLevel,
+                            }))
+                          }
+                          className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium capitalize text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
+                        >
+                          <option value="">All levels</option>
+                          <option value="primary">Primary</option>
+                          <option value="secondary">Secondary</option>
+                          <option value="tertiary">Tertiary</option>
+                        </select>
+                      </label>
+                      <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        Department
+                        <input
+                          value={recommendationSetup.targetDepartment}
+                          onChange={(event) =>
+                            setRecommendationSetup((previous) => ({
+                              ...previous,
+                              targetDepartment: event.target.value,
+                            }))
+                          }
+                          placeholder="Science, Arts..."
+                          className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
+                        />
+                      </label>
+                      <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        Class group
+                        <input
+                          value={recommendationSetup.targetClassGroup}
+                          onChange={(event) =>
+                            setRecommendationSetup((previous) => ({
+                              ...previous,
+                              targetClassGroup: event.target.value,
+                            }))
+                          }
+                          placeholder="JSS2 Gold, SS3..."
+                          className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                    <span className="rounded-full bg-[#3D08BA]/6 px-2.5 py-1 font-semibold text-[#3D08BA]">
+                      Optional targeting
+                    </span>
+                    <span>
+                      Leave all fields empty to recommend a book to every student.
+                    </span>
+                  </div>
+                </div>
+
                 {recommendedFreeLibraryError ? (
                   <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                     {recommendedFreeLibraryError}
@@ -1177,11 +1286,25 @@ const SchoolResources = () => {
                             </span>
                           </div>
                           <p className="line-clamp-2 text-sm text-slate-600">{item.description}</p>
+                          {item.note ? (
+                            <div className="rounded-2xl border border-[#3D08BA]/10 bg-[#3D08BA]/5 px-3 py-2 text-sm text-slate-700">
+                              {item.note}
+                            </div>
+                          ) : null}
                           <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                             <span>{item.curatedByLabel}</span>
                             <span className="text-slate-300">•</span>
                             <span>{item.curatedAtLabel}</span>
                           </div>
+                          {item.audienceLabel ? (
+                            <div className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold text-sky-700">
+                              For {item.audienceLabel}
+                            </div>
+                          ) : (
+                            <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600">
+                              Visible to all students
+                            </div>
+                          )}
                           <div className="flex gap-2">
                             <button
                               type="button"
@@ -1198,7 +1321,7 @@ const SchoolResources = () => {
                                 disabled={
                                   activeRecommendationActionId === `remove:${item.recommendationId}`
                                 }
-                                className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-rose-200 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA] disabled:cursor-not-allowed disabled:opacity-60"
                               >
                                 {activeRecommendationActionId === `remove:${item.recommendationId}`
                                   ? 'Removing...'
@@ -1285,6 +1408,16 @@ const SchoolResources = () => {
                               {recommendedFreeLibraryLookup.get(item.id)?.curatedByLabel}
                             </div>
                           ) : null}
+                          {recommendedFreeLibraryLookup.get(item.id)?.note ? (
+                            <div className="rounded-2xl border border-[#3D08BA]/10 bg-[#3D08BA]/5 px-3 py-2 text-sm text-slate-700">
+                              {recommendedFreeLibraryLookup.get(item.id)?.note}
+                            </div>
+                          ) : null}
+                          {recommendedFreeLibraryLookup.get(item.id)?.audienceLabel ? (
+                            <div className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold text-sky-700">
+                              For {recommendedFreeLibraryLookup.get(item.id)?.audienceLabel}
+                            </div>
+                          ) : null}
                           <div className="flex gap-2">
                             <button
                               type="button"
@@ -1298,21 +1431,15 @@ const SchoolResources = () => {
                             recommendedFreeLibraryLookup.get(item.id)?.recommendationId ? (
                               <button
                                 type="button"
-                                onClick={() =>
-                                  void handleRemoveFreeLibraryRecommendation(
-                                    recommendedFreeLibraryLookup.get(item.id) as FreeLibraryRecommendation
-                                  )
-                                }
+                                onClick={() => void handleRecommendFreeLibraryItem(item)}
                                 disabled={
-                                  activeRecommendationActionId ===
-                                  `remove:${recommendedFreeLibraryLookup.get(item.id)?.recommendationId}`
+                                  activeRecommendationActionId === `add:${item.id}`
                                 }
                                 className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-rose-200 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
                               >
-                                {activeRecommendationActionId ===
-                                `remove:${recommendedFreeLibraryLookup.get(item.id)?.recommendationId}`
-                                  ? 'Removing...'
-                                  : 'Pinned'}
+                                {activeRecommendationActionId === `add:${item.id}`
+                                  ? 'Saving...'
+                                  : 'Update'}
                               </button>
                             ) : (
                               <button

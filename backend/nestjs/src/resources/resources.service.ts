@@ -125,6 +125,7 @@ type FeedSummary = {
 };
 
 type FreeLibraryProvider = 'open_library' | 'google_books';
+type StudentSchoolLevel = '' | 'primary' | 'secondary' | 'tertiary';
 
 type FreeLibrarySearchInput = {
   query?: string;
@@ -162,6 +163,10 @@ type FreeLibraryRecommendationInput = {
   accessLabel?: string;
   licenseLabel?: string;
   publishedAt?: string | null;
+  note?: string;
+  targetSchoolLevel?: string;
+  targetDepartment?: string;
+  targetClassGroup?: string;
 };
 
 type FreeLibraryRecommendationRecord = FreeLibraryBookItemResponse & {
@@ -170,6 +175,10 @@ type FreeLibraryRecommendationRecord = FreeLibraryBookItemResponse & {
   curatorName: string;
   curatorRole: 'school';
   createdAt: Date;
+  note: string;
+  targetSchoolLevel: StudentSchoolLevel;
+  targetDepartment: string;
+  targetClassGroup: string;
 };
 
 type FreeLibraryRecommendationItemResponse = FreeLibraryBookItemResponse & {
@@ -179,6 +188,12 @@ type FreeLibraryRecommendationItemResponse = FreeLibraryBookItemResponse & {
   curatedByCount: number;
   curatedByLabel: string;
   isRecommendedByCurrentUser: boolean;
+  note: string;
+  targetSchoolLevel: StudentSchoolLevel;
+  targetDepartment: string;
+  targetClassGroup: string;
+  audienceLabel: string;
+  isGlobalRecommendation: boolean;
 };
 
 type FreeLibraryProviderStatus = {
@@ -503,17 +518,25 @@ export class ResourcesService implements OnModuleInit {
     );
 
     if (existing) {
-      const currentItem = this
-        .buildRecommendedFreeBookItems(email)
-        .find(
-          (item) =>
-            item.recommendationId === existing.recommendationId ||
-            (item.id === existing.id && item.isRecommendedByCurrentUser)
-        );
+      existing.title = normalizedItem.title;
+      existing.authors = normalizedItem.authors;
+      existing.description = normalizedItem.description;
+      existing.subject = normalizedItem.subject;
+      existing.coverImageUrl = normalizedItem.coverImageUrl;
+      existing.actionUrl = normalizedItem.actionUrl;
+      existing.actionLabel = normalizedItem.actionLabel;
+      existing.accessLabel = normalizedItem.accessLabel;
+      existing.licenseLabel = normalizedItem.licenseLabel;
+      existing.publishedAt = normalizedItem.publishedAt;
+      existing.note = normalizedItem.note;
+      existing.targetSchoolLevel = normalizedItem.targetSchoolLevel;
+      existing.targetDepartment = normalizedItem.targetDepartment;
+      existing.targetClassGroup = normalizedItem.targetClassGroup;
+      existing.createdAt = new Date();
 
       return {
-        item: currentItem || this.toFreeLibraryRecommendationItemResponse([existing], email),
-        message: `${existing.title} is already recommended to students.`,
+        item: this.toFreeLibraryRecommendationItemResponse([existing], email),
+        message: `${existing.title} recommendation has been updated.`,
       };
     }
 
@@ -526,6 +549,10 @@ export class ResourcesService implements OnModuleInit {
       curatorName,
       curatorRole: 'school',
       createdAt: new Date(),
+      note: normalizedItem.note,
+      targetSchoolLevel: normalizedItem.targetSchoolLevel,
+      targetDepartment: normalizedItem.targetDepartment,
+      targetClassGroup: normalizedItem.targetClassGroup,
     };
 
     this.freeLibraryRecommendations.unshift(recommendation);
@@ -1229,15 +1256,16 @@ export class ResourcesService implements OnModuleInit {
     const sortedGroup = [...group].sort(
       (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
     );
-    const primary = sortedGroup[0];
+    const currentUserRecommendation =
+      sortedGroup.find((item) => item.curatorEmail === currentEmail) || null;
+    const primary = currentUserRecommendation || sortedGroup[0];
 
     if (!primary) {
       throw new NotFoundException('Recommendation group is empty.');
     }
 
-    const currentUserRecommendation =
-      sortedGroup.find((item) => item.curatorEmail === currentEmail) || null;
     const curatedByCount = sortedGroup.length;
+    const audienceLabel = this.buildRecommendationAudienceLabel(primary);
 
     return {
       id: primary.id,
@@ -1261,6 +1289,12 @@ export class ResourcesService implements OnModuleInit {
         curatedByCount === 1 ? '' : 's'
       }`,
       isRecommendedByCurrentUser: Boolean(currentUserRecommendation),
+      note: primary.note,
+      targetSchoolLevel: primary.targetSchoolLevel,
+      targetDepartment: primary.targetDepartment,
+      targetClassGroup: primary.targetClassGroup,
+      audienceLabel,
+      isGlobalRecommendation: !audienceLabel,
     };
   }
 
@@ -1503,7 +1537,12 @@ export class ResourcesService implements OnModuleInit {
 
   private normalizeFreeLibraryRecommendationInput(
     input: FreeLibraryRecommendationInput
-  ): FreeLibraryBookItemResponse {
+  ): FreeLibraryBookItemResponse & {
+    note: string;
+    targetSchoolLevel: StudentSchoolLevel;
+    targetDepartment: string;
+    targetClassGroup: string;
+  } {
     const source = this.normalizeFreeLibraryProvider(input.source);
     const title = this.normalizeRequiredText(
       input.title,
@@ -1547,6 +1586,10 @@ export class ResourcesService implements OnModuleInit {
       accessLabel: this.normalizeOptionalText(input.accessLabel, 60) || 'Free access',
       licenseLabel: this.normalizeOptionalText(input.licenseLabel, 80) || 'Free access',
       publishedAt: this.normalizeOptionalText(String(input.publishedAt || ''), 40) || null,
+      note: this.normalizeOptionalText(input.note, 220),
+      targetSchoolLevel: this.normalizeStudentSchoolLevel(input.targetSchoolLevel),
+      targetDepartment: this.normalizeOptionalText(input.targetDepartment, 80),
+      targetClassGroup: this.normalizeOptionalText(input.targetClassGroup, 80),
     };
   }
 
@@ -1565,6 +1608,44 @@ export class ResourcesService implements OnModuleInit {
     }
 
     throw new BadRequestException('Only approved free-library sources can be recommended.');
+  }
+
+  private normalizeStudentSchoolLevel(value: string | undefined): StudentSchoolLevel {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (
+      normalized === 'primary' ||
+      normalized === 'secondary' ||
+      normalized === 'tertiary'
+    ) {
+      return normalized;
+    }
+    return '';
+  }
+
+  private buildRecommendationAudienceLabel(
+    recommendation: Pick<
+      FreeLibraryRecommendationRecord,
+      'targetSchoolLevel' | 'targetDepartment' | 'targetClassGroup'
+    >
+  ) {
+    const parts: string[] = [];
+
+    if (recommendation.targetSchoolLevel) {
+      parts.push(
+        recommendation.targetSchoolLevel.charAt(0).toUpperCase() +
+          recommendation.targetSchoolLevel.slice(1)
+      );
+    }
+
+    if (recommendation.targetDepartment) {
+      parts.push(recommendation.targetDepartment);
+    }
+
+    if (recommendation.targetClassGroup) {
+      parts.push(recommendation.targetClassGroup);
+    }
+
+    return parts.join(' • ');
   }
 
   private resolveUploaderRoleFromAuth(roleValue?: string | null): UploaderRole {

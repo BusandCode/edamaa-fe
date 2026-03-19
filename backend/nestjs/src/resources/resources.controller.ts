@@ -44,6 +44,10 @@ type FreeLibraryRecommendationBody = {
   accessLabel?: string;
   licenseLabel?: string;
   publishedAt?: string | null;
+  note?: string;
+  targetSchoolLevel?: string;
+  targetDepartment?: string;
+  targetClassGroup?: string;
 };
 
 @UseGuards(SupabaseAuthGuard)

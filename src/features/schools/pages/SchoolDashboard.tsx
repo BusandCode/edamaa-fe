@@ -15,7 +15,7 @@ import {
   FaMoneyBillWave,
   FaHome,
   FaSignOutAlt,
-  FaUpload,
+  FaThumbtack,
   FaUserShield,
 } from 'react-icons/fa';
 import { CheckBadgeIcon } from '@heroicons/react/24/solid';
@@ -41,7 +41,14 @@ import {
   type SchoolExamNotification,
 } from '../utils/examsApi';
 import {
+  fetchFreeLibraryBooks,
   fetchMyResourceUploads,
+  fetchRecommendedFreeLibraryBooks,
+  recommendFreeLibraryBook,
+  removeFreeLibraryRecommendation,
+  type FreeLibraryItem,
+  type FreeLibraryRecommendation,
+  type RecommendationTargetSchoolLevel,
   type ResourceItem,
 } from '../utils/resourcesApi';
 import { fetchMyAccountRoles, switchDefaultAccountRole } from '../../auth/utils/accountRolesApi';
@@ -93,17 +100,55 @@ type ResultLedgerEntry = {
 };
 
 type ResourceLibraryView = 'textbooks' | 'video-lessons' | 'documents';
+type DashboardRecommendationSetup = {
+  note: string;
+  targetSchoolLevel: RecommendationTargetSchoolLevel;
+  targetDepartment: string;
+  targetClassGroup: string;
+};
+
+const FREE_LIBRARY_SUBJECTS = [
+  'Mathematics',
+  'Science',
+  'English',
+  'History',
+  'Computer Studies',
+] as const;
 
 const isTextbookResource = (resource: ResourceItem) =>
   resource.category === 'library' && (resource.type === 'document' || resource.type === 'pdf');
 const isLiveRecordingResource = (resource: ResourceItem) =>
   resource.type === 'video' && resource.category === 'live_recording';
 
+const createDashboardRecommendationSetup = (): DashboardRecommendationSetup => ({
+  note: '',
+  targetSchoolLevel: '',
+  targetDepartment: '',
+  targetClassGroup: '',
+});
+
 const ResourceLibraryOverview = () => {
   const navigate = useNavigate();
   const [uploads, setUploads] = useState<ResourceItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [notice, setNotice] = useState('');
+  const [recommendedFreeLibraryItems, setRecommendedFreeLibraryItems] = useState<
+    FreeLibraryRecommendation[]
+  >([]);
+  const [recommendedFreeLibraryLoading, setRecommendedFreeLibraryLoading] = useState(false);
+  const [recommendedFreeLibraryError, setRecommendedFreeLibraryError] = useState('');
+  const [quickPinOpen, setQuickPinOpen] = useState(false);
+  const [freeLibraryQuery, setFreeLibraryQuery] = useState('');
+  const [freeLibrarySubject, setFreeLibrarySubject] = useState<string>(FREE_LIBRARY_SUBJECTS[0]);
+  const [freeLibraryItems, setFreeLibraryItems] = useState<FreeLibraryItem[]>([]);
+  const [freeLibraryLoading, setFreeLibraryLoading] = useState(false);
+  const [freeLibraryError, setFreeLibraryError] = useState('');
+  const [activeRecommendationActionId, setActiveRecommendationActionId] = useState<string | null>(
+    null
+  );
+  const [recommendationSetup, setRecommendationSetup] = useState<DashboardRecommendationSetup>(
+    createDashboardRecommendationSetup()
+  );
 
   useEffect(() => {
     let active = true;
@@ -145,6 +190,68 @@ const ResourceLibraryOverview = () => {
     };
   }, []);
 
+  const refreshRecommendedFreeLibrary = async () => {
+    setRecommendedFreeLibraryLoading(true);
+    setRecommendedFreeLibraryError('');
+
+    try {
+      const payload = await fetchRecommendedFreeLibraryBooks('school');
+      setRecommendedFreeLibraryItems(Array.isArray(payload.items) ? payload.items : []);
+    } catch (error) {
+      setRecommendedFreeLibraryItems([]);
+      setRecommendedFreeLibraryError(
+        error instanceof Error ? error.message : 'Could not load recommended free books right now.'
+      );
+    } finally {
+      setRecommendedFreeLibraryLoading(false);
+    }
+  };
+
+  const refreshFreeLibraryDiscovery = async (overrides?: { query?: string; subject?: string }) => {
+    const nextQuery =
+      overrides && Object.prototype.hasOwnProperty.call(overrides, 'query')
+        ? overrides.query || ''
+        : freeLibraryQuery;
+    const nextSubject =
+      overrides && Object.prototype.hasOwnProperty.call(overrides, 'subject')
+        ? overrides.subject || ''
+        : freeLibrarySubject;
+
+    setFreeLibraryLoading(true);
+    setFreeLibraryError('');
+
+    try {
+      const payload = await fetchFreeLibraryBooks(
+        {
+          q: nextQuery.trim() || undefined,
+          subject: nextSubject.trim() || undefined,
+          limit: 4,
+        },
+        'school'
+      );
+      setFreeLibraryItems(Array.isArray(payload.items) ? payload.items : []);
+    } catch (error) {
+      setFreeLibraryItems([]);
+      setFreeLibraryError(
+        error instanceof Error ? error.message : 'Could not load free books right now.'
+      );
+    } finally {
+      setFreeLibraryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshRecommendedFreeLibrary();
+  }, []);
+
+  useEffect(() => {
+    if (!quickPinOpen || freeLibraryItems.length > 0 || freeLibraryLoading) {
+      return;
+    }
+
+    void refreshFreeLibraryDiscovery();
+  }, [quickPinOpen]);
+
   const stats = useMemo(
     () => ({
       ebooks: uploads.filter(isTextbookResource).length,
@@ -153,6 +260,11 @@ const ResourceLibraryOverview = () => {
       officialDocuments: uploads.filter((resource) => resource.category === 'official_document').length,
     }),
     [uploads]
+  );
+
+  const recommendedFreeLibraryLookup = useMemo(
+    () => new Map(recommendedFreeLibraryItems.map((item) => [item.id, item])),
+    [recommendedFreeLibraryItems]
   );
 
   const recentLiveRecordings = useMemo(
@@ -211,6 +323,63 @@ const ResourceLibraryOverview = () => {
 
   const handleOpenLiveRecordings = () => {
     navigate('/school-resources?view=video-lessons&lane=recordings');
+  };
+
+  const handleOpenFreeLibraryItem = (item: FreeLibraryItem) => {
+    window.open(item.actionUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleRecommendFreeLibraryItem = async (item: FreeLibraryItem) => {
+    if (activeRecommendationActionId) {
+      return;
+    }
+
+    setActiveRecommendationActionId(`add:${item.id}`);
+    setNotice('');
+    try {
+      const payload = await recommendFreeLibraryBook(
+        {
+          item,
+          note: recommendationSetup.note,
+          targetSchoolLevel: recommendationSetup.targetSchoolLevel,
+          targetDepartment: recommendationSetup.targetDepartment,
+          targetClassGroup: recommendationSetup.targetClassGroup,
+        },
+        'school'
+      );
+      await refreshRecommendedFreeLibrary();
+      setNotice(payload.message || `${item.title} is now recommended to students.`);
+      setRecommendationSetup((previous) => ({
+        ...previous,
+        note: '',
+      }));
+    } catch (error) {
+      setFreeLibraryError(
+        error instanceof Error ? error.message : 'Could not recommend this book right now.'
+      );
+    } finally {
+      setActiveRecommendationActionId(null);
+    }
+  };
+
+  const handleRemoveRecommendation = async (item: FreeLibraryRecommendation) => {
+    if (!item.recommendationId || activeRecommendationActionId) {
+      return;
+    }
+
+    setActiveRecommendationActionId(`remove:${item.recommendationId}`);
+    setNotice('');
+    try {
+      const payload = await removeFreeLibraryRecommendation(item.recommendationId, 'school');
+      await refreshRecommendedFreeLibrary();
+      setNotice(payload.message || `${item.title} is no longer pinned for students.`);
+    } catch (error) {
+      setRecommendedFreeLibraryError(
+        error instanceof Error ? error.message : 'Could not remove this recommendation right now.'
+      );
+    } finally {
+      setActiveRecommendationActionId(null);
+    }
   };
 
   return (
@@ -281,15 +450,125 @@ const ResourceLibraryOverview = () => {
               Discover open and previewable books from trusted education catalogs without sending students to unsafe download sites.
             </p>
           </div>
+          <div className='flex flex-wrap gap-2'>
+            <div className='relative group'>
+              <button
+                type='button'
+                title='Pin free book'
+                aria-label='Pin free book'
+                onClick={() => {
+                  setQuickPinOpen(true);
+                  setFreeLibraryError('');
+                }}
+                className='inline-flex h-9 w-9 items-center justify-center rounded-lg bg-[#3D08BA] text-white shadow-sm transition hover:bg-[#2c0686]'
+              >
+                <FaThumbtack className='text-sm' />
+              </button>
+              <div className='pointer-events-none absolute right-0 top-full z-10 mt-2 whitespace-nowrap rounded-lg bg-slate-950 px-2.5 py-1.5 text-[11px] font-semibold text-white opacity-0 shadow-lg transition duration-150 group-hover:opacity-100'>
+                Pin free book
+              </div>
+            </div>
+            <button
+              type='button'
+              onClick={() => navigate('/school-resources?view=free-library')}
+              className='inline-flex items-center gap-2 rounded-lg border border-[#3D08BA]/15 bg-[#3D08BA]/6 px-3 py-2 text-xs font-semibold text-[#3D08BA] shadow-sm transition hover:border-[#3D08BA]/30 hover:bg-[#F7F4FF]'
+            >
+              <FaBook className='text-xs' />
+              Discover free books
+            </button>
+          </div>
+        </div>
+      </div>
+      <div className='mt-4 rounded-2xl border border-emerald-200/70 bg-linear-to-r from-emerald-50 via-white to-[#F7F4FF] p-4 shadow-sm'>
+        <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
+          <div>
+            <p className='text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700'>
+              Recommended For Students
+            </p>
+            <h4 className='mt-1 text-sm font-semibold text-gray-900'>
+              Pinned free books from the dashboard
+            </h4>
+            <p className='mt-1 text-xs text-gray-600'>
+              {recommendedFreeLibraryItems.length > 0
+                ? `${recommendedFreeLibraryItems.length} free book${recommendedFreeLibraryItems.length === 1 ? '' : 's'} currently pinned for students.`
+                : 'No free books have been pinned yet. Use the quick pin button to recommend trusted titles.'}
+            </p>
+          </div>
           <button
             type='button'
             onClick={() => navigate('/school-resources?view=free-library')}
-            className='inline-flex items-center gap-2 rounded-lg border border-[#3D08BA]/15 bg-[#3D08BA]/6 px-3 py-2 text-xs font-semibold text-[#3D08BA] shadow-sm transition hover:border-[#3D08BA]/30 hover:bg-[#F7F4FF]'
+            className='inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-50'
           >
             <FaBook className='text-xs' />
-            Discover free books
+            Open curation hub
           </button>
         </div>
+        {recommendedFreeLibraryError ? (
+          <div className='mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800'>
+            {recommendedFreeLibraryError}
+          </div>
+        ) : null}
+        {recommendedFreeLibraryLoading ? (
+          <p className='mt-4 text-sm text-gray-600'>Loading pinned recommendations...</p>
+        ) : recommendedFreeLibraryItems.length === 0 ? (
+          <div className='mt-4 rounded-xl border border-dashed border-emerald-200 bg-white/80 px-4 py-3 text-xs text-gray-600'>
+            Pin a title from the Edamaa Free Library to give students a stronger starting point in their resources workspace.
+          </div>
+        ) : (
+          <div className='mt-4 grid gap-3 lg:grid-cols-2'>
+            {recommendedFreeLibraryItems.slice(0, 2).map((item) => (
+              <div
+                key={item.id}
+                className='rounded-xl border border-white bg-white/90 px-4 py-3 shadow-sm'
+              >
+                <div className='flex items-start justify-between gap-3'>
+                  <div className='min-w-0'>
+                    <p className='text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700'>
+                      {item.sourceLabel}
+                    </p>
+                    <p className='mt-1 truncate text-sm font-semibold text-gray-900'>{item.title}</p>
+                    <p className='mt-1 text-xs text-gray-600'>{item.curatedByLabel}</p>
+                  </div>
+                  <span className='rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-700'>
+                    Pinned
+                  </span>
+                </div>
+                {item.note ? (
+                  <div className='mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-gray-700'>
+                    {item.note}
+                  </div>
+                ) : null}
+                {item.audienceLabel ? (
+                  <div className='mt-3 inline-flex rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold text-sky-700'>
+                    For {item.audienceLabel}
+                  </div>
+                ) : null}
+                <div className='mt-3 flex gap-2'>
+                  <button
+                    type='button'
+                    onClick={() => handleOpenFreeLibraryItem(item)}
+                    className='inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#3D08BA]'
+                  >
+                    <FaBook className='text-xs' />
+                    Open book
+                  </button>
+                  {item.recommendationId ? (
+                    <button
+                      type='button'
+                      onClick={() => void handleRemoveRecommendation(item)}
+                      disabled={activeRecommendationActionId === `remove:${item.recommendationId}`}
+                      className='inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-rose-200 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-60'
+                    >
+                      {activeRecommendationActionId === `remove:${item.recommendationId}`
+                        ? 'Removing...'
+                        : 'Remove'}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div className='mt-4 rounded-2xl border border-[#3D08BA]/10 bg-linear-to-r from-[#F7F4FF] via-white to-[#EEF2FF] p-4 shadow-sm'>
         <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
@@ -352,6 +631,249 @@ const ResourceLibraryOverview = () => {
           </div>
         )}
       </div>
+      {quickPinOpen && (
+        <div className='fixed inset-0 z-50 overflow-y-auto bg-black/50 px-4 py-6'>
+          <div className='flex min-h-full items-center justify-center'>
+            <div className='w-full max-w-4xl overflow-hidden rounded-3xl border border-white/80 bg-white shadow-2xl'>
+              <div className='max-h-[calc(100vh-3rem)] overflow-y-auto p-5'>
+            <div className='flex items-start justify-between gap-4 border-b border-slate-100 pb-4'>
+              <div>
+                <p className='text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]'>
+                  Dashboard Quick Pin
+                </p>
+                <h3 className='mt-1 text-lg font-semibold text-gray-900'>
+                  Recommend a free book without leaving the dashboard
+                </h3>
+                <p className='mt-1 text-sm text-gray-600'>
+                  Search a trusted free title, add a short note, then target it to the right learners.
+                </p>
+              </div>
+              <button
+                type='button'
+                onClick={() => setQuickPinOpen(false)}
+                className='rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50'
+              >
+                Close
+              </button>
+            </div>
+
+            <div className='mt-4 grid gap-5 xl:grid-cols-[1.1fr_0.9fr]'>
+              <div className='space-y-4'>
+                <div className='rounded-2xl border border-[#3D08BA]/10 bg-linear-to-r from-[#F8F5FF] via-white to-[#F5F7FF] p-4'>
+                  <div className='flex flex-col gap-3 md:flex-row'>
+                    <div className='relative flex-1'>
+                      <FaSearch className='pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-sm text-slate-400' />
+                      <input
+                        value={freeLibraryQuery}
+                        onChange={(event) => setFreeLibraryQuery(event.target.value)}
+                        placeholder='Search by title, topic, or author...'
+                        className='w-full rounded-2xl border border-white bg-white/90 py-3 pl-10 pr-4 text-sm text-slate-900 shadow-sm outline-none transition focus:border-[#3D08BA]/20 focus:ring-4 focus:ring-[#3D08BA]/10'
+                      />
+                    </div>
+                    <button
+                      type='button'
+                      onClick={() => void refreshFreeLibraryDiscovery()}
+                      disabled={freeLibraryLoading}
+                      className='inline-flex items-center justify-center gap-2 rounded-2xl bg-[#3D08BA] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#2c0686] disabled:cursor-not-allowed disabled:opacity-60'
+                    >
+                      {freeLibraryLoading ? 'Searching...' : 'Search'}
+                    </button>
+                  </div>
+                  <div className='mt-3 flex flex-wrap gap-2'>
+                    {FREE_LIBRARY_SUBJECTS.map((subject) => (
+                      <button
+                        key={subject}
+                        type='button'
+                        onClick={() => {
+                          setFreeLibrarySubject(subject);
+                          void refreshFreeLibraryDiscovery({ subject });
+                        }}
+                        className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                          freeLibrarySubject === subject
+                            ? 'bg-[#3D08BA] text-white shadow-sm'
+                            : 'bg-white text-slate-600 shadow-sm hover:bg-slate-100'
+                        }`}
+                      >
+                        {subject}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {freeLibraryError ? (
+                  <div className='rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800'>
+                    {freeLibraryError}
+                  </div>
+                ) : null}
+                {freeLibraryLoading ? (
+                  <div className='rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500'>
+                    Loading free books...
+                  </div>
+                ) : freeLibraryItems.length === 0 ? (
+                  <div className='rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500'>
+                    Search a subject or title to load recommended book options here.
+                  </div>
+                ) : (
+                  <div className='grid gap-3 md:grid-cols-2'>
+                    {freeLibraryItems.map((item) => {
+                      const existing = recommendedFreeLibraryLookup.get(item.id);
+                      const isPinnedByCurrentUser =
+                        existing?.isRecommendedByCurrentUser && existing?.recommendationId;
+                      return (
+                        <article
+                          key={item.id}
+                          className='overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm'
+                        >
+                          <div className='space-y-3 p-4'>
+                            <div className='flex items-start justify-between gap-3'>
+                              <div className='min-w-0'>
+                                <p className='text-xs font-semibold uppercase tracking-[0.14em] text-[#3D08BA]'>
+                                  {item.sourceLabel}
+                                </p>
+                                <h4 className='mt-1 line-clamp-2 text-sm font-semibold text-gray-900'>
+                                  {item.title}
+                                </h4>
+                                <p className='mt-1 text-xs text-gray-600'>
+                                  {item.authors.length > 0 ? item.authors.join(', ') : 'Author not listed'}
+                                </p>
+                              </div>
+                              {existing ? (
+                                <span className='rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-700'>
+                                  Pinned
+                                </span>
+                              ) : null}
+                            </div>
+                            <p className='line-clamp-3 text-xs leading-5 text-gray-600'>{item.description}</p>
+                            {existing?.audienceLabel ? (
+                              <div className='rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold text-sky-700'>
+                                For {existing.audienceLabel}
+                              </div>
+                            ) : null}
+                            <div className='flex gap-2'>
+                              <button
+                                type='button'
+                                onClick={() => handleOpenFreeLibraryItem(item)}
+                                className='inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#3D08BA]'
+                              >
+                                <FaBook className='text-xs' />
+                                Open
+                              </button>
+                              {isPinnedByCurrentUser ? (
+                                <button
+                                  type='button'
+                                  onClick={() => void handleRecommendFreeLibraryItem(item)}
+                                  disabled={activeRecommendationActionId === `add:${item.id}`}
+                                  className='inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-[#3D08BA]/20 hover:text-[#3D08BA] disabled:cursor-not-allowed disabled:opacity-60'
+                                >
+                                  {activeRecommendationActionId === `add:${item.id}` ? 'Saving...' : 'Update'}
+                                </button>
+                              ) : (
+                                <button
+                                  type='button'
+                                  onClick={() => void handleRecommendFreeLibraryItem(item)}
+                                  disabled={activeRecommendationActionId === `add:${item.id}`}
+                                  className='inline-flex items-center justify-center rounded-lg border border-[#3D08BA]/15 bg-[#3D08BA]/6 px-3 py-2 text-xs font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/10 disabled:cursor-not-allowed disabled:opacity-60'
+                                >
+                                  {activeRecommendationActionId === `add:${item.id}` ? 'Saving...' : 'Pin'}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className='rounded-2xl border border-slate-200 bg-slate-50/70 p-4'>
+                <p className='text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]'>
+                  Recommendation Setup
+                </p>
+                <h4 className='mt-2 text-sm font-semibold text-gray-900'>
+                  Add context before you pin
+                </h4>
+                <p className='mt-1 text-xs text-gray-600'>
+                  Notes and audience settings apply to the next free book you pin or update from this panel.
+                </p>
+
+                <div className='mt-4 space-y-4'>
+                  <div>
+                    <label className='text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500'>
+                      Recommendation note
+                    </label>
+                    <textarea
+                      value={recommendationSetup.note}
+                      onChange={(event) =>
+                        setRecommendationSetup((previous) => ({
+                          ...previous,
+                          note: event.target.value,
+                        }))
+                      }
+                      rows={3}
+                      placeholder='Best for JSS2 revision or holiday practice.'
+                      className='mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10'
+                    />
+                  </div>
+                  <div className='grid gap-3'>
+                    <label className='text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500'>
+                      School level
+                      <select
+                        value={recommendationSetup.targetSchoolLevel}
+                        onChange={(event) =>
+                          setRecommendationSetup((previous) => ({
+                            ...previous,
+                            targetSchoolLevel: event.target.value as RecommendationTargetSchoolLevel,
+                          }))
+                        }
+                        className='mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium capitalize text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10'
+                      >
+                        <option value=''>All levels</option>
+                        <option value='primary'>Primary</option>
+                        <option value='secondary'>Secondary</option>
+                        <option value='tertiary'>Tertiary</option>
+                      </select>
+                    </label>
+                    <label className='text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500'>
+                      Department
+                      <input
+                        value={recommendationSetup.targetDepartment}
+                        onChange={(event) =>
+                          setRecommendationSetup((previous) => ({
+                            ...previous,
+                            targetDepartment: event.target.value,
+                          }))
+                        }
+                        placeholder='Science, Arts...'
+                        className='mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10'
+                      />
+                    </label>
+                    <label className='text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500'>
+                      Class group
+                      <input
+                        value={recommendationSetup.targetClassGroup}
+                        onChange={(event) =>
+                          setRecommendationSetup((previous) => ({
+                            ...previous,
+                            targetClassGroup: event.target.value,
+                          }))
+                        }
+                        placeholder='JSS2 Gold, SS3...'
+                        className='mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10'
+                      />
+                    </label>
+                  </div>
+
+                  <div className='rounded-xl border border-dashed border-[#3D08BA]/20 bg-white px-4 py-3 text-xs text-slate-600'>
+                    Leave the audience fields empty to pin a free book for every student.
+                  </div>
+                </div>
+              </div>
+            </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

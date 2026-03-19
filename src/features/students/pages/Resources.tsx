@@ -23,6 +23,10 @@ import {
   loadPersistedLocalDevAuthSession,
   loadPersistedSupabaseAccessToken,
 } from '../../../utils/authSession';
+import {
+  loadStudentIdentity,
+  type StudentSchoolLevel,
+} from '../utils/studentIdentity';
 
 type ResourceType = 'pdf' | 'video' | 'image' | 'audio' | 'document';
 type ResourceCategory =
@@ -142,6 +146,12 @@ type FreeLibraryRecommendation = FreeLibraryItem & {
   curatedByCount: number;
   curatedByLabel: string;
   isRecommendedByCurrentUser: boolean;
+  note: string;
+  targetSchoolLevel: StudentSchoolLevel;
+  targetDepartment: string;
+  targetClassGroup: string;
+  audienceLabel: string;
+  isGlobalRecommendation: boolean;
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
@@ -233,6 +243,41 @@ const getProviderStatusTone = (status: FreeLibraryProviderStatus['status']) => {
   return status === 'ok'
     ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
     : 'border-amber-200 bg-amber-50 text-amber-700';
+};
+
+const matchesRecommendationAudience = (
+  recommendation: FreeLibraryRecommendation,
+  identity: {
+    schoolLevel?: StudentSchoolLevel;
+    department?: string;
+    classGroup?: string;
+  }
+) => {
+  const normalizedDepartment = (identity.department || '').trim().toLowerCase();
+  const normalizedClassGroup = (identity.classGroup || '').trim().toLowerCase();
+
+  if (
+    recommendation.targetSchoolLevel &&
+    recommendation.targetSchoolLevel !== (identity.schoolLevel || '')
+  ) {
+    return false;
+  }
+
+  if (
+    recommendation.targetDepartment &&
+    recommendation.targetDepartment.trim().toLowerCase() !== normalizedDepartment
+  ) {
+    return false;
+  }
+
+  if (
+    recommendation.targetClassGroup &&
+    recommendation.targetClassGroup.trim().toLowerCase() !== normalizedClassGroup
+  ) {
+    return false;
+  }
+
+  return true;
 };
 
 const parseFilenameFromContentDisposition = (contentDispositionHeader: string | null) => {
@@ -415,6 +460,10 @@ const Resources = () => {
 
   const hasAuthSession = Boolean(
     loadPersistedSupabaseAccessToken() || loadPersistedLocalDevAuthSession()?.email
+  );
+  const studentIdentity = useMemo(() => loadStudentIdentity(), []);
+  const hasStudentAcademicProfile = Boolean(
+    studentIdentity.schoolLevel || studentIdentity.department || studentIdentity.classGroup
   );
 
   const extractErrorMessage = async (response: Response) => {
@@ -725,6 +774,19 @@ const Resources = () => {
       liveRecordings: resources.filter((resource) => resource.category === 'live_recording').length,
     }),
     [resources]
+  );
+
+  const visibleRecommendedFreeLibraryItems = useMemo(
+    () =>
+      recommendedFreeLibraryItems.filter((item) =>
+        matchesRecommendationAudience(item, studentIdentity)
+      ),
+    [recommendedFreeLibraryItems, studentIdentity]
+  );
+
+  const targetedRecommendationsHiddenCount = Math.max(
+    0,
+    recommendedFreeLibraryItems.length - visibleRecommendedFreeLibraryItems.length
   );
 
   const latestResourceLabel = useMemo(() => {
@@ -1188,7 +1250,7 @@ const Resources = () => {
               </p>
             </div>
             <span className="inline-flex self-start rounded-full border border-white/90 bg-white px-3 py-1.5 text-xs font-semibold text-[#3D08BA] shadow-sm">
-              {recommendedFreeLibraryItems.length} curated picks
+              {visibleRecommendedFreeLibraryItems.length} curated picks
             </span>
           </div>
 
@@ -1198,17 +1260,28 @@ const Resources = () => {
             </div>
           ) : null}
 
+          {!isRecommendedFreeLibraryLoading &&
+          targetedRecommendationsHiddenCount > 0 &&
+          !hasStudentAcademicProfile ? (
+            <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+              Add your school level, department, or class group in your student profile to unlock
+              more targeted school recommendations.
+            </div>
+          ) : null}
+
           {isRecommendedFreeLibraryLoading ? (
             <div className="mt-4 rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-600">
               Loading school recommendations...
             </div>
-          ) : recommendedFreeLibraryItems.length === 0 ? (
+          ) : visibleRecommendedFreeLibraryItems.length === 0 ? (
             <div className="mt-4 rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-600">
-              No school recommendations yet. Use the free-library search below to discover books.
+              {recommendedFreeLibraryItems.length > 0
+                ? 'No recommendations match your current academic profile yet.'
+                : 'No school recommendations yet. Use the free-library search below to discover books.'}
             </div>
           ) : (
             <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              {recommendedFreeLibraryItems.map((item) => (
+              {visibleRecommendedFreeLibraryItems.map((item) => (
                 <article
                   key={`recommended-${item.id}`}
                   className="group overflow-hidden rounded-[24px] border border-emerald-100 bg-gradient-to-b from-white via-white to-emerald-50/60 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-[0_26px_60px_-34px_rgba(16,185,129,0.22)]"
@@ -1236,6 +1309,20 @@ const Resources = () => {
                     </div>
 
                     <p className="line-clamp-3 text-sm text-gray-600">{item.description}</p>
+                    {item.note ? (
+                      <div className="rounded-2xl border border-emerald-200 bg-white px-3 py-2 text-sm text-gray-700">
+                        {item.note}
+                      </div>
+                    ) : null}
+                    {item.audienceLabel ? (
+                      <div className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold text-sky-700">
+                        For {item.audienceLabel}
+                      </div>
+                    ) : (
+                      <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700">
+                        Recommended for all students
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between gap-3 text-[11px] text-gray-500">
                       <span>{item.licenseLabel}</span>
