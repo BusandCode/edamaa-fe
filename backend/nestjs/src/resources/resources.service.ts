@@ -155,9 +155,21 @@ type FreeLibraryProviderStatus = {
   note: string;
 };
 
+type FreeLibraryCacheEntry = {
+  key: string;
+  query: string;
+  subject: string;
+  limit: number;
+  items: FreeLibraryBookItemResponse[];
+  providers: FreeLibraryProviderStatus[];
+  cachedAtMs: number;
+};
+
 const STANDARD_MAX_UPLOAD_SIZE_BYTES = 25 * 1024 * 1024;
 const LIVE_RECORDING_MAX_UPLOAD_SIZE_BYTES = 250 * 1024 * 1024;
 const EXTERNAL_DISCOVERY_TIMEOUT_MS = 6000;
+const FREE_LIBRARY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const FREE_LIBRARY_CACHE_STALE_TTL_MS = 24 * 60 * 60 * 1000;
 
 const getMaxUploadSizeBytes = (type: ResourceType, category: ResourceCategory) =>
   category === 'live_recording' || type === 'video'
@@ -253,6 +265,7 @@ export class ResourcesService implements OnModuleInit {
   private readonly purchasedEmailsByResourceId = new Map<string, Set<string>>();
   private readonly notifications: ResourceNotificationRecord[] = [];
   private readonly readNotificationIdsByEmail = new Map<string, Set<string>>();
+  private readonly freeLibraryCache = new Map<string, FreeLibraryCacheEntry>();
   private purchasesHydrated = false;
   private purchaseStoreBackoffUntil = 0;
   private seeded = false;
@@ -377,56 +390,61 @@ export class ResourcesService implements OnModuleInit {
     const query = this.normalizeOptionalText(input.query, 120);
     const subject = this.normalizeOptionalText(input.subject, 80);
     const limit = this.normalizeDiscoveryLimit(input.limit);
-    const searchTerm = [query, subject].filter(Boolean).join(' ').trim() || 'education';
-    const perProviderLimit = Math.max(4, Math.ceil(limit / 2));
+    const cacheKey = this.buildFreeLibraryCacheKey(query, subject, limit);
+    const cachedEntry = this.getUsableFreeLibraryCacheEntry(cacheKey);
 
-    const [openLibraryResult, googleBooksResult] = await Promise.allSettled([
-      this.searchOpenLibraryFreeBooks(searchTerm, perProviderLimit, subject),
-      this.searchGoogleBooksFreeBooks(searchTerm, perProviderLimit, subject),
-    ]);
-
-    if (openLibraryResult.status === 'rejected') {
-      this.logger.warn(`Open Library discovery failed: ${openLibraryResult.reason instanceof Error ? openLibraryResult.reason.message : 'Unknown error'}`);
-    }
-    if (googleBooksResult.status === 'rejected') {
-      this.logger.warn(`Google Books discovery failed: ${googleBooksResult.reason instanceof Error ? googleBooksResult.reason.message : 'Unknown error'}`);
+    if (cachedEntry && this.isFreshFreeLibraryCacheEntry(cachedEntry)) {
+      return this.toFreeLibraryResponse(query, subject, cachedEntry.items, cachedEntry.providers, {
+        status: 'fresh',
+        cachedAt: new Date(cachedEntry.cachedAtMs).toISOString(),
+        ageSeconds: Math.max(0, Math.floor((Date.now() - cachedEntry.cachedAtMs) / 1000)),
+      });
     }
 
-    const items = this.dedupeFreeLibraryItems(
-      [
-        openLibraryResult.status === 'fulfilled' ? openLibraryResult.value : [],
-        googleBooksResult.status === 'fulfilled' ? googleBooksResult.value : [],
-      ].flat()
-    ).slice(0, limit);
+    const liveResult = await this.runLiveFreeLibrarySearch(query, subject, limit);
+    const hasLiveProvider = liveResult.providers.some((provider) => provider.status === 'ok');
 
-    const providers: FreeLibraryProviderStatus[] = [
-      {
-        source: 'open_library',
-        sourceLabel: 'Open Library',
-        status: openLibraryResult.status === 'fulfilled' ? 'ok' : 'unavailable',
-        note:
-          openLibraryResult.status === 'fulfilled'
-            ? `${openLibraryResult.value.length} book${openLibraryResult.value.length === 1 ? '' : 's'} found`
-            : 'Open Library is unavailable right now',
-      },
-      {
-        source: 'google_books',
-        sourceLabel: 'Google Books',
-        status: googleBooksResult.status === 'fulfilled' ? 'ok' : 'unavailable',
-        note:
-          googleBooksResult.status === 'fulfilled'
-            ? `${googleBooksResult.value.length} book${googleBooksResult.value.length === 1 ? '' : 's'} found`
-            : 'Google Books is unavailable right now',
-      },
-    ];
+    if (hasLiveProvider) {
+      this.freeLibraryCache.set(cacheKey, {
+        key: cacheKey,
+        query,
+        subject,
+        limit,
+        items: liveResult.items,
+        providers: liveResult.providers,
+        cachedAtMs: Date.now(),
+      });
 
-    return {
-      generatedAt: new Date().toISOString(),
-      query: query || '',
-      subject: subject || '',
-      items,
-      providers,
-    };
+      return this.toFreeLibraryResponse(query, subject, liveResult.items, liveResult.providers, {
+        status: cachedEntry ? 'refreshed' : 'miss',
+        cachedAt: new Date().toISOString(),
+        ageSeconds: 0,
+      });
+    }
+
+    if (cachedEntry) {
+      this.logger.warn(
+        `Free library upstream failed for key "${cacheKey}". Serving stale cached results.`
+      );
+
+      return this.toFreeLibraryResponse(
+        query,
+        subject,
+        cachedEntry.items,
+        this.toStaleFallbackProviderStatuses(cachedEntry.providers),
+        {
+          status: 'stale-fallback',
+          cachedAt: new Date(cachedEntry.cachedAtMs).toISOString(),
+          ageSeconds: Math.max(0, Math.floor((Date.now() - cachedEntry.cachedAtMs) / 1000)),
+        }
+      );
+    }
+
+    return this.toFreeLibraryResponse(query, subject, liveResult.items, liveResult.providers, {
+      status: 'miss',
+      cachedAt: null,
+      ageSeconds: null,
+    });
   }
 
   uploadResourceForAuthUser(
@@ -934,6 +952,124 @@ export class ResourcesService implements OnModuleInit {
     }
 
     return Math.max(4, Math.min(12, Math.round(numeric)));
+  }
+
+  private buildFreeLibraryCacheKey(query: string, subject: string, limit: number) {
+    return [query.trim().toLowerCase(), subject.trim().toLowerCase(), String(limit)].join('::');
+  }
+
+  private getUsableFreeLibraryCacheEntry(cacheKey: string) {
+    const existing = this.freeLibraryCache.get(cacheKey);
+    if (!existing) {
+      return null;
+    }
+
+    const ageMs = Date.now() - existing.cachedAtMs;
+    if (ageMs > FREE_LIBRARY_CACHE_STALE_TTL_MS) {
+      this.freeLibraryCache.delete(cacheKey);
+      return null;
+    }
+
+    return existing;
+  }
+
+  private isFreshFreeLibraryCacheEntry(entry: FreeLibraryCacheEntry) {
+    return Date.now() - entry.cachedAtMs <= FREE_LIBRARY_CACHE_TTL_MS;
+  }
+
+  private async runLiveFreeLibrarySearch(query: string, subject: string, limit: number) {
+    const searchTerm = [query, subject].filter(Boolean).join(' ').trim() || 'education';
+    const perProviderLimit = Math.max(4, Math.ceil(limit / 2));
+
+    const [openLibraryResult, googleBooksResult] = await Promise.allSettled([
+      this.searchOpenLibraryFreeBooks(searchTerm, perProviderLimit, subject),
+      this.searchGoogleBooksFreeBooks(searchTerm, perProviderLimit, subject),
+    ]);
+
+    if (openLibraryResult.status === 'rejected') {
+      this.logger.warn(
+        `Open Library discovery failed: ${
+          openLibraryResult.reason instanceof Error
+            ? openLibraryResult.reason.message
+            : 'Unknown error'
+        }`
+      );
+    }
+    if (googleBooksResult.status === 'rejected') {
+      this.logger.warn(
+        `Google Books discovery failed: ${
+          googleBooksResult.reason instanceof Error
+            ? googleBooksResult.reason.message
+            : 'Unknown error'
+        }`
+      );
+    }
+
+    const items = this.dedupeFreeLibraryItems(
+      [
+        openLibraryResult.status === 'fulfilled' ? openLibraryResult.value : [],
+        googleBooksResult.status === 'fulfilled' ? googleBooksResult.value : [],
+      ].flat()
+    ).slice(0, limit);
+
+    const providers: FreeLibraryProviderStatus[] = [
+      {
+        source: 'open_library',
+        sourceLabel: 'Open Library',
+        status: openLibraryResult.status === 'fulfilled' ? 'ok' : 'unavailable',
+        note:
+          openLibraryResult.status === 'fulfilled'
+            ? `${openLibraryResult.value.length} book${
+                openLibraryResult.value.length === 1 ? '' : 's'
+              } found`
+            : 'Open Library is unavailable right now',
+      },
+      {
+        source: 'google_books',
+        sourceLabel: 'Google Books',
+        status: googleBooksResult.status === 'fulfilled' ? 'ok' : 'unavailable',
+        note:
+          googleBooksResult.status === 'fulfilled'
+            ? `${googleBooksResult.value.length} book${
+                googleBooksResult.value.length === 1 ? '' : 's'
+              } found`
+            : 'Google Books is unavailable right now',
+      },
+    ];
+
+    return {
+      items,
+      providers,
+    };
+  }
+
+  private toStaleFallbackProviderStatuses(providers: FreeLibraryProviderStatus[]) {
+    return providers.map((provider) => ({
+      ...provider,
+      status: 'unavailable' as const,
+      note: `${provider.sourceLabel} is unavailable right now. Showing saved results from a recent search.`,
+    }));
+  }
+
+  private toFreeLibraryResponse(
+    query: string,
+    subject: string,
+    items: FreeLibraryBookItemResponse[],
+    providers: FreeLibraryProviderStatus[],
+    cache: {
+      status: 'fresh' | 'refreshed' | 'stale-fallback' | 'miss';
+      cachedAt: string | null;
+      ageSeconds: number | null;
+    }
+  ) {
+    return {
+      generatedAt: new Date().toISOString(),
+      query: query || '',
+      subject: subject || '',
+      items,
+      providers,
+      cache,
+    };
   }
 
   private dedupeFreeLibraryItems(items: FreeLibraryBookItemResponse[]) {
