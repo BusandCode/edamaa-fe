@@ -70,7 +70,11 @@ import {
   persistAccountRoleState,
   persistLocalDevAuthSession,
 } from '../../../utils/authSession';
-import { loadSchoolProfileImage, persistSchoolProfileImage } from '../../../utils/schoolBranding';
+import {
+  buildSchoolWorkspaceMetadata,
+  loadSchoolProfileImage,
+  persistSchoolProfileImage,
+} from '../../../utils/schoolBranding';
 import { signOutEverywhere } from '../../../utils/signOut';
 
 const clampPercentage = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
@@ -2286,9 +2290,50 @@ const SchoolDashboard = () => {
     const localStorageAdminName = (window.localStorage.getItem('edamaa_school_admin_name') || '').trim();
     const localDevSession = loadPersistedLocalDevAuthSession();
     const fallbackFromEmail = deriveNameFromEmail(localDevSession?.email || '');
-    setSchoolDisplayName(localStorageSchoolName || fallbackFromEmail || 'School');
+    const effectiveSchoolName = localStorageSchoolName || fallbackFromEmail || 'School';
+    setSchoolDisplayName(effectiveSchoolName);
     setAdminDisplayName(localStorageAdminName || fallbackFromEmail || 'School Admin');
     setProfileImage(loadSchoolProfileImage(localDevSession?.email || ''));
+
+    const readMetadataString = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+    const isSchoolLocalDevSession =
+      localDevSession?.defaultRole === 'school' ||
+      localDevSession?.role === 'school' ||
+      Boolean(localDevSession?.activeRoles?.includes('school'));
+
+    if (localDevSession?.email && isSchoolLocalDevSession) {
+      const schoolWorkspaceMetadata = buildSchoolWorkspaceMetadata({
+        schoolName: effectiveSchoolName,
+        email: localDevSession.email,
+        preferredKey:
+          readMetadataString(localDevSession.userMetadata?.school_workspace_key) ||
+          readMetadataString(localDevSession.appMetadata?.school_workspace_key),
+      });
+      const nextUserMetadata = {
+        ...(localDevSession.userMetadata || {}),
+        ...schoolWorkspaceMetadata,
+      };
+      const nextAppMetadata = {
+        ...(localDevSession.appMetadata || {}),
+        ...schoolWorkspaceMetadata,
+      };
+      const needsWorkspaceBackfill =
+        readMetadataString(localDevSession.userMetadata?.school_workspace_key) !==
+          schoolWorkspaceMetadata.school_workspace_key ||
+        readMetadataString(localDevSession.appMetadata?.school_workspace_key) !==
+          schoolWorkspaceMetadata.school_workspace_key ||
+        readMetadataString(localDevSession.userMetadata?.school_name) !== schoolWorkspaceMetadata.school_name ||
+        readMetadataString(localDevSession.appMetadata?.school_name) !== schoolWorkspaceMetadata.school_name;
+
+      if (needsWorkspaceBackfill) {
+        persistLocalDevAuthSession(localDevSession.email, localDevSession.defaultRole, {
+          defaultRole: localDevSession.defaultRole,
+          activeRoles: localDevSession.activeRoles,
+          userMetadata: nextUserMetadata,
+          appMetadata: nextAppMetadata,
+        });
+      }
+    }
   }, []);
 
   useEffect(() => {

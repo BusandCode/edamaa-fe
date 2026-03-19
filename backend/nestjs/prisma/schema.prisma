@@ -623,6 +623,8 @@ model ResourceFreeBookRecommendation {
 model ResourceFreeBookAudiencePreset {
   id                Int      @id @default(autoincrement())
   publicId          String   @unique
+  workspaceKey      String
+  workspaceLabel    String?
   curatorEmail      String
   curatorName       String
   label             String
@@ -632,6 +634,7 @@ model ResourceFreeBookAudiencePreset {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  @@unique([curatorEmail, label])
+  @@unique([workspaceKey, label])
+  @@index([workspaceKey, updatedAt])
   @@index([curatorEmail, updatedAt])
 }

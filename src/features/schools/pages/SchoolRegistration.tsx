@@ -9,6 +9,7 @@ import {
   persistLocalDevAuthSession,
   persistSupabaseSession,
 } from '../../../utils/authSession';
+import { buildSchoolWorkspaceMetadata } from '../../../utils/schoolBranding';
 import { getSupabaseBrowserClient, isSupabaseBrowserConfigured } from '../../../utils/supabaseClient';
 
 const SchoolRegistration: React.FC = () => {
@@ -35,6 +36,10 @@ const SchoolRegistration: React.FC = () => {
     const confirmPassword = String(formData.get('confirmPassword') || '');
     const schoolDisplayName = schoolName || 'School';
     const adminDisplayName = adminFullName || schoolDisplayName;
+    const schoolWorkspaceMetadata = buildSchoolWorkspaceMetadata({
+      schoolName: schoolDisplayName,
+      email,
+    });
 
     if (!schoolName) {
       alert('Please enter your school name.');
@@ -72,6 +77,7 @@ const SchoolRegistration: React.FC = () => {
             role: 'school',
             account_role: 'school',
             school_name: schoolDisplayName,
+            school_workspace_key: schoolWorkspaceMetadata.school_workspace_key,
           },
         },
       });
@@ -86,6 +92,8 @@ const SchoolRegistration: React.FC = () => {
       persistLocalDevAuthSession(email, 'school', {
         defaultRole: 'school',
         activeRoles: ['school'],
+        userMetadata: schoolWorkspaceMetadata,
+        appMetadata: schoolWorkspaceMetadata,
       });
     }
 

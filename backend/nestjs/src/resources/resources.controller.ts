@@ -287,6 +287,8 @@ export class ResourcesController {
           (authUser?.user_metadata?.full_name as string).trim()) ||
         null,
       role: resolvedRole,
+      appMetadata: authUser?.app_metadata ?? null,
+      userMetadata: authUser?.user_metadata ?? null,
     };
   }
 

@@ -14,6 +14,8 @@ type AuthUser = {
   email?: string | null;
   name?: string | null;
   role?: string | null;
+  appMetadata?: Record<string, unknown> | null;
+  userMetadata?: Record<string, unknown> | null;
 };
 
 type ResourceType = 'pdf' | 'video' | 'image' | 'audio' | 'document';
@@ -190,6 +192,8 @@ type FreeLibraryAudiencePresetInput = {
 
 type FreeLibraryAudiencePresetRecord = {
   presetId: string;
+  workspaceKey: string;
+  workspaceLabel: string;
   curatorEmail: string;
   curatorName: string;
   label: string;
@@ -227,6 +231,8 @@ type PersistedFreeLibraryRecommendationRecord = {
 
 type PersistedFreeLibraryAudiencePresetRecord = {
   publicId: string;
+  workspaceKey: string;
+  workspaceLabel: string | null;
   curatorEmail: string;
   curatorName: string;
   label: string;
@@ -589,11 +595,11 @@ export class ResourcesService implements OnModuleInit {
   }
 
   getFreeLibraryAudiencePresetsForAuthUser(authUser: AuthUser) {
-    const email = this.requireEmail(authUser);
+    const workspace = this.resolveSchoolWorkspace(authUser);
     this.requireSchoolCuratorRole(authUser.role);
 
     const items = this.freeLibraryAudiencePresets
-      .filter((preset) => preset.curatorEmail === email)
+      .filter((preset) => preset.workspaceKey === workspace.key)
       .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
       .map((preset) => this.toFreeLibraryAudiencePresetItemResponse(preset));
 
@@ -668,15 +674,19 @@ export class ResourcesService implements OnModuleInit {
   ) {
     const email = this.requireEmail(authUser);
     this.requireSchoolCuratorRole(authUser.role);
+    const workspace = this.resolveSchoolWorkspace(authUser);
 
     const normalizedPreset = this.normalizeFreeLibraryAudiencePresetInput(input);
     const normalizedLabelKey = normalizedPreset.label.trim().toLowerCase();
     const existing = this.freeLibraryAudiencePresets.find(
       (preset) =>
-        preset.curatorEmail === email && preset.label.trim().toLowerCase() === normalizedLabelKey
+        preset.workspaceKey === workspace.key &&
+        preset.label.trim().toLowerCase() === normalizedLabelKey
     );
 
     if (existing) {
+      existing.workspaceLabel = workspace.label;
+      existing.curatorEmail = email;
       existing.targetSchoolLevel = normalizedPreset.targetSchoolLevel;
       existing.targetDepartment = normalizedPreset.targetDepartment;
       existing.targetClassGroup = normalizedPreset.targetClassGroup;
@@ -693,6 +703,8 @@ export class ResourcesService implements OnModuleInit {
       this.normalizeOptionalText(authUser.name || '', 80) || this.defaultNameFromEmail(email);
     const preset: FreeLibraryAudiencePresetRecord = {
       presetId: makeId('freeaud'),
+      workspaceKey: workspace.key,
+      workspaceLabel: workspace.label,
       curatorEmail: email,
       curatorName,
       label: normalizedPreset.label,
@@ -747,6 +759,7 @@ export class ResourcesService implements OnModuleInit {
   async removeFreeLibraryAudiencePresetForAuthUser(authUser: AuthUser, presetId: string) {
     const email = this.requireEmail(authUser);
     this.requireSchoolCuratorRole(authUser.role);
+    const workspace = this.resolveSchoolWorkspace(authUser);
     const normalizedPresetId = String(presetId || '').trim();
 
     if (!normalizedPresetId) {
@@ -762,8 +775,8 @@ export class ResourcesService implements OnModuleInit {
     }
 
     const preset = this.freeLibraryAudiencePresets[presetIndex];
-    if (preset.curatorEmail !== email) {
-      throw new ForbiddenException('You can only remove presets saved from your account.');
+    if (preset.workspaceKey !== workspace.key) {
+      throw new ForbiddenException('You can only remove presets saved for your school workspace.');
     }
 
     this.freeLibraryAudiencePresets.splice(presetIndex, 1);
@@ -1361,13 +1374,15 @@ export class ResourcesService implements OnModuleInit {
     try {
       await this.prisma.resourceFreeBookAudiencePreset.upsert({
         where: {
-          curatorEmail_label: {
-            curatorEmail: preset.curatorEmail,
+          workspaceKey_label: {
+            workspaceKey: preset.workspaceKey,
             label: preset.label,
           },
         },
         create: {
           publicId: preset.presetId,
+          workspaceKey: preset.workspaceKey,
+          workspaceLabel: preset.workspaceLabel || null,
           curatorEmail: preset.curatorEmail,
           curatorName: preset.curatorName,
           label: preset.label,
@@ -1378,7 +1393,9 @@ export class ResourcesService implements OnModuleInit {
           updatedAt: preset.updatedAt,
         },
         update: {
+          workspaceLabel: preset.workspaceLabel || null,
           curatorName: preset.curatorName,
+          curatorEmail: preset.curatorEmail,
           targetSchoolLevel: preset.targetSchoolLevel || null,
           targetDepartment: preset.targetDepartment || null,
           targetClassGroup: preset.targetClassGroup || null,
@@ -1410,7 +1427,7 @@ export class ResourcesService implements OnModuleInit {
     try {
       await this.prisma.resourceFreeBookAudiencePreset.deleteMany({
         where: {
-          curatorEmail: preset.curatorEmail,
+          workspaceKey: preset.workspaceKey,
           label: preset.label,
         },
       });
@@ -1493,6 +1510,13 @@ export class ResourcesService implements OnModuleInit {
   ): FreeLibraryAudiencePresetRecord {
     return {
       presetId: record.publicId,
+      workspaceKey: this.normalizeRequiredText(
+        record.workspaceKey,
+        'Audience preset workspace is required.',
+        180
+      ),
+      workspaceLabel:
+        this.normalizeOptionalText(record.workspaceLabel || '', 120) || 'School workspace',
       curatorEmail: normalizeEmail(record.curatorEmail),
       curatorName:
         this.normalizeOptionalText(record.curatorName, 80) ||
@@ -2131,6 +2155,98 @@ export class ResourcesService implements OnModuleInit {
       targetDepartment,
       targetClassGroup,
     };
+  }
+
+  private resolveSchoolWorkspace(authUser: AuthUser) {
+    const metadataCandidates = [authUser.userMetadata, authUser.appMetadata].filter(
+      (value): value is Record<string, unknown> => !!value && typeof value === 'object'
+    );
+
+    const explicitWorkspaceKey = metadataCandidates
+      .map(
+        (metadata) =>
+          this.readMetadataString(metadata.school_workspace_key) ||
+          this.readMetadataString(metadata.schoolWorkspaceKey)
+      )
+      .find((value) => value.length > 0);
+
+    if (explicitWorkspaceKey) {
+      const workspaceLabel =
+        metadataCandidates
+          .map(
+            (metadata) =>
+              this.readMetadataString(metadata.school_name) ||
+              this.readMetadataString(metadata.schoolName) ||
+              this.readMetadataString(metadata.organization_name) ||
+              this.readMetadataString(metadata.organizationName)
+          )
+          .find((value) => value.length > 0) || 'School workspace';
+
+      return {
+        key: this.normalizeRequiredText(
+          explicitWorkspaceKey,
+          'School workspace key is required.',
+          180
+        ),
+        label: this.normalizeOptionalText(workspaceLabel, 120) || 'School workspace',
+      };
+    }
+
+    const schoolUserId = metadataCandidates
+      .map(
+        (metadata) =>
+          this.readMetadataString(metadata.school_user_id) ||
+          this.readMetadataString(metadata.schoolUserId)
+      )
+      .find((value) => value.length > 0);
+
+    if (schoolUserId) {
+      return {
+        key: `school-user:${schoolUserId}`,
+        label:
+          metadataCandidates
+            .map(
+              (metadata) =>
+                this.readMetadataString(metadata.school_name) ||
+                this.readMetadataString(metadata.schoolName)
+            )
+            .find((value) => value.length > 0) || 'School workspace',
+      };
+    }
+
+    const schoolOwnerEmail = metadataCandidates
+      .map(
+        (metadata) =>
+          this.readMetadataString(metadata.school_owner_email) ||
+          this.readMetadataString(metadata.schoolOwnerEmail) ||
+          this.readMetadataString(metadata.school_email) ||
+          this.readMetadataString(metadata.schoolEmail)
+      )
+      .find((value) => value.length > 0);
+
+    if (schoolOwnerEmail) {
+      return {
+        key: `school-email:${normalizeEmail(schoolOwnerEmail)}`,
+        label:
+          metadataCandidates
+            .map(
+              (metadata) =>
+                this.readMetadataString(metadata.school_name) ||
+                this.readMetadataString(metadata.schoolName)
+            )
+            .find((value) => value.length > 0) || 'School workspace',
+      };
+    }
+
+    const fallbackIdentifier = authUser.id || this.requireEmail(authUser);
+    return {
+      key: `account:${fallbackIdentifier}`,
+      label: this.normalizeOptionalText(authUser.name || '', 120) || 'School workspace',
+    };
+  }
+
+  private readMetadataString(value: unknown) {
+    return typeof value === 'string' ? value.trim() : '';
   }
 
   private normalizeFreeLibraryProvider(value: string | undefined): FreeLibraryProvider {

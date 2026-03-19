@@ -306,6 +306,12 @@ const requestWithAuth = async (
         if (options?.actor) {
           headers.set('X-Dev-User-Role', options.actor);
         }
+        if (localDevSession.userMetadata) {
+          headers.set('X-Dev-User-Metadata', JSON.stringify(localDevSession.userMetadata));
+        }
+        if (localDevSession.appMetadata) {
+          headers.set('X-Dev-App-Metadata', JSON.stringify(localDevSession.appMetadata));
+        }
       }
 
       response = await fetch(`${base}${endpoint}`, {
