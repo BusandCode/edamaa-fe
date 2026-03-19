@@ -585,3 +585,36 @@ model ResourcePurchase {
   @@index([buyerEmail, purchasedAt])
   @@index([resourceId, purchasedAt])
 }
+
+// Stores school-curated free-library recommendations so pinned books survive
+// server restarts and can be targeted to specific student lanes.
+model ResourceFreeBookRecommendation {
+  id                Int      @id @default(autoincrement())
+  publicId          String   @unique
+  bookId            String
+  source            String
+  sourceLabel       String
+  title             String
+  authors           Json
+  description       String
+  subject           String
+  coverImageUrl     String?
+  actionUrl         String
+  actionLabel       String
+  accessLabel       String
+  licenseLabel      String
+  publishedAt       String?
+  curatorEmail      String
+  curatorName       String
+  curatorRole       String   @default("school")
+  note              String?
+  targetSchoolLevel String?
+  targetDepartment  String?
+  targetClassGroup  String?
+  recommendedAt     DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([bookId, curatorEmail])
+  @@index([curatorEmail, recommendedAt])
+  @@index([bookId, recommendedAt])
+}

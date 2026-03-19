@@ -181,6 +181,31 @@ type FreeLibraryRecommendationRecord = FreeLibraryBookItemResponse & {
   targetClassGroup: string;
 };
 
+type PersistedFreeLibraryRecommendationRecord = {
+  publicId: string;
+  bookId: string;
+  source: string;
+  sourceLabel: string;
+  title: string;
+  authors: Prisma.JsonValue;
+  description: string;
+  subject: string;
+  coverImageUrl: string | null;
+  actionUrl: string;
+  actionLabel: string;
+  accessLabel: string;
+  licenseLabel: string;
+  publishedAt: string | null;
+  curatorEmail: string;
+  curatorName: string;
+  curatorRole: string;
+  note: string | null;
+  targetSchoolLevel: string | null;
+  targetDepartment: string | null;
+  targetClassGroup: string | null;
+  recommendedAt: Date;
+};
+
 type FreeLibraryRecommendationItemResponse = FreeLibraryBookItemResponse & {
   recommendationId: string | null;
   curatedAt: string;
@@ -316,7 +341,9 @@ export class ResourcesService implements OnModuleInit {
   private readonly freeLibraryCache = new Map<string, FreeLibraryCacheEntry>();
   private readonly freeLibraryRecommendations: FreeLibraryRecommendationRecord[] = [];
   private purchasesHydrated = false;
+  private recommendationsHydrated = false;
   private purchaseStoreBackoffUntil = 0;
+  private recommendationStoreBackoffUntil = 0;
   private seeded = false;
 
   constructor(private readonly prisma: PrismaService) {
@@ -329,6 +356,7 @@ export class ResourcesService implements OnModuleInit {
       return;
     }
     await this.hydratePersistedPurchases();
+    await this.hydratePersistedFreeLibraryRecommendations();
   }
 
   getFeedForAuthUser(authUser: AuthUser) {
@@ -507,7 +535,7 @@ export class ResourcesService implements OnModuleInit {
     };
   }
 
-  recommendFreeBookForAuthUser(authUser: AuthUser, input: FreeLibraryRecommendationInput) {
+  async recommendFreeBookForAuthUser(authUser: AuthUser, input: FreeLibraryRecommendationInput) {
     const email = this.requireEmail(authUser);
     this.requireSchoolCuratorRole(authUser.role);
 
@@ -533,6 +561,7 @@ export class ResourcesService implements OnModuleInit {
       existing.targetDepartment = normalizedItem.targetDepartment;
       existing.targetClassGroup = normalizedItem.targetClassGroup;
       existing.createdAt = new Date();
+      await this.persistFreeLibraryRecommendationRecord(existing);
 
       return {
         item: this.toFreeLibraryRecommendationItemResponse([existing], email),
@@ -556,6 +585,7 @@ export class ResourcesService implements OnModuleInit {
     };
 
     this.freeLibraryRecommendations.unshift(recommendation);
+    await this.persistFreeLibraryRecommendationRecord(recommendation);
 
     return {
       item: this.toFreeLibraryRecommendationItemResponse([recommendation], email),
@@ -563,7 +593,7 @@ export class ResourcesService implements OnModuleInit {
     };
   }
 
-  removeRecommendedFreeBookForAuthUser(authUser: AuthUser, recommendationId: string) {
+  async removeRecommendedFreeBookForAuthUser(authUser: AuthUser, recommendationId: string) {
     const email = this.requireEmail(authUser);
     this.requireSchoolCuratorRole(authUser.role);
     const normalizedRecommendationId = String(recommendationId || '').trim();
@@ -586,6 +616,7 @@ export class ResourcesService implements OnModuleInit {
     }
 
     this.freeLibraryRecommendations.splice(recommendationIndex, 1);
+    await this.deletePersistedFreeLibraryRecommendationRecord(recommendation);
 
     return {
       removed: true,
@@ -942,7 +973,7 @@ export class ResourcesService implements OnModuleInit {
         this.logger.log(`Loaded ${storedPurchases.length} persisted resource purchases.`);
       }
     } catch (error) {
-      if (this.isPurchasePersistenceUnavailableError(error)) {
+      if (this.isResourcePersistenceUnavailableError(error)) {
         this.logger.warn(
           'Resource purchase persistence is unavailable. Falling back to in-memory purchases only.'
         );
@@ -981,7 +1012,7 @@ export class ResourcesService implements OnModuleInit {
         },
       });
     } catch (error) {
-      if (this.isPurchasePersistenceUnavailableError(error)) {
+      if (this.isResourcePersistenceUnavailableError(error)) {
         // Avoid log spam when local DB schema is not yet migrated.
         this.purchaseStoreBackoffUntil = Date.now() + 60_000;
         this.logger.warn(
@@ -996,7 +1027,149 @@ export class ResourcesService implements OnModuleInit {
     }
   }
 
-  private isPurchasePersistenceUnavailableError(error: unknown) {
+  private async hydratePersistedFreeLibraryRecommendations() {
+    if (this.recommendationsHydrated) {
+      return;
+    }
+    this.recommendationsHydrated = true;
+
+    try {
+      const storedRecommendations = await this.prisma.resourceFreeBookRecommendation.findMany({
+        orderBy: [{ recommendedAt: 'desc' }],
+        take: 4000,
+      });
+
+      storedRecommendations.forEach((recommendation) => {
+        this.freeLibraryRecommendations.push(
+          this.toStoredFreeLibraryRecommendationRecord(recommendation)
+        );
+      });
+
+      if (storedRecommendations.length > 0) {
+        this.logger.log(
+          `Loaded ${storedRecommendations.length} persisted free-library recommendations.`
+        );
+      }
+    } catch (error) {
+      if (this.isResourcePersistenceUnavailableError(error)) {
+        this.logger.warn(
+          'Free-library recommendation persistence is unavailable. Falling back to in-memory recommendations only.'
+        );
+        return;
+      }
+
+      this.logger.warn(
+        `Could not hydrate free-library recommendations. Falling back to memory mode (${(error as Error).message}).`
+      );
+    }
+  }
+
+  private async persistFreeLibraryRecommendationRecord(
+    recommendation: FreeLibraryRecommendationRecord
+  ) {
+    if (Date.now() < this.recommendationStoreBackoffUntil) {
+      return;
+    }
+
+    try {
+      await this.prisma.resourceFreeBookRecommendation.upsert({
+        where: {
+          bookId_curatorEmail: {
+            bookId: recommendation.id,
+            curatorEmail: recommendation.curatorEmail,
+          },
+        },
+        create: {
+          publicId: recommendation.recommendationId,
+          bookId: recommendation.id,
+          source: recommendation.source,
+          sourceLabel: recommendation.sourceLabel,
+          title: recommendation.title,
+          authors: recommendation.authors as Prisma.InputJsonValue,
+          description: recommendation.description,
+          subject: recommendation.subject,
+          coverImageUrl: recommendation.coverImageUrl,
+          actionUrl: recommendation.actionUrl,
+          actionLabel: recommendation.actionLabel,
+          accessLabel: recommendation.accessLabel,
+          licenseLabel: recommendation.licenseLabel,
+          publishedAt: recommendation.publishedAt,
+          curatorEmail: recommendation.curatorEmail,
+          curatorName: recommendation.curatorName,
+          curatorRole: recommendation.curatorRole,
+          note: recommendation.note || null,
+          targetSchoolLevel: recommendation.targetSchoolLevel || null,
+          targetDepartment: recommendation.targetDepartment || null,
+          targetClassGroup: recommendation.targetClassGroup || null,
+          recommendedAt: recommendation.createdAt,
+        },
+        update: {
+          source: recommendation.source,
+          sourceLabel: recommendation.sourceLabel,
+          title: recommendation.title,
+          authors: recommendation.authors as Prisma.InputJsonValue,
+          description: recommendation.description,
+          subject: recommendation.subject,
+          coverImageUrl: recommendation.coverImageUrl,
+          actionUrl: recommendation.actionUrl,
+          actionLabel: recommendation.actionLabel,
+          accessLabel: recommendation.accessLabel,
+          licenseLabel: recommendation.licenseLabel,
+          publishedAt: recommendation.publishedAt,
+          curatorName: recommendation.curatorName,
+          curatorRole: recommendation.curatorRole,
+          note: recommendation.note || null,
+          targetSchoolLevel: recommendation.targetSchoolLevel || null,
+          targetDepartment: recommendation.targetDepartment || null,
+          targetClassGroup: recommendation.targetClassGroup || null,
+          recommendedAt: recommendation.createdAt,
+        },
+      });
+    } catch (error) {
+      if (this.isResourcePersistenceUnavailableError(error)) {
+        this.recommendationStoreBackoffUntil = Date.now() + 60_000;
+        this.logger.warn(
+          'Free-library recommendation persistence failed. Retrying in 60s while keeping in-memory recommendations.'
+        );
+        return;
+      }
+
+      this.logger.warn(
+        `Persisting free-library recommendation failed (${(error as Error).message}). In-memory recommendations still work.`
+      );
+    }
+  }
+
+  private async deletePersistedFreeLibraryRecommendationRecord(
+    recommendation: FreeLibraryRecommendationRecord
+  ) {
+    if (Date.now() < this.recommendationStoreBackoffUntil) {
+      return;
+    }
+
+    try {
+      await this.prisma.resourceFreeBookRecommendation.deleteMany({
+        where: {
+          bookId: recommendation.id,
+          curatorEmail: recommendation.curatorEmail,
+        },
+      });
+    } catch (error) {
+      if (this.isResourcePersistenceUnavailableError(error)) {
+        this.recommendationStoreBackoffUntil = Date.now() + 60_000;
+        this.logger.warn(
+          'Free-library recommendation delete could not reach persistence. Retrying in 60s while keeping in-memory state.'
+        );
+        return;
+      }
+
+      this.logger.warn(
+        `Deleting free-library recommendation from persistence failed (${(error as Error).message}).`
+      );
+    }
+  }
+
+  private isResourcePersistenceUnavailableError(error: unknown) {
     if (error instanceof Prisma.PrismaClientInitializationError) {
       return true;
     }
@@ -1012,6 +1185,62 @@ export class ResourcesService implements OnModuleInit {
     }
 
     return false;
+  }
+
+  private toStoredFreeLibraryRecommendationRecord(
+    record: PersistedFreeLibraryRecommendationRecord
+  ): FreeLibraryRecommendationRecord {
+    return {
+      id: this.normalizeOptionalText(record.bookId, 160) || record.publicId,
+      source: this.normalizeFreeLibraryProvider(record.source),
+      sourceLabel: this.normalizeOptionalText(record.sourceLabel, 60) || 'Free library',
+      title: this.normalizeRequiredText(
+        record.title,
+        'A free-book title is required before recommending it.',
+        180
+      ),
+      authors: this.normalizePersistedStringArray(record.authors, 4, 80),
+      description:
+        this.normalizeOptionalText(record.description, 500) ||
+        'Free title from a trusted education source.',
+      subject: this.normalizeOptionalText(record.subject, 80) || 'General',
+      coverImageUrl: this.normalizeOptionalText(record.coverImageUrl || '', 1000) || null,
+      actionUrl: this.normalizeRequiredText(
+        record.actionUrl,
+        'A valid source link is required before recommending this book.',
+        800
+      ),
+      actionLabel: this.normalizeOptionalText(record.actionLabel, 60) || 'Open book',
+      accessLabel: this.normalizeOptionalText(record.accessLabel, 60) || 'Free access',
+      licenseLabel: this.normalizeOptionalText(record.licenseLabel, 80) || 'Free access',
+      publishedAt: this.normalizeOptionalText(record.publishedAt || '', 40) || null,
+      recommendationId: record.publicId,
+      curatorEmail: normalizeEmail(record.curatorEmail),
+      curatorName:
+        this.normalizeOptionalText(record.curatorName, 80) ||
+        this.defaultNameFromEmail(record.curatorEmail),
+      curatorRole: 'school',
+      createdAt: record.recommendedAt,
+      note: this.normalizeOptionalText(record.note || '', 220),
+      targetSchoolLevel: this.normalizeStudentSchoolLevel(record.targetSchoolLevel || ''),
+      targetDepartment: this.normalizeOptionalText(record.targetDepartment || '', 80),
+      targetClassGroup: this.normalizeOptionalText(record.targetClassGroup || '', 80),
+    };
+  }
+
+  private normalizePersistedStringArray(
+    value: Prisma.JsonValue,
+    limit: number,
+    maxLength: number
+  ) {
+    if (!Array.isArray(value)) {
+      return [] as string[];
+    }
+
+    return value
+      .map((entry) => this.normalizeOptionalText(typeof entry === 'string' ? entry : '', maxLength))
+      .filter((entry) => entry.length > 0)
+      .slice(0, limit);
   }
 
   private requireEmail(authUser: AuthUser) {

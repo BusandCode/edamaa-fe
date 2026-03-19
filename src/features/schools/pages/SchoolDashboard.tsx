@@ -16,6 +16,7 @@ import {
   FaHome,
   FaSignOutAlt,
   FaThumbtack,
+  FaUpload,
   FaUserShield,
 } from 'react-icons/fa';
 import { CheckBadgeIcon } from '@heroicons/react/24/solid';
@@ -500,7 +501,7 @@ const ResourceLibraryOverview = () => {
             className='inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-50'
           >
             <FaBook className='text-xs' />
-            Open curation hub
+            Manage free books
           </button>
         </div>
         {recommendedFreeLibraryError ? (
