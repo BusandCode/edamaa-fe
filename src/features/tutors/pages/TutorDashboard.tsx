@@ -468,7 +468,7 @@ const TutorDashboard = () => {
     navigate(`/live-class/${liveClassId}?role=teacher`, { state: { classItem } });
   };
 
-  const handleStudentListClick = () => navigate('/student-list');
+  const handleStudentListClick = () => navigate('/student-list-tutor');
   const handleCourseClick = () => {
     if (!isSubscriptionActive) {
       openSubscriptionPage(
