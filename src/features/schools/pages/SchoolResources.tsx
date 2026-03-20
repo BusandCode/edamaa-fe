@@ -46,6 +46,7 @@ import {
   type ResourcePricingType,
   type ResourceType,
   saveFreeLibraryAudiencePreset,
+  updateFreeLibraryAudiencePreset,
   updateResourceForActor,
   uploadResourceForActor,
 } from '../utils/resourcesApi';
@@ -443,6 +444,9 @@ const SchoolResources = () => {
     string | null
   >(null);
   const [activePresetActionId, setActivePresetActionId] = useState<string | null>(null);
+  const [editingRecommendationPresetId, setEditingRecommendationPresetId] = useState<string | null>(
+    null
+  );
 
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | ResourceType>('all');
@@ -752,26 +756,53 @@ const SchoolResources = () => {
     setNotice(`${preset.label} audience preset applied.`);
   };
 
+  const handleEditRecommendationPreset = (preset: FreeLibraryAudiencePreset) => {
+    setEditingRecommendationPresetId(preset.presetId);
+    setRecommendationPresetLabel(preset.label);
+    setRecommendationSetup((previous) => ({
+      ...previous,
+      targetSchoolLevel: preset.targetSchoolLevel,
+      targetDepartment: preset.targetDepartment,
+      targetClassGroup: preset.targetClassGroup,
+    }));
+    setRecommendationAudiencePresetsError(null);
+    setNotice(`Editing ${preset.label}.`);
+  };
+
+  const handleCancelRecommendationPresetEdit = () => {
+    setEditingRecommendationPresetId(null);
+    setRecommendationPresetLabel('');
+    setRecommendationAudiencePresetsError(null);
+  };
+
   const handleSaveRecommendationPreset = async () => {
     if (activePresetActionId) {
       return;
     }
 
-    setActivePresetActionId('save');
+    const isEditingPreset = Boolean(editingRecommendationPresetId);
+    setActivePresetActionId(
+      isEditingPreset ? `update:${editingRecommendationPresetId}` : 'save'
+    );
     setNotice(null);
 
     try {
-      const payload = await saveFreeLibraryAudiencePreset(
-        {
-          label: recommendationPresetLabel,
-          targetSchoolLevel: recommendationSetup.targetSchoolLevel,
-          targetDepartment: recommendationSetup.targetDepartment,
-          targetClassGroup: recommendationSetup.targetClassGroup,
-        },
-        'school'
-      );
+      const presetInput = {
+        label: recommendationPresetLabel,
+        targetSchoolLevel: recommendationSetup.targetSchoolLevel,
+        targetDepartment: recommendationSetup.targetDepartment,
+        targetClassGroup: recommendationSetup.targetClassGroup,
+      };
+      const payload = editingRecommendationPresetId
+        ? await updateFreeLibraryAudiencePreset(
+            editingRecommendationPresetId,
+            presetInput,
+            'school'
+          )
+        : await saveFreeLibraryAudiencePreset(presetInput, 'school');
       await refreshRecommendationAudiencePresets();
       setRecommendationPresetLabel('');
+      setEditingRecommendationPresetId(null);
       setNotice(payload.message || `${payload.item.label} audience preset is ready to reuse.`);
     } catch (error) {
       setRecommendationAudiencePresetsError(
@@ -793,6 +824,10 @@ const SchoolResources = () => {
     try {
       const payload = await removeFreeLibraryAudiencePreset(preset.presetId, 'school');
       await refreshRecommendationAudiencePresets();
+      if (editingRecommendationPresetId === preset.presetId) {
+        setEditingRecommendationPresetId(null);
+        setRecommendationPresetLabel('');
+      }
       setNotice(payload.message || `${preset.label} audience preset has been removed.`);
     } catch (error) {
       setRecommendationAudiencePresetsError(
@@ -1292,19 +1327,45 @@ const SchoolResources = () => {
                         className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA]/30 focus:ring-4 focus:ring-[#3D08BA]/10"
                       />
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveRecommendationPreset()}
-                      disabled={activePresetActionId === 'save'}
-                      className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#3D08BA] disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {activePresetActionId === 'save' ? 'Saving preset...' : 'Save current audience'}
-                    </button>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveRecommendationPreset()}
+                        disabled={
+                          activePresetActionId === 'save' ||
+                          activePresetActionId === `update:${editingRecommendationPresetId}`
+                        }
+                        className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#3D08BA] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {activePresetActionId === `update:${editingRecommendationPresetId}`
+                          ? 'Saving changes...'
+                          : activePresetActionId === 'save'
+                            ? 'Saving preset...'
+                            : editingRecommendationPresetId
+                              ? 'Save changes'
+                              : 'Save current audience'}
+                      </button>
+                      {editingRecommendationPresetId ? (
+                        <button
+                          type="button"
+                          onClick={handleCancelRecommendationPresetEdit}
+                          disabled={Boolean(activePresetActionId)}
+                          className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Cancel edit
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                     <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
                       Reusable targeting
                     </span>
+                    {editingRecommendationPresetId ? (
+                      <span className="rounded-full bg-[#3D08BA]/10 px-2.5 py-1 font-semibold text-[#3D08BA]">
+                        Editing saved audience
+                      </span>
+                    ) : null}
                     <span>
                       Save the school level, department, and class group below so the team can
                       reuse them on the next pinned book.
@@ -1349,6 +1410,14 @@ const SchoolResources = () => {
                               <p className="text-[11px] text-slate-500">
                                 {preset.audienceLabel || 'All students'}
                               </p>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleEditRecommendationPreset(preset)}
+                              disabled={Boolean(activePresetActionId)}
+                              className="rounded-full border border-slate-200 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 transition hover:border-[#3D08BA]/25 hover:text-[#3D08BA] disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {editingRecommendationPresetId === preset.presetId ? 'Editing' : 'Edit'}
                             </button>
                             <button
                               type="button"

@@ -602,6 +602,31 @@ export const removeFreeLibraryRecommendation = async (
   };
 };
 
+export const updateFreeLibraryAudiencePreset = async (
+  presetId: string,
+  input: SaveFreeLibraryAudiencePresetInput,
+  actor?: ResourceUploaderRole
+) => {
+  const response = await requestWithAuth(
+    `/resources/free-books/recommendation-presets/${encodeURIComponent(presetId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({
+        label: input.label,
+        targetSchoolLevel: input.targetSchoolLevel || '',
+        targetDepartment: input.targetDepartment || '',
+        targetClassGroup: input.targetClassGroup || '',
+      }),
+    },
+    { actor }
+  );
+
+  return (await response.json()) as {
+    item: FreeLibraryAudiencePreset;
+    message?: string;
+  };
+};
+
 export const removeFreeLibraryAudiencePreset = async (
   presetId: string,
   actor?: ResourceUploaderRole

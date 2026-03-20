@@ -138,6 +138,19 @@ export class ResourcesController {
     );
   }
 
+  @Patch('free-books/recommendation-presets/:presetId')
+  updateRecommendationPreset(
+    @Req() request: Request,
+    @Param('presetId') presetId: string,
+    @Body() body: FreeLibraryAudiencePresetBody
+  ) {
+    return this.resourcesService.updateFreeLibraryAudiencePresetForAuthUser(
+      this.getAuthUser(request),
+      presetId,
+      body
+    );
+  }
+
   @Delete('free-books/recommended/:recommendationId')
   removeRecommendedFreeBook(
     @Req() request: Request,

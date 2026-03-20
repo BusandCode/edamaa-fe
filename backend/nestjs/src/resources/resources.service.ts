@@ -724,6 +724,65 @@ export class ResourcesService implements OnModuleInit {
     };
   }
 
+  async updateFreeLibraryAudiencePresetForAuthUser(
+    authUser: AuthUser,
+    presetId: string,
+    input: FreeLibraryAudiencePresetInput
+  ) {
+    const email = this.requireEmail(authUser);
+    this.requireSchoolCuratorRole(authUser.role);
+    const workspace = this.resolveSchoolWorkspace(authUser);
+    const normalizedPresetId = String(presetId || '').trim();
+
+    if (!normalizedPresetId) {
+      throw new BadRequestException('Audience preset id is required.');
+    }
+
+    const preset = this.freeLibraryAudiencePresets.find(
+      (candidate) => candidate.presetId === normalizedPresetId
+    );
+
+    if (!preset) {
+      throw new NotFoundException('Audience preset could not be found.');
+    }
+
+    if (preset.workspaceKey !== workspace.key) {
+      throw new ForbiddenException('You can only edit presets saved for your school workspace.');
+    }
+
+    const normalizedPreset = this.normalizeFreeLibraryAudiencePresetInput(input);
+    const normalizedLabelKey = normalizedPreset.label.trim().toLowerCase();
+    const conflictingPreset = this.freeLibraryAudiencePresets.find(
+      (candidate) =>
+        candidate.workspaceKey === workspace.key &&
+        candidate.presetId !== preset.presetId &&
+        candidate.label.trim().toLowerCase() === normalizedLabelKey
+    );
+
+    if (conflictingPreset) {
+      throw new BadRequestException(
+        `Another audience preset already uses "${conflictingPreset.label}".`
+      );
+    }
+
+    preset.workspaceLabel = workspace.label;
+    preset.curatorEmail = email;
+    preset.curatorName =
+      this.normalizeOptionalText(authUser.name || '', 80) || this.defaultNameFromEmail(email);
+    preset.label = normalizedPreset.label;
+    preset.targetSchoolLevel = normalizedPreset.targetSchoolLevel;
+    preset.targetDepartment = normalizedPreset.targetDepartment;
+    preset.targetClassGroup = normalizedPreset.targetClassGroup;
+    preset.updatedAt = new Date();
+
+    await this.persistFreeLibraryAudiencePresetRecord(preset);
+
+    return {
+      item: this.toFreeLibraryAudiencePresetItemResponse(preset),
+      message: `${preset.label} audience preset has been updated.`,
+    };
+  }
+
   async removeRecommendedFreeBookForAuthUser(authUser: AuthUser, recommendationId: string) {
     const email = this.requireEmail(authUser);
     this.requireSchoolCuratorRole(authUser.role);
@@ -1374,10 +1433,7 @@ export class ResourcesService implements OnModuleInit {
     try {
       await this.prisma.resourceFreeBookAudiencePreset.upsert({
         where: {
-          workspaceKey_label: {
-            workspaceKey: preset.workspaceKey,
-            label: preset.label,
-          },
+          publicId: preset.presetId,
         },
         create: {
           publicId: preset.presetId,
@@ -1393,9 +1449,11 @@ export class ResourcesService implements OnModuleInit {
           updatedAt: preset.updatedAt,
         },
         update: {
+          workspaceKey: preset.workspaceKey,
           workspaceLabel: preset.workspaceLabel || null,
           curatorName: preset.curatorName,
           curatorEmail: preset.curatorEmail,
+          label: preset.label,
           targetSchoolLevel: preset.targetSchoolLevel || null,
           targetDepartment: preset.targetDepartment || null,
           targetClassGroup: preset.targetClassGroup || null,
@@ -1427,8 +1485,7 @@ export class ResourcesService implements OnModuleInit {
     try {
       await this.prisma.resourceFreeBookAudiencePreset.deleteMany({
         where: {
-          workspaceKey: preset.workspaceKey,
-          label: preset.label,
+          publicId: preset.presetId,
         },
       });
     } catch (error) {
