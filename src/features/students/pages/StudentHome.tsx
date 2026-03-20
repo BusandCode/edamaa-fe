@@ -1011,7 +1011,7 @@ const StudentHome = () => {
                 )}
               </button>
               <button
-                onClick={() => navigate('/my-profile')}
+                onClick={() => navigate('/student-dashboard', { state: { openProfile: true } })}
                 className="rounded-full border border-gray-200 bg-white p-2 hover:bg-gray-50 transition-colors"
                 aria-label="Open my profile"
                 title="My Profile"

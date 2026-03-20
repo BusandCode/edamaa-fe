@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import NewLogo from '../../../components/common/NewLogo';
 import RecordClasses from "../../tutors/components/RecordClasses";
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import StudentProfile from "./StudentProfile";
 import BottomNavigation from '../../../components/layout/student-layout/StudentBottomNavigation';
 import {
@@ -686,6 +686,7 @@ const StudentCertificateWalletOverview = ({
 
 const StudentDashboard = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const initialStudentIdentity = useMemo(() => loadStudentIdentity(), []);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -1048,6 +1049,16 @@ const StudentDashboard = () => {
     navigate('/student-certificates');
   };
 
+  const handleAccountSettingsClick = () => {
+    setShowProfile(true);
+    setMenuOpen(false);
+  };
+
+  const handleHelpSupportClick = () => {
+    window.location.href = 'mailto:support@edamaa3d.com?subject=Edamaa3D%20Student%20Support';
+    setMenuOpen(false);
+  };
+
   const handlePerformanceClick = () => {
     navigate('/performance');
   };
@@ -1188,6 +1199,13 @@ const StudentDashboard = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (location.state?.openProfile) {
+      setShowProfile(true);
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.pathname, location.state, navigate]);
+
   const openPublishedResult = async (notification: DashboardNotification) => {
     if (!isExamNotification(notification)) {
       return;
@@ -1319,12 +1337,12 @@ const StudentDashboard = () => {
     { 
       icon: Cog6ToothIcon, 
       label: 'Account Settings', 
-      onClick: () => navigate('/settings')
+      onClick: handleAccountSettingsClick
     },
     { 
       icon: QuestionMarkCircleIcon, 
       label: 'Help & Support', 
-      onClick: () => navigate('/help')
+      onClick: handleHelpSupportClick
     },
   ];
 
@@ -1875,10 +1893,7 @@ const StudentDashboard = () => {
                 ))}
                 
                 <button 
-                  onClick={() => {
-                    navigate('/preferences');
-                    setMenuOpen(false);
-                  }}
+                  onClick={handleAccountSettingsClick}
                   className="w-full text-left px-4 py-3 rounded-xl hover:bg-gray-100 text-gray-700 font-medium transition-all flex items-center gap-3 group hover:shadow-sm"
                 >
                   <div className="w-10 h-10 rounded-lg bg-gray-100 group-hover:bg-[#3D08BA] flex items-center justify-center transition-colors">

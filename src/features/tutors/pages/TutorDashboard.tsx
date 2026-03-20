@@ -211,6 +211,16 @@ const TutorDashboard = () => {
     navigate('/tutor-resources?category=live_recording');
   };
 
+  const handleAccountSettingsClick = () => {
+    setShowProfile(true);
+    setMenuOpen(false);
+  };
+
+  const handleHelpSupportClick = () => {
+    window.location.href = 'mailto:support@edamaa3d.com?subject=Edamaa3D%20Tutor%20Support';
+    setMenuOpen(false);
+  };
+
   const handleHomeworkUpdateDrilldown = (notification: SchoolAssignmentNotification) => {
     const params = new URLSearchParams({
       assignmentId: notification.assignmentId,
@@ -521,12 +531,12 @@ const TutorDashboard = () => {
     {
       icon: Cog6ToothIcon,
       label: 'Account Settings',
-      onClick: () => navigate('/settings')
+      onClick: handleAccountSettingsClick
     },
     {
       icon: QuestionMarkCircleIcon,
       label: 'Help & Support',
-      onClick: () => navigate('/help')
+      onClick: handleHelpSupportClick
     },
     {
       icon: ShieldCheckIcon,
