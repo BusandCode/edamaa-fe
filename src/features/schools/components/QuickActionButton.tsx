@@ -8,11 +8,12 @@ interface QuickActionButtonProps {
   badge?: string | number;
   onClick?: () => void;
   to?: string;
+  href?: string;
 }
 
-const QuickActionButton: React.FC<QuickActionButtonProps> = ({ icon: Icon, label, badge, onClick, to }) => {
+const QuickActionButton: React.FC<QuickActionButtonProps> = ({ icon: Icon, label, badge, onClick, to, href }) => {
   const className =
-    'bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-all flex flex-col items-center gap-3 relative cursor-pointer';
+    'w-full h-full bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-all flex flex-col items-center justify-center gap-3 relative cursor-pointer';
 
   const content = (
     <>
@@ -33,6 +34,14 @@ const QuickActionButton: React.FC<QuickActionButtonProps> = ({ icon: Icon, label
       <Link to={to} className={className}>
         {content}
       </Link>
+    );
+  }
+
+  if (href) {
+    return (
+      <a href={href} className={className}>
+        {content}
+      </a>
     );
   }
 
