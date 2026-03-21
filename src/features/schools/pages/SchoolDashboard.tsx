@@ -2573,10 +2573,6 @@ const SchoolDashboard = () => {
     navigate('/school-finance');
   };
 
-  const handleSettingsClick = () => {
-    navigate('/settings');
-  };
-
   const openModuleDetails = (moduleId?: string) => {
     if (moduleId) {
       setActiveModuleId(moduleId);
@@ -2811,7 +2807,7 @@ const SchoolDashboard = () => {
             <QuickActionButton icon={FaUsers} label="Find Tutors" onClick={handleTutorListClick} />
             <QuickActionButton icon={FaCertificate} label="Certificates" badge="NEW" onClick={handleCertificatesClick} />
             <QuickActionButton icon={FaChartLine} label="Revenue" onClick={handleFinanceClick} />
-            <QuickActionButton icon={FaCog} label="Settings" onClick={handleSettingsClick} />
+            <QuickActionButton icon={FaCog} label="Settings" to="/settings" />
             <QuickActionButton icon={FaCalendarAlt} label="Schedule" onClick={handleScheduleClick} />
             <QuickActionButton icon={FaFileAlt} label="Exams" onClick={handleExamManagementClick} />
             <QuickActionButton icon={FaFileAlt} label="Homework" onClick={handleAssignmentsClick} />
