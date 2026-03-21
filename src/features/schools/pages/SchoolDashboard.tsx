@@ -18,6 +18,7 @@ import {
   FaThumbtack,
   FaUpload,
   FaUserShield,
+  FaCog,
 } from 'react-icons/fa';
 import { CheckBadgeIcon } from '@heroicons/react/24/solid';
 import type { IconType } from 'react-icons';
@@ -2572,6 +2573,10 @@ const SchoolDashboard = () => {
     navigate('/school-finance');
   };
 
+  const handleSettingsClick = () => {
+    navigate('/settings');
+  };
+
   const openModuleDetails = (moduleId?: string) => {
     if (moduleId) {
       setActiveModuleId(moduleId);
@@ -2806,6 +2811,7 @@ const SchoolDashboard = () => {
             <QuickActionButton icon={FaUsers} label="Find Tutors" onClick={handleTutorListClick} />
             <QuickActionButton icon={FaCertificate} label="Certificates" badge="NEW" onClick={handleCertificatesClick} />
             <QuickActionButton icon={FaChartLine} label="Revenue" onClick={handleFinanceClick} />
+            <QuickActionButton icon={FaCog} label="Settings" onClick={handleSettingsClick} />
             <QuickActionButton icon={FaCalendarAlt} label="Schedule" onClick={handleScheduleClick} />
             <QuickActionButton icon={FaFileAlt} label="Exams" onClick={handleExamManagementClick} />
             <QuickActionButton icon={FaFileAlt} label="Homework" onClick={handleAssignmentsClick} />

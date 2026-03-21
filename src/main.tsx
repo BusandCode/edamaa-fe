@@ -13,6 +13,7 @@ const SchoolRegistration = lazy(() => import('./features/schools/pages/SchoolReg
 const TutorRegistration = lazy(() => import('./features/tutors/pages/TutorRegistration.tsx'))
 const PasswordRecovery = lazy(() => import('./features/auth/PasswordRecovery.tsx'))
 const AccountRoles = lazy(() => import('./features/auth/AccountRoles.tsx'))
+const AccountSettings = lazy(() => import('./features/shared/pages/AccountSettings.tsx'))
 const StudentRegistration = lazy(() => import('./features/students/pages/StudentRegistration.tsx'))
 const SchoolDashboard = lazy(() => import('./features/schools/pages/SchoolDashboard.tsx'))
 const SchoolFinance = lazy(() => import('./features/schools/pages/SchoolFinance.tsx'))
@@ -27,7 +28,6 @@ const TutorAssignments = lazy(() => import('./features/tutors/pages/TutorAssignm
 const TutorResources = lazy(() => import('./features/tutors/pages/TutorResources.tsx'))
 const StudentDashboard = lazy(() => import('./features/students/pages/StudentDashboard.tsx'))
 const StudentHome = lazy(() => import('./features/students/pages/StudentHome.tsx'))
-const StudentProfile = lazy(() => import('./features/students/pages/StudentProfile.tsx'))
 const StudentListTutor = lazy(() => import('./features/tutors/pages/lists/StudentList.tsx'))
 const StudentListSchool = lazy(() => import('./features/schools/pages/lists/StudentListSchool.tsx'))
 const TutorListSchool = lazy(() => import('./features/schools/pages/lists/TutorListSchool.tsx'))
@@ -217,14 +217,15 @@ createRoot(document.getElementById('root')!).render(
           }
         />
         <Route path="/account-roles" element={<ProtectedRoute><AccountRoles /></ProtectedRoute>} />
+        <Route path="/settings" element={<ProtectedRoute><AccountSettings /></ProtectedRoute>} />
 
         {/* Profile routes */}
         <Route
           path='/my-profile'
           element={
-            <RoleProtectedRoute allowedRoles={['student', 'admin']}>
-              <StudentProfile />
-            </RoleProtectedRoute>
+            <ProtectedRoute>
+              <Navigate to="/settings" replace />
+            </ProtectedRoute>
           }
         />
 

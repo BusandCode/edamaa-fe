@@ -212,7 +212,7 @@ const TutorDashboard = () => {
   };
 
   const handleAccountSettingsClick = () => {
-    setShowProfile(true);
+    navigate('/settings');
     setMenuOpen(false);
   };
 

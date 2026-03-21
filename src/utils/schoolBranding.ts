@@ -89,6 +89,28 @@ export const loadSchoolBrandingNames = () => ({
   adminName: readLocalStorageValue(SCHOOL_ADMIN_NAME_STORAGE_KEY).trim(),
 });
 
+export const persistSchoolBrandingNames = (input: { schoolName?: string; adminName?: string }) => {
+  const schoolName = String(input.schoolName || '').trim();
+  const adminName = String(input.adminName || '').trim();
+
+  if (schoolName) {
+    writeLocalStorageValue(SCHOOL_DISPLAY_NAME_STORAGE_KEY, schoolName);
+  } else {
+    removeLocalStorageValue(SCHOOL_DISPLAY_NAME_STORAGE_KEY);
+  }
+
+  if (adminName) {
+    writeLocalStorageValue(SCHOOL_ADMIN_NAME_STORAGE_KEY, adminName);
+  } else {
+    removeLocalStorageValue(SCHOOL_ADMIN_NAME_STORAGE_KEY);
+  }
+
+  return {
+    schoolName,
+    adminName,
+  };
+};
+
 export const loadSchoolWorkspaceKey = () =>
   readLocalStorageValue(SCHOOL_WORKSPACE_KEY_STORAGE_KEY).trim();
 

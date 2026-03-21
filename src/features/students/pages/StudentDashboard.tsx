@@ -1050,7 +1050,7 @@ const StudentDashboard = () => {
   };
 
   const handleAccountSettingsClick = () => {
-    setShowProfile(true);
+    navigate('/settings');
     setMenuOpen(false);
   };
 
