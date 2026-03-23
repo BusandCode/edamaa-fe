@@ -638,3 +638,20 @@ model ResourceFreeBookAudiencePreset {
   @@index([workspaceKey, updatedAt])
   @@index([curatorEmail, updatedAt])
 }
+
+// Stores the Cloudflare RealtimeKit meeting mapped to an Edamaa live-class
+// session id so hosts and learners reliably join the same reusable meeting.
+model CloudflareRealtimeKitMeeting {
+  id                Int      @id @default(autoincrement())
+  publicId          String   @unique
+  sessionPublicId   String   @unique
+  providerMeetingId String   @unique
+  title             String
+  createdByEmail    String
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([createdByEmail, updatedAt])
+  @@index([sessionPublicId, updatedAt])
+}

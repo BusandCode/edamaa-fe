@@ -50,6 +50,12 @@ import {
 import { uploadResourceForActor } from '../../schools/utils/resourcesApi';
 import { loadStudentIdentity } from '../utils/studentIdentity';
 import {
+  createCloudflareRealtimeKitSession,
+  fetchCloudflareRealtimeKitStatus,
+  type CloudflareRealtimeKitActor,
+  type CloudflareRealtimeKitSession,
+} from '../utils/cloudflareRealtimeKitApi';
+import {
   fetchSchoolScheduleSessions,
   type SchoolScheduleSession,
 } from '../../schools/utils/schoolScheduleApi';
@@ -264,6 +270,9 @@ type LiveLinkedAssignmentDraft = {
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '');
+const CLOUDFLARE_REALTIMEKIT_ENABLED =
+  String(import.meta.env.VITE_CLOUDFLARE_REALTIMEKIT_ENABLED || 'false').trim().toLowerCase() ===
+  'true';
 
 const RTC_CONFIGURATION: RTCConfiguration = buildRtcConfiguration();
 
@@ -600,6 +609,7 @@ const LiveClassroom = () => {
   const schoolSupportId = useMemo(() => `school-${liveClass.id}`, [liveClass.id]);
   const schoolSupportName = useMemo(() => `${liveClass.subject} School Support`, [liveClass.subject]);
   const channelName = useMemo(() => `live-class:${liveClass.id}`, [liveClass.id]);
+  const cloudflareRealtimeKitActor: CloudflareRealtimeKitActor = isTeacher ? teacherActor : 'student';
   const hasTeacherAuthSession = useMemo(() => hasPersistedAuthSession(), []);
   const canManageLinkedAssignments = isTeacher && hasTeacherAuthSession && Boolean(liveClass.id);
   const canAutoPublishLiveRecording = isTeacher && hasTeacherAuthSession && Boolean(liveClass.id);
@@ -908,6 +918,12 @@ const LiveClassroom = () => {
   const [isLiveRecording, setIsLiveRecording] = useState(false);
   const [isPublishingLiveRecording, setIsPublishingLiveRecording] = useState(false);
   const [liveRecordingSeconds, setLiveRecordingSeconds] = useState(0);
+  const [cloudflareRealtimeKitBootstrapState, setCloudflareRealtimeKitBootstrapState] = useState<
+    'disabled' | 'checking' | 'ready' | 'unavailable' | 'error'
+  >(CLOUDFLARE_REALTIMEKIT_ENABLED ? 'checking' : 'disabled');
+  const [cloudflareRealtimeKitSession, setCloudflareRealtimeKitSession] =
+    useState<CloudflareRealtimeKitSession | null>(null);
+  const [cloudflareRealtimeKitStatusMessage, setCloudflareRealtimeKitStatusMessage] = useState('');
 
   const pushNotice = useCallback((text: string, type: NoticeTone = 'info') => {
     setNoticeState({ type, text });
@@ -1861,6 +1877,72 @@ const LiveClassroom = () => {
       mounted = false;
     };
   }, [isTeacher, teacherActor]);
+
+  useEffect(() => {
+    if (!CLOUDFLARE_REALTIMEKIT_ENABLED || !liveClass.id) {
+      setCloudflareRealtimeKitBootstrapState('disabled');
+      setCloudflareRealtimeKitSession(null);
+      setCloudflareRealtimeKitStatusMessage('');
+      return;
+    }
+
+    let cancelled = false;
+
+    const bootstrapCloudflareRealtimeKit = async () => {
+      setCloudflareRealtimeKitBootstrapState('checking');
+      setCloudflareRealtimeKitStatusMessage('Checking Cloudflare room setup...');
+      setCloudflareRealtimeKitSession(null);
+
+      try {
+        const status = await fetchCloudflareRealtimeKitStatus(cloudflareRealtimeKitActor);
+        if (cancelled) {
+          return;
+        }
+
+        if (!status.configured) {
+          setCloudflareRealtimeKitBootstrapState('unavailable');
+          setCloudflareRealtimeKitStatusMessage('Cloudflare room setup needed');
+          return;
+        }
+
+        const session = await createCloudflareRealtimeKitSession(
+          {
+            sessionId: liveClass.id,
+            title: liveClass.name,
+            participantRole: isTeacher ? 'teacher' : 'student',
+          },
+          cloudflareRealtimeKitActor
+        );
+        if (cancelled) {
+          return;
+        }
+
+        setCloudflareRealtimeKitSession(session);
+        setCloudflareRealtimeKitBootstrapState('ready');
+        setCloudflareRealtimeKitStatusMessage('Cloudflare room ready');
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setCloudflareRealtimeKitBootstrapState('error');
+        setCloudflareRealtimeKitSession(null);
+        setCloudflareRealtimeKitStatusMessage('Cloudflare room failed');
+        pushNotice(
+          error instanceof Error
+            ? `${error.message}. Continuing with the standard live classroom flow.`
+            : 'Cloudflare room setup failed. Continuing with the standard live classroom flow.',
+          'warning'
+        );
+      }
+    };
+
+    void bootstrapCloudflareRealtimeKit();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cloudflareRealtimeKitActor, isTeacher, liveClass.id, liveClass.name, pushNotice]);
 
   useEffect(() => {
     if (stageRemoteVideoRef.current) {
@@ -3784,6 +3866,16 @@ const LiveClassroom = () => {
       : noticeTone === 'error'
       ? 'border-red-300/40 bg-red-500/10 text-red-100'
       : 'border-[#F68C29]/40 bg-[#F68C29]/10 text-[#ffe4cf]';
+  const cloudflareRealtimeKitBadgeClass =
+    cloudflareRealtimeKitBootstrapState === 'ready'
+      ? 'border-cyan-300/40 bg-cyan-500/10 text-cyan-100'
+      : cloudflareRealtimeKitBootstrapState === 'checking'
+        ? 'border-white/20 bg-white/5 text-white/75'
+        : cloudflareRealtimeKitBootstrapState === 'unavailable'
+          ? 'border-amber-300/35 bg-amber-500/10 text-amber-100'
+          : cloudflareRealtimeKitBootstrapState === 'error'
+            ? 'border-red-300/35 bg-red-500/10 text-red-100'
+            : 'border-white/15 bg-white/[0.04] text-white/55';
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -3893,6 +3985,18 @@ const LiveClassroom = () => {
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white"></span>
               LIVE
             </span>
+            {CLOUDFLARE_REALTIMEKIT_ENABLED && (
+              <span
+                className={`hidden rounded-full border px-2.5 py-1 text-[11px] sm:inline-flex ${cloudflareRealtimeKitBadgeClass}`}
+                title={
+                  cloudflareRealtimeKitSession
+                    ? `${cloudflareRealtimeKitStatusMessage} • ${cloudflareRealtimeKitSession.meetingId}`
+                    : cloudflareRealtimeKitStatusMessage || 'Cloudflare RealtimeKit status'
+                }
+              >
+                {cloudflareRealtimeKitStatusMessage || 'Cloudflare room'}
+              </span>
+            )}
             <span className="hidden rounded-full border border-white/20 bg-white/5 px-2.5 py-1 text-[11px] sm:inline-flex">
               {viewerCount} watching
             </span>

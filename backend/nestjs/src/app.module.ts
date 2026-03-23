@@ -22,6 +22,7 @@ import { SchoolScheduleModule } from './school-schedule/school-schedule.module';
 import { AccountRolesModule } from './account-roles/account-roles.module';
 import { ExamsModule } from './exams/exams.module';
 import { AssignmentsModule } from './assignments/assignments.module';
+import { CloudflareRealtimeKitModule } from './cloudflare-realtimekit/cloudflare-realtimekit.module';
 
 @Module({
   // Feature modules are registered here so Nest can compose the app.
@@ -42,6 +43,7 @@ import { AssignmentsModule } from './assignments/assignments.module';
     AccountRolesModule,
     ExamsModule,
     AssignmentsModule,
+    CloudflareRealtimeKitModule,
   ],
   controllers: [],
   providers: [PrismaService],

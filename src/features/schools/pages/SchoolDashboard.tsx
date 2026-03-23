@@ -18,7 +18,6 @@ import {
   FaThumbtack,
   FaUpload,
   FaUserShield,
-  FaCog,
 } from 'react-icons/fa';
 import { CheckBadgeIcon } from '@heroicons/react/24/solid';
 import type { IconType } from 'react-icons';
@@ -2684,6 +2683,13 @@ const SchoolDashboard = () => {
                     icon={FaUpload}
                     onClick={handleResourceUploadClick}
                   />
+                  <button
+                    type='button'
+                    onClick={handleSettingsClick}
+                    className='rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50'
+                  >
+                    Settings
+                  </button>
                   {canOpenInternalAdmin && (
                     <IconActionButton
                       label={isOpeningInternalAdmin ? 'Opening Internal Admin...' : 'Internal Admin'}
@@ -2711,6 +2717,13 @@ const SchoolDashboard = () => {
                     icon={FaUpload}
                     onClick={handleResourceUploadClick}
                   />
+                  <button
+                    type='button'
+                    onClick={handleSettingsClick}
+                    className='rounded-lg border border-[#3D08BA]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5'
+                  >
+                    Settings
+                  </button>
                   {canOpenInternalAdmin && (
                     <IconActionButton
                       label={isOpeningInternalAdmin ? 'Opening Internal Admin...' : 'Internal Admin'}
@@ -2811,7 +2824,6 @@ const SchoolDashboard = () => {
             <QuickActionButton icon={FaUsers} label="Find Tutors" onClick={handleTutorListClick} />
             <QuickActionButton icon={FaCertificate} label="Certificates" badge="NEW" onClick={handleCertificatesClick} />
             <QuickActionButton icon={FaChartLine} label="Revenue" onClick={handleFinanceClick} />
-            <QuickActionButton icon={FaCog} label="Settings" onClick={handleSettingsClick} />
             <QuickActionButton icon={FaCalendarAlt} label="Schedule" onClick={handleScheduleClick} />
             <QuickActionButton icon={FaFileAlt} label="Exams" onClick={handleExamManagementClick} />
             <QuickActionButton icon={FaFileAlt} label="Homework" onClick={handleAssignmentsClick} />

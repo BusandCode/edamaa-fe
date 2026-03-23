@@ -4,6 +4,7 @@ import {
 } from '../../../utils/authSession';
 
 export type TeachingActor = 'tutor' | 'school';
+export type BillingInterval = 'weekly' | 'monthly' | 'quarterly' | 'yearly';
 export type TeachingSubscriptionStatus =
   | 'inactive'
   | 'active'
@@ -17,6 +18,8 @@ export type TeachingSubscriptionState = {
   isActive: boolean;
   isEdamaa3dVerified: boolean;
   planCode: string;
+  billingInterval: BillingInterval;
+  availableBillingIntervals: BillingInterval[];
   currentPeriodEnd: string | null;
   currentPeriodEndLabel: string | null;
   features: {
@@ -67,7 +70,9 @@ const buildDevUnlockedSubscriptionState = (actor: TeachingActor): TeachingSubscr
   status: 'active',
   isActive: true,
   isEdamaa3dVerified: true,
-  planCode: actor === 'school' ? 'school_pro' : 'tutor_pro',
+  planCode: actor === 'school' ? 'edamaa-school-pro-monthly' : 'edamaa-tutor-pro-monthly',
+  billingInterval: 'monthly',
+  availableBillingIntervals: ['monthly'],
   currentPeriodEnd: null,
   currentPeriodEndLabel: 'Development unlock',
   features: {
@@ -174,12 +179,13 @@ export const fetchTeachingSubscriptionState = async (
 
 export const createTeachingSubscriptionCheckout = async (
   actor: TeachingActor,
-  options?: { successUrl?: string; cancelUrl?: string }
+  options?: { interval?: BillingInterval; successUrl?: string; cancelUrl?: string }
 ): Promise<CheckoutResponse> => {
   const response = await requestWithAuth('/subscriptions/me/checkout', {
     method: 'POST',
     body: JSON.stringify({
       actor,
+      interval: options?.interval,
       successUrl: options?.successUrl,
       cancelUrl: options?.cancelUrl,
     }),

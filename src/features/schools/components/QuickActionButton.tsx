@@ -1,17 +1,14 @@
 import React from 'react';
 import type { IconType } from 'react-icons';
-import { Link } from 'react-router-dom';
 
 interface QuickActionButtonProps {
   icon: IconType;
   label: string;
   badge?: string | number;
   onClick?: () => void;
-  to?: string;
-  href?: string;
 }
 
-const QuickActionButton: React.FC<QuickActionButtonProps> = ({ icon: Icon, label, badge, onClick, to, href }) => {
+const QuickActionButton: React.FC<QuickActionButtonProps> = ({ icon: Icon, label, badge, onClick }) => {
   const className =
     'w-full h-full bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-all flex flex-col items-center justify-center gap-3 relative cursor-pointer';
 
@@ -28,22 +25,6 @@ const QuickActionButton: React.FC<QuickActionButtonProps> = ({ icon: Icon, label
       )}
     </>
   );
-
-  if (to) {
-    return (
-      <Link to={to} className={className}>
-        {content}
-      </Link>
-    );
-  }
-
-  if (href) {
-    return (
-      <a href={href} className={className}>
-        {content}
-      </a>
-    );
-  }
 
   return (
     <button type='button' onClick={onClick} className={className}>
