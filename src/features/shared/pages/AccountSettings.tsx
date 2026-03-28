@@ -28,8 +28,10 @@ import {
 import {
   loadPersistedAuthEmail,
   loadSchoolBrandingNames,
+  loadSchoolHasHostelPreference,
   loadSchoolProfileImage,
   persistSchoolBrandingNames,
+  persistSchoolHasHostelPreference,
   persistSchoolProfileImage,
 } from '../../../utils/schoolBranding';
 
@@ -59,6 +61,7 @@ type SchoolSettingsState = {
   adminName: string;
   email: string;
   profileImage: string | null;
+  hasHostel: boolean;
 };
 
 const STUDENT_SETTINGS_STORAGE_KEY = 'edamaa_student_settings_page_v1';
@@ -186,6 +189,7 @@ const AccountSettings = () => {
       adminName: names.adminName || 'School Admin',
       email: authEmail || 'school@edamaa3d.com',
       profileImage: loadSchoolProfileImage(authEmail) || null,
+      hasHostel: loadSchoolHasHostelPreference(),
     };
   }, [authEmail]);
 
@@ -237,6 +241,7 @@ const AccountSettings = () => {
       adminName: schoolSettings.adminName,
     });
     persistSchoolProfileImage(schoolSettings.profileImage || '', schoolSettings.email);
+    persistSchoolHasHostelPreference(schoolSettings.hasHostel);
     setSchoolSettings((current) => ({
       ...current,
       schoolName: savedNames.schoolName || 'School',
@@ -408,6 +413,26 @@ const AccountSettings = () => {
                         className="rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#3D08BA] focus:ring-2 focus:ring-[#3D08BA]/10"
                       />
                     </label>
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <label className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={schoolSettings.hasHostel}
+                          onChange={(event) =>
+                            setSchoolSettings((current) => ({ ...current, hasHostel: event.target.checked }))
+                          }
+                          className="mt-1 h-4 w-4 rounded border-slate-300 text-[#3D08BA] focus:ring-[#3D08BA]"
+                        />
+                        <span>
+                          <span className="block text-sm font-semibold text-slate-700">School operates a hostel</span>
+                          <span className="mt-1 block text-xs leading-5 text-slate-500">
+                            Turn this on only for boarding schools. Hostel management stays hidden on the dashboard when
+                            this is off.
+                          </span>
+                        </span>
+                      </label>
+                    </div>
                   </div>
                 </div>
 

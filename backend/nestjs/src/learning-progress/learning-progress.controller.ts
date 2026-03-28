@@ -11,6 +11,11 @@ type ProgressUpdateBody = {
 export class LearningProgressController {
   constructor(private readonly learningProgressService: LearningProgressService) {}
 
+  @Get('course/:courseId')
+  listByCourse(@Param('courseId', ParseIntPipe) courseId: number) {
+    return this.learningProgressService.listByCourse(courseId);
+  }
+
   @Get(':learnerKey/:courseId')
   getOne(@Param('learnerKey') learnerKey: string, @Param('courseId', ParseIntPipe) courseId: number) {
     return (

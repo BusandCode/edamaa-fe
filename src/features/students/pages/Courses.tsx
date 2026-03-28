@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   MagnifyingGlassIcon,
   BookOpenIcon,
@@ -16,7 +16,7 @@ import BottomNavigation from '../../../components/layout/student-layout/StudentB
 import CourseMatesChatPanel from '../../../components/communication/CourseMatesChatPanel';
 import {
   CURRENT_STUDENT,
-  RECORDED_COURSES,
+  getRecordedCourses,
   type RecordedCourse,
 } from '../data/recordedCourses';
 
@@ -65,7 +65,7 @@ const MyCourses = () => {
     return () => window.clearTimeout(timer);
   }, [chatNotice]);
 
-  const courses = RECORDED_COURSES;
+  const courses = useMemo(() => getRecordedCourses(), []);
 
   const filteredCourses = courses.filter(subject =>
     subject.title.toLowerCase().includes(searchQuery.toLowerCase()) ||

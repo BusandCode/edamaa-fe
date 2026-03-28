@@ -11,7 +11,11 @@ import {
   persistSupabaseSession,
   type AppAccountRole,
 } from '../../utils/authSession';
-import { buildSchoolWorkspaceMetadata } from '../../utils/schoolBranding';
+import {
+  buildSchoolWorkspaceMetadata,
+  loadSchoolHasHostelPreference,
+  persistSchoolHasHostelPreference,
+} from '../../utils/schoolBranding';
 import { getSupabaseBrowserClient, isSupabaseBrowserConfigured } from '../../utils/supabaseClient';
 import { loadStudentIdentity, saveStudentIdentity } from '../students/utils/studentIdentity';
 import { fetchMyAccountRoles, switchDefaultAccountRole } from './utils/accountRolesApi';
@@ -31,6 +35,24 @@ const SignIn: React.FC = () => {
 
   const normalizeEmail = (value: string) => value.trim().toLowerCase();
   const readMetadataString = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+  const readMetadataBoolean = (value: unknown) => {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number') {
+      return value === 1 ? true : value === 0 ? false : null;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['true', 'yes', '1'].includes(normalized)) {
+        return true;
+      }
+      if (['false', 'no', '0'].includes(normalized)) {
+        return false;
+      }
+    }
+    return null;
+  };
 
   const deriveFriendlyName = (userEmail: string, fullNameValue: unknown, fallbackName: string) => {
     const metadataName = typeof fullNameValue === 'string' ? fullNameValue.trim() : '';
@@ -65,11 +87,16 @@ const SignIn: React.FC = () => {
     const metadataWorkspaceKey =
       readMetadataString(user?.user_metadata?.school_workspace_key) ||
       readMetadataString(user?.app_metadata?.school_workspace_key);
+    const metadataHasHostel =
+      readMetadataBoolean(user?.user_metadata?.school_has_hostel) ??
+      readMetadataBoolean(user?.app_metadata?.school_has_hostel) ??
+      loadSchoolHasHostelPreference();
 
     return buildSchoolWorkspaceMetadata({
       schoolName: metadataSchoolName || storedSchoolName || fallbackSchoolName || 'School',
       email: normalizedEmail,
       preferredKey: metadataWorkspaceKey,
+      hasHostel: metadataHasHostel,
     });
   };
 
@@ -96,9 +123,13 @@ const SignIn: React.FC = () => {
     const currentSchoolName =
       readMetadataString(user?.user_metadata?.school_name) ||
       readMetadataString(user?.app_metadata?.school_name);
+    const currentHasHostel =
+      readMetadataBoolean(user?.user_metadata?.school_has_hostel) ??
+      readMetadataBoolean(user?.app_metadata?.school_has_hostel);
     const shouldUpdateUserMetadata =
       currentWorkspaceKey !== schoolWorkspaceMetadata.school_workspace_key ||
-      currentSchoolName !== schoolWorkspaceMetadata.school_name;
+      currentSchoolName !== schoolWorkspaceMetadata.school_name ||
+      currentHasHostel !== schoolWorkspaceMetadata.school_has_hostel;
 
     if (!shouldUpdateUserMetadata) {
       return user;
@@ -147,19 +178,25 @@ const SignIn: React.FC = () => {
     const metadataWorkspaceKey =
       readMetadataString(user?.user_metadata?.school_workspace_key) ||
       readMetadataString(user?.app_metadata?.school_workspace_key);
+    const metadataHasHostel =
+      readMetadataBoolean(user?.user_metadata?.school_has_hostel) ??
+      readMetadataBoolean(user?.app_metadata?.school_has_hostel);
 
     if (role === 'school') {
       const schoolNameFromStorage = (window.localStorage.getItem('edamaa_school_display_name') || '').trim();
       const schoolName = metadataSchoolName || metadataAppSchoolName || schoolNameFromStorage || fullName || 'School';
       const adminNameFromStorage = (window.localStorage.getItem('edamaa_school_admin_name') || '').trim();
       const adminName = fullName || adminNameFromStorage || 'School Admin';
+      const schoolHasHostel = metadataHasHostel ?? loadSchoolHasHostelPreference();
 
       window.localStorage.setItem('edamaa_school_display_name', schoolName);
       window.localStorage.setItem('edamaa_school_admin_name', adminName);
+      persistSchoolHasHostelPreference(schoolHasHostel);
       buildSchoolWorkspaceMetadata({
         schoolName,
         email: normalizeEmail(user?.email || ''),
         preferredKey: metadataWorkspaceKey,
+        hasHostel: schoolHasHostel,
       });
       return;
     }

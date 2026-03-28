@@ -18,6 +18,8 @@ import {
   FaThumbtack,
   FaUpload,
   FaUserShield,
+  FaCog,
+  FaPlayCircle,
 } from 'react-icons/fa';
 import { CheckBadgeIcon } from '@heroicons/react/24/solid';
 import type { IconType } from 'react-icons';
@@ -73,12 +75,31 @@ import {
 } from '../../../utils/authSession';
 import {
   buildSchoolWorkspaceMetadata,
+  loadSchoolHasHostelPreference,
   loadSchoolProfileImage,
   persistSchoolProfileImage,
 } from '../../../utils/schoolBranding';
 import { signOutEverywhere } from '../../../utils/signOut';
 
 const clampPercentage = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
+const readMetadataBoolean = (value: unknown) => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value === 1 ? true : value === 0 ? false : null;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', 'yes', '1'].includes(normalized)) {
+      return true;
+    }
+    if (['false', 'no', '0'].includes(normalized)) {
+      return false;
+    }
+  }
+  return null;
+};
 
 const formatPercentageValue = (value: number | null) =>
   value === null || Number.isNaN(value) ? '--' : `${clampPercentage(value)}%`;
@@ -2319,6 +2340,7 @@ const SchoolDashboard = () => {
   const [profileImage, setProfileImage] = useState<string>('');
   const [schoolDisplayName, setSchoolDisplayName] = useState<string>('School');
   const [adminDisplayName, setAdminDisplayName] = useState<string>('School Admin');
+  const [schoolHasHostel, setSchoolHasHostel] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isOpeningInternalAdmin, setIsOpeningInternalAdmin] = useState(false);
   const [subscriptionState, setSubscriptionState] = useState<TeachingSubscriptionState | null>(null);
@@ -2331,8 +2353,15 @@ const SchoolDashboard = () => {
   const canOpenInternalAdmin = Boolean(
     loadPersistedAccountRoleState()?.activeRoles?.includes('admin')
   );
+  const visibleSchoolModules = useMemo(
+    () =>
+      schoolManagementModules.filter(
+        (module) => module.id !== 'hostel-management' || schoolHasHostel
+      ),
+    [schoolHasHostel]
+  );
   const activeSchoolModule =
-    schoolManagementModules.find((module) => module.id === activeModuleId) || schoolManagementModules[0];
+    visibleSchoolModules.find((module) => module.id === activeModuleId) || visibleSchoolModules[0] || null;
 
   const loadSubscription = async () => {
     setIsSubscriptionLoading(true);
@@ -2360,10 +2389,14 @@ const SchoolDashboard = () => {
     const localDevSession = loadPersistedLocalDevAuthSession();
     const fallbackFromEmail = deriveNameFromEmail(localDevSession?.email || '');
     const effectiveSchoolName = localStorageSchoolName || fallbackFromEmail || 'School';
+    const resolvedSchoolHasHostel =
+      readMetadataBoolean(localDevSession?.userMetadata?.school_has_hostel) ??
+      readMetadataBoolean(localDevSession?.appMetadata?.school_has_hostel) ??
+      loadSchoolHasHostelPreference();
     setSchoolDisplayName(effectiveSchoolName);
     setAdminDisplayName(localStorageAdminName || fallbackFromEmail || 'School Admin');
     setProfileImage(loadSchoolProfileImage(localDevSession?.email || ''));
-
+    setSchoolHasHostel(resolvedSchoolHasHostel);
     const readMetadataString = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
     const isSchoolLocalDevSession =
       localDevSession?.defaultRole === 'school' ||
@@ -2377,6 +2410,7 @@ const SchoolDashboard = () => {
         preferredKey:
           readMetadataString(localDevSession.userMetadata?.school_workspace_key) ||
           readMetadataString(localDevSession.appMetadata?.school_workspace_key),
+        hasHostel: resolvedSchoolHasHostel,
       });
       const nextUserMetadata = {
         ...(localDevSession.userMetadata || {}),
@@ -2392,7 +2426,11 @@ const SchoolDashboard = () => {
         readMetadataString(localDevSession.appMetadata?.school_workspace_key) !==
           schoolWorkspaceMetadata.school_workspace_key ||
         readMetadataString(localDevSession.userMetadata?.school_name) !== schoolWorkspaceMetadata.school_name ||
-        readMetadataString(localDevSession.appMetadata?.school_name) !== schoolWorkspaceMetadata.school_name;
+        readMetadataString(localDevSession.appMetadata?.school_name) !== schoolWorkspaceMetadata.school_name ||
+        readMetadataBoolean(localDevSession.userMetadata?.school_has_hostel) !==
+          schoolWorkspaceMetadata.school_has_hostel ||
+        readMetadataBoolean(localDevSession.appMetadata?.school_has_hostel) !==
+          schoolWorkspaceMetadata.school_has_hostel;
 
       if (needsWorkspaceBackfill) {
         persistLocalDevAuthSession(localDevSession.email, localDevSession.defaultRole, {
@@ -2404,6 +2442,12 @@ const SchoolDashboard = () => {
       }
     }
   }, []);
+
+  useEffect(() => {
+    if (!visibleSchoolModules.some((module) => module.id === activeModuleId)) {
+      setActiveModuleId(visibleSchoolModules[0]?.id ?? '');
+    }
+  }, [activeModuleId, visibleSchoolModules]);
 
   useEffect(() => {
     let active = true;
@@ -2515,17 +2559,20 @@ const SchoolDashboard = () => {
     navigate('/school-assignments');
   };
 
-  const handleCertificatesClick = () => {
-    navigate('/school-certificates');
+  const handleLibraryClick = () => {
+    navigate('/school-library');
   };
 
-  const handleWaecPrepClick = () => {
-    if (!isSubscriptionActive) {
-      goToSubscription('Premium WAEC prep delivery is available on Edamaa Pro.');
-      return;
-    }
+  const handleOnlineCoursesClick = () => {
+    navigate('/school-online-courses');
+  };
 
-    setGateNotice('WAEC premium module is enabled for your school account.');
+  const handleHostelClick = () => {
+    navigate('/school-hostel');
+  };
+
+  const handleCertificatesClick = () => {
+    navigate('/school-certificates');
   };
 
   const handleResourceUploadClick = () => {
@@ -2612,6 +2659,16 @@ const SchoolDashboard = () => {
 
             <button
               type='button'
+              onClick={handleSettingsClick}
+              title='Settings'
+              aria-label='Settings'
+              className='inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-700 transition-colors hover:bg-gray-50'
+            >
+              <FaCog size={14} />
+            </button>
+
+            <button
+              type='button'
               onClick={() => void handleSignOut()}
               disabled={isSigningOut}
               className='inline-flex shrink-0 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
@@ -2683,13 +2740,6 @@ const SchoolDashboard = () => {
                     icon={FaUpload}
                     onClick={handleResourceUploadClick}
                   />
-                  <button
-                    type='button'
-                    onClick={handleSettingsClick}
-                    className='rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50'
-                  >
-                    Settings
-                  </button>
                   {canOpenInternalAdmin && (
                     <IconActionButton
                       label={isOpeningInternalAdmin ? 'Opening Internal Admin...' : 'Internal Admin'}
@@ -2717,13 +2767,6 @@ const SchoolDashboard = () => {
                     icon={FaUpload}
                     onClick={handleResourceUploadClick}
                   />
-                  <button
-                    type='button'
-                    onClick={handleSettingsClick}
-                    className='rounded-lg border border-[#3D08BA]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5'
-                  >
-                    Settings
-                  </button>
                   {canOpenInternalAdmin && (
                     <IconActionButton
                       label={isOpeningInternalAdmin ? 'Opening Internal Admin...' : 'Internal Admin'}
@@ -2766,7 +2809,7 @@ const SchoolDashboard = () => {
                 <p className='mb-3 text-xs font-semibold text-gray-700'>Core Modules</p>
 
                 <div className='grid grid-cols-1 gap-3 md:grid-cols-2'>
-                  {schoolManagementModules.map((module) => {
+                  {visibleSchoolModules.map((module) => {
                     const ModuleIcon = schoolModuleIcons[module.iconKey];
                     return (
                       <button
@@ -2827,6 +2870,8 @@ const SchoolDashboard = () => {
             <QuickActionButton icon={FaCalendarAlt} label="Schedule" onClick={handleScheduleClick} />
             <QuickActionButton icon={FaFileAlt} label="Exams" onClick={handleExamManagementClick} />
             <QuickActionButton icon={FaFileAlt} label="Homework" onClick={handleAssignmentsClick} />
+            <QuickActionButton icon={FaBook} label="Library" onClick={handleLibraryClick} />
+            <QuickActionButton icon={FaPlayCircle} label="Online Courses" onClick={handleOnlineCoursesClick} />
             <QuickActionButton icon={FaVideo} label="Live Classes" badge="8" onClick={handleLiveClassesClick} />
             <QuickActionButton icon={FaFileAlt} label="Study Materials" onClick={handleResourceUploadClick} />
           </div>
@@ -2859,17 +2904,26 @@ const SchoolDashboard = () => {
         <div className='bg-white rounded-2xl shadow-sm overflow-hidden mb-6'>
           <div className='flex items-center justify-between p-4 border-b border-gray-100'>
             <h3 className='text-sm font-semibold text-gray-900'>WAEC & International Module</h3>
-            <button className='text-xs text-[#3D08BA] font-medium hover:underline'>See more</button>
+            <button
+              type="button"
+              onClick={handleExamManagementClick}
+              className='text-xs text-[#3D08BA] font-medium hover:underline'
+            >
+              Open exams
+            </button>
           </div>
           <div className='p-4'>
             <div className='bg-linear-to-r from-[#3D08BA] to-[#5010E0] rounded-2xl p-5 text-white relative overflow-hidden'>
               <h4 className='text-base font-bold mb-2'>Past Questions & Mock Exams</h4>
-              <p className='text-xs mb-4 max-w-md'>Access official WAEC past questions, marking schemes and mock examinations to help students prepare effectively</p>
+              <p className='text-xs mb-4 max-w-md'>
+                Prepare mock exams and structured revision from the school exams workspace. This keeps exam prep inside the working MVP flow instead of a separate premium module.
+              </p>
               <button
-                onClick={handleWaecPrepClick}
+                type="button"
+                onClick={handleExamManagementClick}
                 className='bg-white text-[#3D08BA] px-5 py-2 rounded-lg font-semibold text-xs hover:bg-gray-100 transition-colors'
               >
-                Start Mock Test
+                Manage Exams
               </button>
             </div>
           </div>
@@ -2903,7 +2957,7 @@ const SchoolDashboard = () => {
             <div className='grid grid-cols-1 gap-4 p-4 md:grid-cols-[230px_minmax(0,1fr)]'>
               <div className='max-h-[360px] overflow-y-auto rounded-xl border border-gray-200 bg-gray-50 p-2'>
                 <div className='space-y-1.5'>
-                  {schoolManagementModules.map((module) => {
+                  {visibleSchoolModules.map((module) => {
                     const ModuleIcon = schoolModuleIcons[module.iconKey];
                     const isActive = activeSchoolModule.id === module.id;
                     return (
@@ -2963,6 +3017,33 @@ const SchoolDashboard = () => {
                     <button
                       type='button'
                       onClick={() => navigate('/school-assignments')}
+                      className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
+                    >
+                      Open
+                    </button>
+                  )}
+                  {activeSchoolModule.id === 'library-management' && (
+                    <button
+                      type='button'
+                      onClick={() => navigate('/school-library')}
+                      className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
+                    >
+                      Open
+                    </button>
+                  )}
+                  {activeSchoolModule.id === 'online-courses' && (
+                    <button
+                      type='button'
+                      onClick={handleOnlineCoursesClick}
+                      className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
+                    >
+                      Open
+                    </button>
+                  )}
+                  {activeSchoolModule.id === 'hostel-management' && (
+                    <button
+                      type='button'
+                      onClick={handleHostelClick}
                       className='rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-1.5 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10'
                     >
                       Open

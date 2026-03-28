@@ -1,6 +1,7 @@
 const SCHOOL_DISPLAY_NAME_STORAGE_KEY = 'edamaa_school_display_name';
 const SCHOOL_ADMIN_NAME_STORAGE_KEY = 'edamaa_school_admin_name';
 const SCHOOL_WORKSPACE_KEY_STORAGE_KEY = 'edamaa_school_workspace_key';
+const SCHOOL_HAS_HOSTEL_STORAGE_KEY = 'edamaa_school_has_hostel';
 const SCHOOL_PROFILE_IMAGE_CURRENT_STORAGE_KEY = 'edamaa_school_profile_image_current';
 const SCHOOL_PROFILE_IMAGE_BY_EMAIL_PREFIX = 'edamaa_school_profile_image_by_email::';
 const LOCAL_DEV_AUTH_SESSION_STORAGE_KEY = 'edamaa_local_dev_auth_v1';
@@ -89,6 +90,9 @@ export const loadSchoolBrandingNames = () => ({
   adminName: readLocalStorageValue(SCHOOL_ADMIN_NAME_STORAGE_KEY).trim(),
 });
 
+export const loadSchoolHasHostelPreference = () =>
+  readLocalStorageValue(SCHOOL_HAS_HOSTEL_STORAGE_KEY).trim().toLowerCase() === 'true';
+
 export const persistSchoolBrandingNames = (input: { schoolName?: string; adminName?: string }) => {
   const schoolName = String(input.schoolName || '').trim();
   const adminName = String(input.adminName || '').trim();
@@ -109,6 +113,11 @@ export const persistSchoolBrandingNames = (input: { schoolName?: string; adminNa
     schoolName,
     adminName,
   };
+};
+
+export const persistSchoolHasHostelPreference = (value: boolean) => {
+  writeLocalStorageValue(SCHOOL_HAS_HOSTEL_STORAGE_KEY, value ? 'true' : 'false');
+  return value;
 };
 
 export const loadSchoolWorkspaceKey = () =>
@@ -168,6 +177,7 @@ export const buildSchoolWorkspaceMetadata = (input?: {
   schoolName?: string;
   email?: string;
   preferredKey?: string;
+  hasHostel?: boolean;
 }) => {
   const schoolName = String(input?.schoolName || '').trim();
   const schoolWorkspaceKey = ensureStoredSchoolWorkspaceKey({
@@ -175,10 +185,15 @@ export const buildSchoolWorkspaceMetadata = (input?: {
     email: input?.email,
     preferredKey: input?.preferredKey,
   });
+  const schoolHasHostel =
+    typeof input?.hasHostel === 'boolean' ? input.hasHostel : loadSchoolHasHostelPreference();
+
+  persistSchoolHasHostelPreference(schoolHasHostel);
 
   return {
     school_name: schoolName || 'School',
     school_workspace_key: schoolWorkspaceKey,
+    school_has_hostel: schoolHasHostel,
   };
 };
 
@@ -225,5 +240,6 @@ export const schoolBrandingStorageKeys = {
   schoolDisplayName: SCHOOL_DISPLAY_NAME_STORAGE_KEY,
   schoolAdminName: SCHOOL_ADMIN_NAME_STORAGE_KEY,
   schoolWorkspaceKey: SCHOOL_WORKSPACE_KEY_STORAGE_KEY,
+  schoolHasHostel: SCHOOL_HAS_HOSTEL_STORAGE_KEY,
   schoolProfileImageCurrent: SCHOOL_PROFILE_IMAGE_CURRENT_STORAGE_KEY,
 };

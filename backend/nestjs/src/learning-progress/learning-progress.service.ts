@@ -55,6 +55,12 @@ export class LearningProgressService {
     return Array.from(this.records.values()).filter((record) => record.learnerKey === learnerKey);
   }
 
+  listByCourse(courseId: number): CourseProgressRecord[] {
+    return Array.from(this.records.values())
+      .filter((record) => record.courseId === courseId)
+      .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
+  }
+
   private composeKey(learnerKey: string, courseId: number) {
     return `${learnerKey}::${courseId}`;
   }

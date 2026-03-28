@@ -2976,11 +2976,29 @@ const SchoolExams = () => {
                             Edit one question at a time so the screen stays clean even when the exam grows.
                           </p>
                         </div>
-                        <div className="rounded-2xl border border-[#3D08BA]/10 bg-[#3D08BA]/5 px-3 py-2 text-right">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]/70">
-                            Total questions
-                          </p>
-                          <p className="mt-1 text-sm font-semibold text-slate-800">{questions.length}</p>
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => addQuestion('mcq')}
+                            className="inline-flex items-center gap-2 rounded-full border border-[#3D08BA]/15 bg-[#3D08BA]/5 px-3 py-2 text-[11px] font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/10"
+                          >
+                            <FaPlus size={10} />
+                            Add MCQ
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => addQuestion('short')}
+                            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50"
+                          >
+                            <FaPlus size={10} className="text-[#3D08BA]" />
+                            Add short answer
+                          </button>
+                          <div className="rounded-2xl border border-[#3D08BA]/10 bg-[#3D08BA]/5 px-3 py-2 text-right">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3D08BA]/70">
+                              Total questions
+                            </p>
+                            <p className="mt-1 text-sm font-semibold text-slate-800">{questions.length}</p>
+                          </div>
                         </div>
                       </div>
 
@@ -3008,6 +3026,11 @@ const SchoolExams = () => {
                           );
                         })}
                       </div>
+
+                      <p className="mb-4 text-[11px] text-slate-500">
+                        Use <span className="font-semibold text-slate-700">Add MCQ</span> or{' '}
+                        <span className="font-semibold text-slate-700">Add short answer</span> to create Question 2, 3, 4 and more. Select any question chip above to edit it.
+                      </p>
 
                       {activeDraftQuestion && (
                         <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-4 sm:p-5">

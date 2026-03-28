@@ -8,7 +8,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 API_HOST="${API_HOST:-127.0.0.1}"
 API_PORT="${API_PORT:-3001}"
-API_HEALTH_PATH="${API_HEALTH_PATH:-/auth/ready}"
+API_HEALTH_PATH="${API_HEALTH_PATH:-}"
 API_COMPAT_PATH="${API_COMPAT_PATH:-/school-finance/me/reminders/health?days=7}"
 API_COMPAT_POST_PATH="${API_COMPAT_POST_PATH:-/school-finance/me/reminders/exports/audit}"
 API_COMPAT_EXAMS_PATH="${API_COMPAT_EXAMS_PATH:-/school-exams/notifications}"
@@ -22,10 +22,21 @@ API_SKIP_PRISMA_CONNECT="${API_SKIP_PRISMA_CONNECT:-0}"
 LOG_DIR="${LOG_DIR:-/tmp}"
 API_UP_LOCK_DIR="${LOG_DIR}/edamaa-api-up.lock"
 API_UP_LOCK_OWNER_FILE="${API_UP_LOCK_DIR}/owner.pid"
+API_UP_LOCK_TIMEOUT_SECONDS="${API_UP_LOCK_TIMEOUT_SECONDS:-180}"
+API_UP_STALE_LOCK_SECONDS="${API_UP_STALE_LOCK_SECONDS:-240}"
+API_ALLOW_LITE_FALLBACK="${API_ALLOW_LITE_FALLBACK:-1}"
 LOCK_ACQUIRED=0
 NEST_PID_FILE="${LOG_DIR}/edamaa-nestjs.pid"
 
 cd "$ROOT_DIR"
+
+if [ -z "$API_HEALTH_PATH" ]; then
+  if [ "$API_SKIP_PRISMA_CONNECT" = "1" ]; then
+    API_HEALTH_PATH="/auth/health"
+  else
+    API_HEALTH_PATH="/auth/ready"
+  fi
+fi
 
 api_health_url="http://${API_HOST}:${API_PORT}${API_HEALTH_PATH}"
 api_health_code="$(curl -s -o /dev/null -w '%{http_code}' "$api_health_url" || true)"
@@ -131,7 +142,16 @@ trap cleanup_lock EXIT INT TERM
 
 acquire_lock_or_wait() {
   local attempts=0
-  local max_attempts=60
+  local max_attempts="$API_UP_LOCK_TIMEOUT_SECONDS"
+
+  get_lock_mtime_epoch() {
+    if [ ! -d "$API_UP_LOCK_DIR" ]; then
+      echo "0"
+      return
+    fi
+
+    stat -f '%m' "$API_UP_LOCK_DIR" 2>/dev/null || echo "0"
+  }
 
   recover_stale_lock_if_needed() {
     if [ ! -d "$API_UP_LOCK_DIR" ]; then
@@ -144,7 +164,30 @@ acquire_lock_or_wait() {
     fi
 
     if [ -n "$owner_pid" ] && kill -0 "$owner_pid" >/dev/null 2>&1; then
-      return
+      local lock_mtime
+      local now
+      local age_seconds
+      local nest_pid=""
+
+      lock_mtime="$(get_lock_mtime_epoch)"
+      now="$(date +%s)"
+      age_seconds=$((now - lock_mtime))
+
+      if [ -f "$NEST_PID_FILE" ]; then
+        nest_pid="$(cat "$NEST_PID_FILE" 2>/dev/null || true)"
+      fi
+
+      if [ "$age_seconds" -lt "$API_UP_STALE_LOCK_SECONDS" ]; then
+        return
+      fi
+
+      if [ -n "$nest_pid" ] && kill -0 "$nest_pid" >/dev/null 2>&1; then
+        return
+      fi
+
+      echo "Recovering stale API startup lock held by pid ${owner_pid} (age=${age_seconds}s)."
+      kill "$owner_pid" >/dev/null 2>&1 || true
+      sleep 1
     fi
 
     rm -f "$API_UP_LOCK_OWNER_FILE" >/dev/null 2>&1 || true
@@ -162,10 +205,19 @@ acquire_lock_or_wait() {
 
     # Another startup is in progress; if it already succeeded, exit cleanly.
     local code
+    local owner_pid=""
     code="$(curl -s -o /dev/null -w '%{http_code}' "$api_health_url" || true)"
     if [ "$code" = "200" ]; then
       echo "API became ready while waiting for startup lock."
       exit 0
+    fi
+
+    if [ -f "$API_UP_LOCK_OWNER_FILE" ]; then
+      owner_pid="$(cat "$API_UP_LOCK_OWNER_FILE" 2>/dev/null || true)"
+    fi
+
+    if [ -n "$owner_pid" ]; then
+      echo "Waiting for API startup lock (attempt $((attempts + 1))/${max_attempts}, owner_pid=${owner_pid}, health=${code})"
     fi
 
     attempts=$((attempts + 1))
@@ -178,12 +230,34 @@ acquire_lock_or_wait() {
 
 acquire_lock_or_wait
 
-RUN_SMOKE="${RUN_SMOKE:-0}" \
-DETACH=1 \
-START_DJANGO=0 \
-REQUIRE_DJANGO=0 \
-SKIP_PRISMA_CONNECT="${API_SKIP_PRISMA_CONNECT}" \
-bash scripts/local-up.sh
+start_local_backend() {
+  local skip_prisma="$1"
+  local startup_health_path="$2"
+
+  RUN_SMOKE="${RUN_SMOKE:-0}" \
+  DETACH=1 \
+  START_DJANGO=0 \
+  REQUIRE_DJANGO=0 \
+  SKIP_PRISMA_CONNECT="${skip_prisma}" \
+  NEST_STARTUP_HEALTH_PATH="${startup_health_path}" \
+  bash scripts/local-up.sh
+}
+
+effective_skip_prisma="$API_SKIP_PRISMA_CONNECT"
+effective_health_path="$API_HEALTH_PATH"
+
+if ! start_local_backend "$effective_skip_prisma" "$effective_health_path"; then
+  if [ "$effective_skip_prisma" != "1" ] && [ "$API_ALLOW_LITE_FALLBACK" = "1" ]; then
+    echo "Full API startup failed. Retrying in lite mode (SKIP_PRISMA_CONNECT=1)..."
+    effective_skip_prisma="1"
+    effective_health_path="/auth/health"
+    start_local_backend "$effective_skip_prisma" "$effective_health_path"
+  else
+    exit 1
+  fi
+fi
+
+api_health_url="http://${API_HOST}:${API_PORT}${effective_health_path}"
 
 api_health_code="$(curl -s -o /dev/null -w '%{http_code}' "$api_health_url" || true)"
 if [ "$api_health_code" != "200" ]; then

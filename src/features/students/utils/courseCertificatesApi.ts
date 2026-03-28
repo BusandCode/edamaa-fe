@@ -225,10 +225,21 @@ const resolveStudentScope = () => {
 };
 
 const resolveIssuerSnapshot = (course: RecordedCourse): CourseCertificateIssuerSnapshot => {
-  const override = COURSE_BRAND_OVERRIDES[course.id] || {
-    issuerType: 'tutor' as CourseCertificateIssuerType,
-    roleLabel: 'Course tutor',
-  };
+  const override = course.issuerType
+    ? {
+        issuerType: course.issuerType,
+        fallbackName: normalizeText(course.issuerName),
+        roleLabel:
+          course.issuerType === 'school'
+            ? 'School academic office'
+            : course.issuerType === 'edamaa'
+              ? 'Platform issuer'
+              : 'Course tutor',
+      }
+    : COURSE_BRAND_OVERRIDES[course.id] || {
+        issuerType: 'tutor' as CourseCertificateIssuerType,
+        roleLabel: 'Course tutor',
+      };
 
   if (override.issuerType === 'school') {
     const schoolBranding = loadSchoolBrandingNames();

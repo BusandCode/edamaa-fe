@@ -28,7 +28,7 @@ import {
   loadPersistedLocalDevAuthSession,
   loadPersistedSupabaseAccessToken,
 } from '../../../utils/authSession';
-import { RECORDED_COURSES } from '../data/recordedCourses';
+import { getRecordedCourses } from '../data/recordedCourses';
 import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
 
 type OnlineTutor = {
@@ -347,8 +347,10 @@ const StudentHome = () => {
     })[0];
   }, [outstandingSchoolInvoices]);
 
+  const allRecordedCourses = useMemo(() => getRecordedCourses(), []);
+
   const recommendedCourses = useMemo(() => {
-    const source = RECORDED_COURSES.filter((course) =>
+    const source = allRecordedCourses.filter((course) =>
       activeFilter === 'All' ? true : course.category.toLowerCase() === activeFilter.toLowerCase()
     );
 
@@ -365,7 +367,7 @@ const StudentHome = () => {
     });
 
     return searched.slice(0, 6);
-  }, [searchQuery, activeFilter]);
+  }, [searchQuery, activeFilter, allRecordedCourses]);
 
   const onHomeClick = () => navigate('/student-home');
   const onCoursesClick = () => navigate('/mycourses');

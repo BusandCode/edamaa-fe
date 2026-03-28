@@ -1,3 +1,11 @@
+import {
+  buildSchoolCourseDurationLabel,
+  countSchoolCourseLessons,
+  formatSchoolCourseAudience,
+  loadPublishedSchoolOnlineCoursesForStudent,
+  type SchoolOnlineCourseRecord,
+} from '../../courses/utils/schoolOnlineCoursesStore';
+
 export type CourseMate = {
   id: number;
   name: string;
@@ -37,6 +45,10 @@ export type RecordedCourse = {
   skills: string[];
   classmates: CourseMate[];
   modules: RecordedModule[];
+  source?: 'catalog' | 'school';
+  issuerType?: 'edamaa' | 'school' | 'tutor';
+  issuerName?: string;
+  audienceSummary?: string;
 };
 
 const SAMPLE_VIDEOS = {
@@ -749,5 +761,95 @@ export const RECORDED_COURSES: RecordedCourse[] = [
   },
 ];
 
+const LESSON_PROGRESS_STORAGE_KEY = 'edamaa_recorded_lesson_progress_v1';
+const RESUME_LESSON_STORAGE_KEY = 'edamaa_recorded_resume_lesson_v1';
+
+const readStoredObject = <T,>(key: string): T => {
+  if (typeof window === 'undefined') {
+    return {} as T;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) {
+      return {} as T;
+    }
+
+    return JSON.parse(raw) as T;
+  } catch {
+    return {} as T;
+  }
+};
+
+const formatPublishedLabel = (value: string | null) => {
+  if (!value) {
+    return 'Newly published';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return 'Newly published';
+  }
+
+  return `Published ${parsed.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+  })}`;
+};
+
+const mapSchoolOnlineCourseToRecordedCourse = (
+  course: SchoolOnlineCourseRecord,
+  completedLessonMap: Record<number, string[]>,
+  resumeLessonMap: Record<number, string>
+): RecordedCourse => {
+  const allLessons = course.modules.flatMap((module) => module.lessons);
+  const totalLessons = countSchoolCourseLessons(course);
+  const completedLessonsList = Array.isArray(completedLessonMap[course.id]) ? completedLessonMap[course.id] : [];
+  const uniqueCompleted = Array.from(new Set(completedLessonsList.filter(Boolean)));
+  const completedLessons = Math.min(uniqueCompleted.length, totalLessons);
+  const progress = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+  const nextLesson =
+    allLessons.find((lesson) => !uniqueCompleted.includes(lesson.id))?.title ||
+    allLessons[0]?.title ||
+    'Course introduction';
+  const resumeLessonId = resumeLessonMap[course.id];
+  const resumeLessonTitle = allLessons.find((lesson) => lesson.id === resumeLessonId)?.title || '';
+
+  return {
+    id: course.id,
+    title: course.title,
+    instructor: course.instructor,
+    category: course.category,
+    thumbnail: course.thumbnailUrl,
+    rating: 5,
+    totalStudents: 0,
+    progress,
+    totalLessons,
+    completedLessons,
+    duration: buildSchoolCourseDurationLabel(course),
+    nextLesson,
+    lastAccessed: resumeLessonTitle ? `Resume: ${resumeLessonTitle}` : formatPublishedLabel(course.publishedAt),
+    level: course.level,
+    description: course.description,
+    skills: course.skills,
+    classmates: [],
+    modules: course.modules,
+    source: 'school',
+    issuerType: 'school',
+    issuerName: course.issuerName,
+    audienceSummary: formatSchoolCourseAudience(course),
+  };
+};
+
+export const getRecordedCourses = () => {
+  const completedLessonMap = readStoredObject<Record<number, string[]>>(LESSON_PROGRESS_STORAGE_KEY);
+  const resumeLessonMap = readStoredObject<Record<number, string>>(RESUME_LESSON_STORAGE_KEY);
+  const schoolCourses = loadPublishedSchoolOnlineCoursesForStudent().map((course) =>
+    mapSchoolOnlineCourseToRecordedCourse(course, completedLessonMap, resumeLessonMap)
+  );
+
+  return [...RECORDED_COURSES, ...schoolCourses];
+};
+
 export const getRecordedCourseById = (courseId: number) =>
-  RECORDED_COURSES.find((course) => course.id === courseId);
+  getRecordedCourses().find((course) => course.id === courseId);

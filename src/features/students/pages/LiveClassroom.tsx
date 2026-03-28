@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -217,6 +217,8 @@ type PendingStageInvite = {
   status: 'pending' | 'accepted' | 'declined';
   sentAt: string;
 };
+
+const CloudflareRealtimeKitOverlay = lazy(() => import('../components/CloudflareRealtimeKitOverlay'));
 
 type IncomingStageInvite = {
   inviteId: string;
@@ -924,6 +926,7 @@ const LiveClassroom = () => {
   const [cloudflareRealtimeKitSession, setCloudflareRealtimeKitSession] =
     useState<CloudflareRealtimeKitSession | null>(null);
   const [cloudflareRealtimeKitStatusMessage, setCloudflareRealtimeKitStatusMessage] = useState('');
+  const [isCloudflareRealtimeKitOverlayOpen, setIsCloudflareRealtimeKitOverlayOpen] = useState(false);
 
   const pushNotice = useCallback((text: string, type: NoticeTone = 'info') => {
     setNoticeState({ type, text });
@@ -1943,6 +1946,17 @@ const LiveClassroom = () => {
       cancelled = true;
     };
   }, [cloudflareRealtimeKitActor, isTeacher, liveClass.id, liveClass.name, pushNotice]);
+
+  useEffect(() => {
+    if (cloudflareRealtimeKitBootstrapState === 'ready' && cloudflareRealtimeKitSession) {
+      setIsCloudflareRealtimeKitOverlayOpen(true);
+      return;
+    }
+
+    if (cloudflareRealtimeKitBootstrapState !== 'ready') {
+      setIsCloudflareRealtimeKitOverlayOpen(false);
+    }
+  }, [cloudflareRealtimeKitBootstrapState, cloudflareRealtimeKitSession]);
 
   useEffect(() => {
     if (stageRemoteVideoRef.current) {
@@ -3997,6 +4011,18 @@ const LiveClassroom = () => {
                 {cloudflareRealtimeKitStatusMessage || 'Cloudflare room'}
               </span>
             )}
+            {CLOUDFLARE_REALTIMEKIT_ENABLED &&
+              cloudflareRealtimeKitBootstrapState === 'ready' &&
+              cloudflareRealtimeKitSession &&
+              !isCloudflareRealtimeKitOverlayOpen && (
+                <button
+                  type="button"
+                  onClick={() => setIsCloudflareRealtimeKitOverlayOpen(true)}
+                  className="hidden rounded-full border border-cyan-300/35 bg-cyan-500/12 px-3 py-1 text-[11px] font-semibold text-cyan-100 transition hover:bg-cyan-500/20 sm:inline-flex"
+                >
+                  Open Cloudflare room
+                </button>
+              )}
             <span className="hidden rounded-full border border-white/20 bg-white/5 px-2.5 py-1 text-[11px] sm:inline-flex">
               {viewerCount} watching
             </span>
@@ -4075,6 +4101,32 @@ const LiveClassroom = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {isCloudflareRealtimeKitOverlayOpen && cloudflareRealtimeKitSession && (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-[82] flex items-center justify-center bg-slate-950/82 px-4 text-white backdrop-blur-sm">
+              <div className="w-full max-w-md rounded-[28px] border border-white/10 bg-[#10182e] p-6 text-center shadow-[0_24px_70px_rgba(0,0,0,0.35)]">
+                <p className="text-sm font-semibold text-white">Loading Cloudflare classroom...</p>
+                <p className="mt-2 text-sm text-white/70">
+                  Preparing the meeting client for this live class.
+                </p>
+              </div>
+            </div>
+          }
+        >
+          <CloudflareRealtimeKitOverlay
+            session={cloudflareRealtimeKitSession}
+            onClose={() => setIsCloudflareRealtimeKitOverlayOpen(false)}
+            onError={(message) => {
+              setIsCloudflareRealtimeKitOverlayOpen(false);
+              setCloudflareRealtimeKitBootstrapState('error');
+              setCloudflareRealtimeKitStatusMessage('Cloudflare room failed');
+              pushNotice(`${message}. Continuing with the standard live classroom flow.`, 'warning');
+            }}
+          />
+        </Suspense>
       )}
 
       {isTeacher && isLinkedAssignmentComposerOpen && (

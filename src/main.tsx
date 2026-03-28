@@ -21,6 +21,9 @@ const SchoolSchedule = lazy(() => import('./features/schools/pages/SchoolSchedul
 const SchoolTeacherClassAccess = lazy(() => import('./features/schools/pages/SchoolTeacherClassAccess.tsx'))
 const SchoolExams = lazy(() => import('./features/schools/pages/SchoolExams.tsx'))
 const SchoolAssignments = lazy(() => import('./features/schools/pages/SchoolAssignments.tsx'))
+const SchoolLibrary = lazy(() => import('./features/schools/pages/SchoolLibrary.tsx'))
+const SchoolHostel = lazy(() => import('./features/schools/pages/SchoolHostel.tsx'))
+const SchoolOnlineCourses = lazy(() => import('./features/schools/pages/SchoolOnlineCourses.tsx'))
 const SchoolResources = lazy(() => import('./features/schools/pages/SchoolResources.tsx'))
 const SchoolCertificates = lazy(() => import('./features/schools/pages/SchoolCertificates.tsx'))
 const TutorDashboard = lazy(() => import('./features/tutors/pages/TutorDashboard.tsx'))
@@ -149,6 +152,30 @@ createRoot(document.getElementById('root')!).render(
           element={
             <RoleProtectedRoute allowedRoles={['school', 'admin']}>
               <SchoolAssignments />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="/school-library"
+          element={
+            <RoleProtectedRoute allowedRoles={['school', 'admin']}>
+              <SchoolLibrary />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="/school-online-courses"
+          element={
+            <RoleProtectedRoute allowedRoles={['school', 'admin']}>
+              <SchoolOnlineCourses />
+            </RoleProtectedRoute>
+          }
+        />
+        <Route
+          path="/school-hostel"
+          element={
+            <RoleProtectedRoute allowedRoles={['school', 'admin']}>
+              <SchoolHostel />
             </RoleProtectedRoute>
           }
         />

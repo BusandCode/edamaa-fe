@@ -10,7 +10,7 @@ VITE_STRICT_PORT="${VITE_STRICT_PORT:-1}"
 ENSURE_API="${ENSURE_API:-1}"
 API_HOST="${API_HOST:-127.0.0.1}"
 API_PORT="${API_PORT:-3001}"
-API_HEALTH_PATH="${API_HEALTH_PATH:-/auth/ready}"
+API_HEALTH_PATH="${API_HEALTH_PATH:-/auth/health}"
 API_WATCHDOG="${API_WATCHDOG:-1}"
 LOG_DIR="${LOG_DIR:-/tmp}"
 WEB_LOG="${LOG_DIR}/edamaa-web.log"
@@ -54,7 +54,7 @@ if [ "$ENSURE_API" = "1" ]; then
   API_HEALTH_URL="http://${API_HOST}:${API_PORT}${API_HEALTH_PATH}"
   if ! wait_for_http_200 "backend API" "$API_HEALTH_URL" 2 1; then
     echo "Backend API is not ready on ${API_HEALTH_URL}. Starting NestJS now..."
-    bash "$ROOT_DIR/scripts/api-up.sh"
+    API_SKIP_PRISMA_CONNECT="${API_SKIP_PRISMA_CONNECT:-0}" bash "$ROOT_DIR/scripts/api-up.sh"
     if ! wait_for_http_200 "backend API" "$API_HEALTH_URL" 60 1; then
       echo "Backend API did not become ready. See /tmp/edamaa-nestjs.log" >&2
       exit 1
