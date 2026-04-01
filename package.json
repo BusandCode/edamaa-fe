@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "bash scripts/dev.sh",
+    "dev:up": "npm run local:up",
+    "dev:up:lite": "npm run local:up:lite",
+    "dev:down": "npm run local:down",
     "dev:ui": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "api:up": "bash scripts/api-up.sh",
     "api:up:lite": "API_SKIP_PRISMA_CONNECT=1 bash scripts/api-up.sh",
