@@ -472,6 +472,8 @@ const SchoolOnlineCourses = () => {
           averageCompletion: 0,
           lastActivity: 'No activity yet',
         };
+  const activeCourseLessonCount = activeCourse ? countSchoolCourseLessons(activeCourse) : 0;
+  const activeCourseSkills = activeCourse?.skills ?? [];
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(61,8,186,0.10),transparent_26%),radial-gradient(circle_at_top_right,rgba(14,165,233,0.10),transparent_26%),linear-gradient(180deg,#f8fafc_0%,#eef4ff_44%,#f8fafc_100%)] pb-24">
@@ -502,6 +504,18 @@ const SchoolOnlineCourses = () => {
                   Publish structured lessons, shape the course journey, and keep learner participation visible from one
                   polished school workspace.
                 </p>
+
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <span className="rounded-full border border-white/80 bg-white/85 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                    {summary.courses} courses in studio
+                  </span>
+                  <span className="rounded-full border border-white/80 bg-white/85 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                    {summary.lessons} lessons prepared
+                  </span>
+                  <span className="rounded-full border border-white/80 bg-white/85 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                    {summary.learners} active learners tracked
+                  </span>
+                </div>
 
                 <div className="mt-5 flex flex-wrap gap-3">
                   <button
@@ -577,6 +591,18 @@ const SchoolOnlineCourses = () => {
                     <div className="flex items-center justify-between">
                       <span>Draft workload</span>
                       <span className="font-semibold text-slate-900">{summary.courses - summary.published}</span>
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      <span>Publish readiness</span>
+                      <span>{summary.courses === 0 ? '0%' : formatPercentage((summary.published / summary.courses) * 100)}</span>
+                    </div>
+                    <div className="mt-2 h-2 rounded-full bg-white">
+                      <div
+                        className="h-2 rounded-full bg-gradient-to-r from-[#3D08BA] to-sky-500"
+                        style={{ width: `${summary.courses === 0 ? 0 : Math.max(8, Math.round((summary.published / summary.courses) * 100))}%` }}
+                      />
                     </div>
                   </div>
                 </div>
@@ -664,6 +690,15 @@ const SchoolOnlineCourses = () => {
                         </button>
                       ))}
                     </div>
+
+                    <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-4 text-xs text-slate-500">
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                        {filteredCourses.length} visible in current view
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                        {summary.learners} learners tracked across the catalog
+                      </span>
+                    </div>
                   </div>
 
                   <div className="mt-6 grid gap-4">
@@ -722,6 +757,14 @@ const SchoolOnlineCourses = () => {
                                   <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                                     {course.level}
                                   </span>
+                                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                                    Updated {formatDateTime(course.updatedAt)}
+                                  </span>
+                                  {activeCourse?.id === course.id ? (
+                                    <span className="rounded-full border border-[#3D08BA]/15 bg-[#3D08BA]/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">
+                                      Selected
+                                    </span>
+                                  ) : null}
                                 </div>
 
                                 <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -771,6 +814,14 @@ const SchoolOnlineCourses = () => {
                               </div>
 
                               <div className="grid gap-3 rounded-[26px] border border-slate-200 bg-white p-4 shadow-[0_16px_36px_-34px_rgba(15,23,42,0.4)]">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                                    Performance
+                                  </p>
+                                  <span className="rounded-full bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-500">
+                                    {lessonsCount} lessons
+                                  </span>
+                                </div>
                                 <div className="grid grid-cols-2 gap-3 text-sm">
                                   <div className="rounded-2xl bg-slate-50 px-3 py-3 text-center">
                                     <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Learners</p>
@@ -856,11 +907,31 @@ const SchoolOnlineCourses = () => {
                     ) : null}
                   </div>
 
+                  <div className="mt-5 flex flex-wrap gap-2 border-b border-slate-200 pb-5">
+                    {['Cover', 'Course details', 'Audience', 'Modules', 'Publish'].map((step, index) => (
+                      <span
+                        key={step}
+                        className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500"
+                      >
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] text-[#3D08BA] shadow-sm">
+                          {index + 1}
+                        </span>
+                        {step}
+                      </span>
+                    ))}
+                  </div>
+
                   <div className="mt-6 grid gap-5">
                     <div className="rounded-[28px] border border-slate-200 bg-slate-50/80 p-4">
                       <div className="flex items-start justify-between gap-4">
                         <div>
-                          <p className="text-sm font-semibold text-slate-900">Course cover</p>
+                          <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA] shadow-sm">
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#3D08BA]/8 text-[10px]">
+                              1
+                            </span>
+                            Cover
+                          </div>
+                          <p className="mt-3 text-sm font-semibold text-slate-900">Course cover</p>
                           <p className="mt-1 text-xs leading-5 text-slate-500">
                             Add a clean visual preview so the catalog feels curated instead of text-only.
                           </p>
@@ -901,7 +972,13 @@ const SchoolOnlineCourses = () => {
                     <div className="rounded-[28px] border border-slate-200 bg-white p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="text-sm font-semibold text-slate-900">Core details</p>
+                          <div className="inline-flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] shadow-sm">
+                              2
+                            </span>
+                            Course details
+                          </div>
+                          <p className="mt-3 text-sm font-semibold text-slate-900">Core details</p>
                           <p className="mt-1 text-xs leading-5 text-slate-500">
                             Keep the headline, positioning, and instructor details clear before building the lessons.
                           </p>
@@ -982,11 +1059,19 @@ const SchoolOnlineCourses = () => {
                     </div>
 
                     <div className="rounded-[28px] border border-slate-200 bg-slate-50/80 p-4">
-                      <p className="text-sm font-semibold text-slate-900">Audience targeting</p>
-                      <p className="mt-1 text-xs leading-5 text-slate-500">
-                        Leave these fields empty when the course should be visible to every learner in the school
-                        workspace.
-                      </p>
+                      <div>
+                        <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA] shadow-sm">
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#3D08BA]/8 text-[10px]">
+                            3
+                          </span>
+                          Audience
+                        </div>
+                        <p className="mt-3 text-sm font-semibold text-slate-900">Audience targeting</p>
+                        <p className="mt-1 text-xs leading-5 text-slate-500">
+                          Leave these fields empty when the course should be visible to every learner in the school
+                          workspace.
+                        </p>
+                      </div>
                       <div className="mt-4 grid gap-4">
                         <label className="grid min-w-0 gap-2">
                           <span className="text-sm font-medium text-slate-600">School level</span>
@@ -1036,7 +1121,13 @@ const SchoolOnlineCourses = () => {
                     <div className="rounded-[28px] border border-slate-200 bg-white p-4">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                          <p className="text-sm font-semibold text-slate-900">Modules and lessons</p>
+                          <div className="inline-flex items-center gap-2 rounded-full bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] shadow-sm">
+                              4
+                            </span>
+                            Learning flow
+                          </div>
+                          <p className="mt-3 text-sm font-semibold text-slate-900">Modules and lessons</p>
                           <p className="mt-1 text-xs leading-5 text-slate-500">
                             Build the learning flow the same way students will consume it.
                           </p>
@@ -1217,7 +1308,13 @@ const SchoolOnlineCourses = () => {
                     <div className="rounded-[28px] border border-slate-200 bg-slate-50/80 p-4">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
-                          <p className="text-sm font-semibold text-slate-900">Publication state</p>
+                          <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA] shadow-sm">
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#3D08BA]/8 text-[10px]">
+                              5
+                            </span>
+                            Publish
+                          </div>
+                          <p className="mt-3 text-sm font-semibold text-slate-900">Publication state</p>
                           <p className="mt-1 text-xs leading-5 text-slate-500">
                             Draft keeps the course private. Publish makes it available to matching students.
                           </p>
@@ -1308,22 +1405,72 @@ const SchoolOnlineCourses = () => {
                       <p className="mt-3 text-xs text-slate-500">Last activity: {activeCourseAnalytics.lastActivity}</p>
                     </div>
 
-                    <div className="mt-5 grid gap-3 text-sm text-slate-600">
-                      <p>
-                        <span className="font-semibold text-slate-800">Instructor:</span> {activeCourse.instructor}
-                      </p>
-                      <p>
-                        <span className="font-semibold text-slate-800">Audience:</span>{' '}
-                        {formatSchoolCourseAudience(activeCourse)}
-                      </p>
-                      <p>
-                        <span className="font-semibold text-slate-800">Runtime:</span>{' '}
-                        {buildSchoolCourseDurationLabel(activeCourse)}
-                      </p>
-                      <p>
-                        <span className="font-semibold text-slate-800">Last updated:</span>{' '}
-                        {formatDateTime(activeCourse.updatedAt)}
-                      </p>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Structure</p>
+                        <p className="mt-2 text-lg font-semibold text-slate-900">
+                          {activeCourse.modules.length} modules / {activeCourseLessonCount} lessons
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Visibility</p>
+                        <p className="mt-2 text-lg font-semibold capitalize text-slate-900">{activeCourse.status}</p>
+                        <p className="mt-1 text-xs text-slate-500">{formatSchoolCourseAudience(activeCourse)}</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 rounded-[24px] border border-slate-200 bg-white p-4">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Course brief</p>
+                      <div className="mt-3 grid gap-3 text-sm text-slate-600">
+                        <p>
+                          <span className="font-semibold text-slate-800">Instructor:</span> {activeCourse.instructor}
+                        </p>
+                        <p>
+                          <span className="font-semibold text-slate-800">Runtime:</span>{' '}
+                          {buildSchoolCourseDurationLabel(activeCourse)}
+                        </p>
+                        <p>
+                          <span className="font-semibold text-slate-800">Last updated:</span>{' '}
+                          {formatDateTime(activeCourse.updatedAt)}
+                        </p>
+                      </div>
+                      {activeCourseSkills.length > 0 ? (
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {activeCourseSkills.map((skill) => (
+                            <span
+                              key={skill}
+                              className="rounded-full border border-[#3D08BA]/15 bg-[#3D08BA]/5 px-3 py-1 text-xs text-[#3D08BA]"
+                            >
+                              {skill}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-5 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => handleEdit(activeCourse)}
+                        className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                      >
+                        <PencilSquareIcon className="h-4 w-4" />
+                        Edit course
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleStatus(activeCourse)}
+                        className="rounded-full border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-4 py-2 text-sm font-semibold text-[#3D08BA] transition hover:bg-[#3D08BA]/10"
+                      >
+                        {activeCourse.status === 'published' ? 'Move to draft' : 'Publish now'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/mycourses')}
+                        className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                      >
+                        Open learner view
+                      </button>
                     </div>
                   </div>
                 ) : null}
