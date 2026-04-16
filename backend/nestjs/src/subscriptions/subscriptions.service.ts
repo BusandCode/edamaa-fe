@@ -22,6 +22,7 @@ type AuthUser = {
 };
 
 type TeachingActorApi = 'tutor' | 'school';
+type BillingIntervalApi = 'weekly' | 'monthly' | 'quarterly' | 'yearly';
 type TeachingSubscriptionStatusApi =
   | 'inactive'
   | 'active'
@@ -31,6 +32,7 @@ type TeachingSubscriptionStatusApi =
 
 type CreateCheckoutInput = {
   actor?: string;
+  interval?: string;
   successUrl?: string;
   cancelUrl?: string;
 };
@@ -46,6 +48,8 @@ type TeachingSubscriptionStatusResponse = {
   isActive: boolean;
   isEdamaa3dVerified: boolean;
   planCode: string;
+  billingInterval: BillingIntervalApi;
+  availableBillingIntervals: BillingIntervalApi[];
   currentPeriodEnd: string | null;
   currentPeriodEndLabel: string | null;
   features: {
@@ -129,18 +133,19 @@ export class SubscriptionsService {
       const stripe = this.requireStripeClient();
       const actor = this.normalizeActor(input.actor);
       const role = ACTOR_TO_ROLE[actor];
+      const interval = this.normalizeBillingInterval(input.interval);
       const email = this.requireEmail(authUser);
       const displayName = this.normalizeDisplayName(authUser.name, email);
       const user = await this.resolveOrCreateUser(email, displayName);
       const existing = await this.getOrCreateSubscriptionRow(user.id, role);
-      const priceId = this.resolveStripePriceId(actor);
+      const priceId = this.resolveStripePriceId(actor, interval);
       const appBaseUrl = this.resolveAppBaseUrl();
       const successUrl =
         this.normalizeHttpUrl(input.successUrl) ||
-        `${appBaseUrl}/subscription?actor=${actor}&checkout=success&session_id={CHECKOUT_SESSION_ID}`;
+        `${appBaseUrl}/subscription?actor=${actor}&interval=${interval}&checkout=success&session_id={CHECKOUT_SESSION_ID}`;
       const cancelUrl =
         this.normalizeHttpUrl(input.cancelUrl) ||
-        `${appBaseUrl}/subscription?actor=${actor}&checkout=cancel`;
+        `${appBaseUrl}/subscription?actor=${actor}&interval=${interval}&checkout=cancel`;
 
       const customerId =
         existing.stripeCustomerId ||
@@ -160,12 +165,14 @@ export class SubscriptionsService {
           userId: String(user.id),
           userEmail: email,
           actor,
+          interval,
         },
         subscription_data: {
           metadata: {
             userId: String(user.id),
             userEmail: email,
             actor,
+            interval,
           },
         },
         line_items: [
@@ -179,7 +186,7 @@ export class SubscriptionsService {
       await this.prisma.teachingSubscription.update({
         where: { id: existing.id },
         data: {
-          planCode: this.resolvePlanCode(actor),
+          planCode: this.resolvePlanCode(actor, interval),
           priceId,
           stripeCustomerId: customerId,
           checkoutSessionId: checkoutSession.id,
@@ -414,7 +421,7 @@ export class SubscriptionsService {
         userId,
         role,
         status: SubscriptionStatus.INACTIVE,
-        planCode: this.resolvePlanCode(ROLE_TO_ACTOR[role]),
+        planCode: this.resolvePlanCode(ROLE_TO_ACTOR[role], 'monthly'),
       },
     });
   }
@@ -597,17 +604,21 @@ export class SubscriptionsService {
     const status = STATUS_FROM_PRISMA[row.status];
     const isActive = row.status === SubscriptionStatus.ACTIVE || row.status === SubscriptionStatus.TRIALING;
     const isEdamaa3dVerified = Boolean(row.verified3dAt && isActive);
+    const actor = ROLE_TO_ACTOR[row.role];
+    const billingInterval = this.extractBillingInterval(row.planCode);
     const currentPeriodEnd = row.currentPeriodEnd ? row.currentPeriodEnd.toISOString() : null;
     const currentPeriodEndLabel = row.currentPeriodEnd
       ? this.formatDateForUi(row.currentPeriodEnd)
       : null;
 
     return {
-      actor: ROLE_TO_ACTOR[row.role],
+      actor,
       status,
       isActive,
       isEdamaa3dVerified,
       planCode: row.planCode,
+      billingInterval,
+      availableBillingIntervals: this.resolveAvailableBillingIntervals(actor),
       currentPeriodEnd,
       currentPeriodEndLabel,
       features: {
@@ -628,26 +639,32 @@ export class SubscriptionsService {
     return this.stripe;
   }
 
-  private resolveStripePriceId(actor: TeachingActorApi) {
-    const rolePriceId =
-      actor === 'tutor'
-        ? process.env.STRIPE_TUTOR_SUBSCRIPTION_PRICE_ID
-        : process.env.STRIPE_SCHOOL_SUBSCRIPTION_PRICE_ID;
+  private resolveStripePriceId(actor: TeachingActorApi, interval: BillingIntervalApi) {
+    const actorPrefix = actor === 'tutor' ? 'TUTOR' : 'SCHOOL';
+    const intervalSegment = this.intervalEnvSegment(interval);
     const priceId = String(
-      rolePriceId || process.env.STRIPE_TEACHING_SUBSCRIPTION_PRICE_ID || ''
+      process.env[`STRIPE_${actorPrefix}_SUBSCRIPTION_${intervalSegment}_PRICE_ID`] ||
+        process.env[`STRIPE_TEACHING_SUBSCRIPTION_${intervalSegment}_PRICE_ID`] ||
+        (interval === 'monthly'
+          ? process.env[`STRIPE_${actorPrefix}_SUBSCRIPTION_PRICE_ID`] ||
+            process.env.STRIPE_TEACHING_SUBSCRIPTION_PRICE_ID
+          : '') ||
+        ''
     ).trim();
 
     if (!priceId) {
       throw new BadRequestException(
-        'Subscription pricing is not configured yet. Add STRIPE_TUTOR_SUBSCRIPTION_PRICE_ID or STRIPE_SCHOOL_SUBSCRIPTION_PRICE_ID.'
+        `Subscription pricing is not configured for the ${interval} plan. Add STRIPE_${actorPrefix}_SUBSCRIPTION_${intervalSegment}_PRICE_ID.`
       );
     }
 
     return priceId;
   }
 
-  private resolvePlanCode(actor: TeachingActorApi) {
-    return actor === 'tutor' ? 'edamaa-tutor-pro' : 'edamaa-school-pro';
+  private resolvePlanCode(actor: TeachingActorApi, interval: BillingIntervalApi) {
+    return actor === 'tutor'
+      ? `edamaa-tutor-pro-${interval}`
+      : `edamaa-school-pro-${interval}`;
   }
 
   private mapStripeStatus(status: Stripe.Subscription.Status): SubscriptionStatus {
@@ -692,6 +709,15 @@ export class SubscriptionsService {
     throw new BadRequestException('Actor must be "tutor" or "school".');
   }
 
+  private normalizeBillingInterval(value: string | undefined): BillingIntervalApi {
+    const normalized = String(value || 'monthly').trim().toLowerCase();
+    if (normalized === 'weekly' || normalized === 'monthly' || normalized === 'quarterly' || normalized === 'yearly') {
+      return normalized;
+    }
+
+    throw new BadRequestException('Billing interval must be weekly, monthly, quarterly, or yearly.');
+  }
+
   private normalizeActorFromMetadata(value: unknown): TeachingActorApi | null {
     const normalized = String(value || '').trim().toLowerCase();
     if (normalized === 'school') {
@@ -703,6 +729,35 @@ export class SubscriptionsService {
     }
 
     return null;
+  }
+
+  private intervalEnvSegment(interval: BillingIntervalApi) {
+    return interval === 'quarterly' ? 'QUARTERLY' : interval.toUpperCase();
+  }
+
+  private resolveAvailableBillingIntervals(actor: TeachingActorApi): BillingIntervalApi[] {
+    const intervals: BillingIntervalApi[] = ['weekly', 'monthly', 'quarterly', 'yearly'];
+    return intervals.filter((interval) => {
+      try {
+        return Boolean(this.resolveStripePriceId(actor, interval));
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  private extractBillingInterval(planCode: string | null | undefined): BillingIntervalApi {
+    const normalized = String(planCode || '').trim().toLowerCase();
+    if (normalized.endsWith('-weekly')) {
+      return 'weekly';
+    }
+    if (normalized.endsWith('-quarterly')) {
+      return 'quarterly';
+    }
+    if (normalized.endsWith('-yearly')) {
+      return 'yearly';
+    }
+    return 'monthly';
   }
 
   private requireEmail(authUser: AuthUser) {
@@ -806,7 +861,9 @@ export class SubscriptionsService {
       status: 'inactive',
       isActive: false,
       isEdamaa3dVerified: false,
-      planCode: this.resolvePlanCode(actor),
+      planCode: this.resolvePlanCode(actor, 'monthly'),
+      billingInterval: 'monthly',
+      availableBillingIntervals: this.resolveAvailableBillingIntervals(actor),
       currentPeriodEnd: null,
       currentPeriodEndLabel: null,
       features: {

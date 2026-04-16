@@ -25,11 +25,13 @@ NEST_ENV_FILE="${ROOT_DIR}/backend/nestjs/.env"
 
 # Redis/queue defaults stay in lightweight mode for local frontend work.
 # Prisma connect defaults to enabled so finance/payments features work.
+# Auto db push is disabled by default because the local database is shared with
+# Django tables and `prisma db push` can become destructive.
 SKIP_PRISMA_CONNECT="${SKIP_PRISMA_CONNECT:-0}"
 SKIP_REDIS_CONNECT="${SKIP_REDIS_CONNECT:-1}"
 SKIP_QUEUE_CONNECT="${SKIP_QUEUE_CONNECT:-1}"
 DISABLE_QUEUES_UI="${DISABLE_QUEUES_UI:-1}"
-PRISMA_DB_PUSH="${PRISMA_DB_PUSH:-1}"
+PRISMA_DB_PUSH="${PRISMA_DB_PUSH:-0}"
 
 RUN_SMOKE="${RUN_SMOKE:-1}"
 DETACH="${DETACH:-0}"
@@ -47,6 +49,7 @@ NEST_PRISMA_PUSH_LOG="${LOG_DIR}/edamaa-prisma-push.log"
 DJANGO_MIGRATE_LOG="${LOG_DIR}/edamaa-django-migrate.log"
 DJANGO_PID_FILE="${LOG_DIR}/edamaa-django.pid"
 NEST_PID_FILE="${LOG_DIR}/edamaa-nestjs.pid"
+NEST_STARTUP_HEALTH_PATH="${NEST_STARTUP_HEALTH_PATH:-}"
 
 DJANGO_PID=""
 NEST_PID=""
@@ -357,6 +360,8 @@ ensure_local_infra_if_needed() {
 
   if is_local_host "$db_host"; then
     if ! is_port_in_use "$db_port"; then
+  if [ "$SKIP_PRISMA_CONNECT" != "1" ] && is_local_host "$db_host"; then
+    if ! lsof -iTCP:"$db_port" -sTCP:LISTEN >/dev/null 2>&1; then
       need_local_db="1"
     fi
   fi
@@ -520,6 +525,14 @@ on_exit() {
 
 trap on_exit EXIT INT TERM
 
+if [ -z "$NEST_STARTUP_HEALTH_PATH" ]; then
+  if [ "$SKIP_PRISMA_CONNECT" = "1" ]; then
+    NEST_STARTUP_HEALTH_PATH="/auth/health"
+  else
+    NEST_STARTUP_HEALTH_PATH="/auth/ready"
+  fi
+fi
+
 require_cmd curl
 require_cmd npm
 ensure_local_infra_if_needed
@@ -629,7 +642,7 @@ echo "$NEST_PID" >"$NEST_PID_FILE"
 
 wait_for_http_200 \
   "NestJS readiness" \
-  "http://${NEST_HOST}:${NEST_PORT}/auth/ready" \
+  "http://${NEST_HOST}:${NEST_PORT}${NEST_STARTUP_HEALTH_PATH}" \
   "" \
   180 \
   1 \

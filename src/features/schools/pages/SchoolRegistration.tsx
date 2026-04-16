@@ -9,6 +9,10 @@ import {
   persistLocalDevAuthSession,
   persistSupabaseSession,
 } from '../../../utils/authSession';
+import {
+  buildSchoolWorkspaceMetadata,
+  persistSchoolHasHostelPreference,
+} from '../../../utils/schoolBranding';
 import { getSupabaseBrowserClient, isSupabaseBrowserConfigured } from '../../../utils/supabaseClient';
 
 const SchoolRegistration: React.FC = () => {
@@ -35,6 +39,12 @@ const SchoolRegistration: React.FC = () => {
     const confirmPassword = String(formData.get('confirmPassword') || '');
     const schoolDisplayName = schoolName || 'School';
     const adminDisplayName = adminFullName || schoolDisplayName;
+    const hasHostel = String(formData.get('hasHostel') || '').trim().toLowerCase() === 'yes';
+    const schoolWorkspaceMetadata = buildSchoolWorkspaceMetadata({
+      schoolName: schoolDisplayName,
+      email,
+      hasHostel,
+    });
 
     if (!schoolName) {
       alert('Please enter your school name.');
@@ -72,6 +82,8 @@ const SchoolRegistration: React.FC = () => {
             role: 'school',
             account_role: 'school',
             school_name: schoolDisplayName,
+            school_workspace_key: schoolWorkspaceMetadata.school_workspace_key,
+            school_has_hostel: hasHostel,
           },
         },
       });
@@ -86,6 +98,8 @@ const SchoolRegistration: React.FC = () => {
       persistLocalDevAuthSession(email, 'school', {
         defaultRole: 'school',
         activeRoles: ['school'],
+        userMetadata: schoolWorkspaceMetadata,
+        appMetadata: schoolWorkspaceMetadata,
       });
     }
 
@@ -98,6 +112,7 @@ const SchoolRegistration: React.FC = () => {
 
     window.localStorage.setItem('edamaa_school_display_name', schoolDisplayName);
     window.localStorage.setItem('edamaa_school_admin_name', adminDisplayName);
+    persistSchoolHasHostelPreference(hasHostel);
     alert('School account created successfully. Redirecting to your school dashboard...');
     navigate('/school-dashboard');
   }
@@ -172,6 +187,25 @@ const SchoolRegistration: React.FC = () => {
                 </svg>
               </div>
             </div>
+
+            <div className='relative'>
+              <select
+                name="hasHostel"
+                defaultValue="no"
+                className='w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-[#3D08BA] transition-colors text-gray-700 appearance-none text-sm'
+              >
+                <option value="no">We do not run a hostel</option>
+                <option value="yes">We run a hostel</option>
+              </select>
+              <div className='absolute right-4 top-1/2 transform -translate-y-1/2 pointer-events-none'>
+                <svg className='w-4 h-4 text-gray-500' fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </div>
+            </div>
+            <p className='-mt-1 text-xs text-gray-500'>
+              Choose this only if your school has boarding or hostel accommodation.
+            </p>
 
             <input
               type="text"

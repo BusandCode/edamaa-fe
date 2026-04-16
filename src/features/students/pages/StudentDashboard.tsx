@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import NewLogo from '../../../components/common/NewLogo';
 import RecordClasses from "../../tutors/components/RecordClasses";
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import StudentProfile from "./StudentProfile";
 import BottomNavigation from '../../../components/layout/student-layout/StudentBottomNavigation';
 import {
@@ -9,9 +9,13 @@ import {
   PlusIcon,
   Cog6ToothIcon,
   AcademicCapIcon,
+  ChartBarIcon,
   CheckCircleIcon,
+  ClockIcon,
+  BookOpenIcon,
   HomeIcon,
   QuestionMarkCircleIcon,
+  TrophyIcon,
   ArrowRightOnRectangleIcon,
 } from '@heroicons/react/24/outline';
 import { BellIcon as BellSolidIcon } from '@heroicons/react/24/solid';
@@ -23,14 +27,15 @@ import { useNotificationCount } from '../../hooks/useNotificationCount';
 // Import modular components
 import UpcomingClasses from '../components/UpcomingClasses';
 import RecentActivity from '../components/RecentActivity';
-import PerformanceStats from '../components/PerformanceStats';
+import PerformanceStats, { type StatCard } from '../components/PerformanceStats';
 import Announcements from '../components/Announcements';
 import QuickAccessGrid from "../components/QuickAccess";
-import ProgressOverview from '../components/ProgressOverview';
+import ProgressOverview, { type SubjectProgress } from '../components/ProgressOverview';
 import {
   loadStudentIdentity,
   saveStudentIdentity,
   type StudentIdentity,
+  type StudentSchoolLevel,
 } from '../utils/studentIdentity';
 import { signOutEverywhere } from '../../../utils/signOut';
 import {
@@ -43,9 +48,20 @@ import {
   type SchoolScheduleAttendanceRecord,
 } from '../../schools/utils/schoolScheduleApi';
 import {
+  archiveStudentAssignmentNotification,
+  markStudentAssignmentNotificationAsRead,
+} from '../../schools/utils/assignmentsApi';
+import {
   archiveStudentExamNotification,
+  fetchStudentExams,
   markStudentExamNotificationAsRead,
+  type SchoolExam,
+  type StudentExamSubmissionSummary,
 } from '../../schools/utils/examsApi';
+import {
+  fetchStudentCourseCertificates,
+  type CourseCertificateRecord,
+} from '../utils/courseCertificatesApi';
 
 type StudentSchoolInvoiceStatus =
   | 'draft'
@@ -82,10 +98,15 @@ type DashboardNotification = {
   time?: string;
   isRead?: boolean;
   createdAt?: string;
-  source?: 'seed' | 'schedule' | 'local' | 'exam';
+  source?: 'seed' | 'schedule' | 'local' | 'exam' | 'assignment';
   examId?: string;
   examDepartment?: string;
   examClassGroup?: string;
+  assignmentId?: string;
+  assignmentDepartment?: string;
+  assignmentClassGroup?: string;
+  assignmentSessionId?: string | null;
+  assignmentKind?: 'released' | 'graded';
 };
 
 const EXAM_NOTIFICATION_PREFIX = 'exam:';
@@ -95,8 +116,18 @@ const isExamNotification = (notification: DashboardNotification) =>
   String(notification.id || '').startsWith(EXAM_NOTIFICATION_PREFIX) &&
   Boolean(notification.examId && notification.examDepartment && notification.examClassGroup);
 
+const ASSIGNMENT_NOTIFICATION_PREFIX = 'assignment:';
+
+const isAssignmentNotification = (notification: DashboardNotification) =>
+  notification.source === 'assignment' &&
+  String(notification.id || '').startsWith(ASSIGNMENT_NOTIFICATION_PREFIX) &&
+  Boolean(notification.assignmentId && notification.assignmentDepartment && notification.assignmentClassGroup);
+
 const fromExamNotificationId = (notificationId: string) =>
   String(notificationId || '').slice(EXAM_NOTIFICATION_PREFIX.length);
+
+const fromAssignmentNotificationId = (notificationId: string) =>
+  String(notificationId || '').slice(ASSIGNMENT_NOTIFICATION_PREFIX.length);
 
 const readDashboardNotifications = (): DashboardNotification[] => {
   if (typeof window === 'undefined') {
@@ -170,6 +201,25 @@ type StudentAttendanceSnapshot = {
   attendanceRate: number;
   audienceLabel: string;
 };
+
+type StudentPublishedResultEntry = {
+  exam: SchoolExam;
+  submission: StudentExamSubmissionSummary;
+  percentage: number | null;
+  publishedAt: string;
+};
+
+type AcademicSnapshot = {
+  averageScore: number | null;
+  publishedResultsCount: number;
+  awaitingReleaseCount: number;
+  bestSubject: string | null;
+  bestSubjectAverage: number | null;
+};
+
+const normalizeAcademicValue = (value: string) => String(value || '').trim();
+
+const clampPercentage = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 
 const normalizeAttendanceName = (value: string) =>
   String(value || '')
@@ -476,8 +526,167 @@ const StudentAttendanceOverview = ({
   );
 };
 
+const StudentCertificateWalletOverview = ({
+  onOpenWallet,
+  onOpenCourse,
+}: {
+  onOpenWallet: () => void;
+  onOpenCourse: (courseId: number) => void;
+}) => {
+  const [certificates, setCertificates] = useState<CourseCertificateRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    let active = true;
+
+    const loadCertificates = async () => {
+      setIsLoading(true);
+      try {
+        const payload = await fetchStudentCourseCertificates();
+        if (!active) {
+          return;
+        }
+        setCertificates(payload.certificates);
+        setNotice(
+          payload.certificates.length === 0
+            ? 'Complete a recorded course and pass all checkpoints to unlock your first certificate.'
+            : ''
+        );
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setCertificates([]);
+        setNotice(
+          error instanceof Error ? error.message : 'Could not load your certificate wallet right now.'
+        );
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void loadCertificates();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const summary = useMemo(
+    () => ({
+      total: certificates.length,
+      school: certificates.filter((certificate) => certificate.issuerType === 'school').length,
+      tutor: certificates.filter((certificate) => certificate.issuerType === 'tutor').length,
+      edamaa: certificates.filter((certificate) => certificate.issuerType === 'edamaa').length,
+    }),
+    [certificates]
+  );
+
+  const latestCertificate = certificates[0] || null;
+
+  return (
+    <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="inline-flex items-center gap-2 rounded-full bg-[#3D08BA]/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3D08BA]">
+            <AcademicCapIcon className="h-4 w-4" />
+            Certificate wallet
+          </div>
+          <h3 className="mt-3 text-base sm:text-lg font-semibold text-gray-900">
+            Certificates earned from completed online courses
+          </h3>
+          <p className="mt-1 text-xs sm:text-sm text-gray-500">
+            School, tutor, and Edamaa3D course certificates appear here once you meet the course completion rule.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenWallet}
+          className="inline-flex items-center rounded-lg border border-[#3D08BA]/20 px-3 py-2 text-xs sm:text-sm font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/5 transition-colors"
+        >
+          Open wallet
+        </button>
+      </div>
+
+      {notice && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs sm:text-sm text-amber-700">
+          {notice}
+        </div>
+      )}
+
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Total
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">{summary.total}</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            School
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">{summary.school}</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Tutor
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">{summary.tutor}</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Edamaa3D
+          </p>
+          <p className="mt-2 text-xl font-bold text-gray-900">{summary.edamaa}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {isLoading && (
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-4 text-xs sm:text-sm text-gray-500">
+            Loading certificates...
+          </div>
+        )}
+
+        {!isLoading && latestCertificate && (
+          <div className="rounded-xl border border-gray-200 px-3 py-4 sm:px-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm sm:text-base font-semibold text-gray-900">
+                    {latestCertificate.courseTitle}
+                  </p>
+                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] sm:text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">
+                    Issued
+                  </span>
+                </div>
+                <p className="mt-1 text-xs sm:text-sm text-gray-600">
+                  {latestCertificate.issuerName} • {latestCertificate.certificateCode}
+                </p>
+                <p className="mt-1 text-[11px] sm:text-xs text-gray-500">
+                  Issued {new Date(latestCertificate.issueDate).toLocaleDateString()}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onOpenCourse(latestCertificate.courseId)}
+                className="inline-flex items-center rounded-lg border border-gray-200 px-3 py-2 text-xs sm:text-sm font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                Open course
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const StudentDashboard = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const initialStudentIdentity = useMemo(() => loadStudentIdentity(), []);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -485,6 +694,11 @@ const StudentDashboard = () => {
   const [name, setName] = useState(initialStudentIdentity.name);
   const [username, setUsername] = useState('andrew123');
   const [email, setEmail] = useState('andrew@example.com');
+  const [schoolLevel, setSchoolLevel] = useState<StudentSchoolLevel>(
+    initialStudentIdentity.schoolLevel || ''
+  );
+  const [department, setDepartment] = useState(initialStudentIdentity.department || '');
+  const [classGroup, setClassGroup] = useState(initialStudentIdentity.classGroup || '');
   const [description, setDescription] = useState(
     'I am here to learn, unlearn and relearn'
   );
@@ -493,7 +707,12 @@ const StudentDashboard = () => {
   const [schoolInvoicesError, setSchoolInvoicesError] = useState<string | null>(null);
   const [activeSchoolInvoiceId, setActiveSchoolInvoiceId] = useState('');
   const [resultNotifications, setResultNotifications] = useState<DashboardNotification[]>([]);
+  const [assignmentNotifications, setAssignmentNotifications] = useState<DashboardNotification[]>([]);
   const [activeResultNotificationId, setActiveResultNotificationId] = useState('');
+  const [publishedResults, setPublishedResults] = useState<StudentPublishedResultEntry[]>([]);
+  const [academicSubmissionStates, setAcademicSubmissionStates] = useState<StudentExamSubmissionSummary[]>([]);
+  const [isAcademicLoading, setIsAcademicLoading] = useState(false);
+  const [academicNotice, setAcademicNotice] = useState<string | null>(null);
   const outstandingSchoolInvoices = useMemo(
     () =>
       schoolInvoices.filter(
@@ -505,8 +724,14 @@ const StudentDashboard = () => {
     [schoolInvoices]
   );
   const dashboardStudentIdentity = useMemo(
-    () => ({ ...initialStudentIdentity, name }),
-    [initialStudentIdentity, name]
+    () => ({
+      ...initialStudentIdentity,
+      name,
+      schoolLevel,
+      department,
+      classGroup,
+    }),
+    [classGroup, department, initialStudentIdentity, name, schoolLevel]
   );
 
   // Use the notification count hook for real-time sync
@@ -517,18 +742,268 @@ const StudentDashboard = () => {
     [resultNotifications]
   );
 
+  const unreadAssignmentNotifications = useMemo(
+    () => assignmentNotifications.filter((notification) => !notification.isRead),
+    [assignmentNotifications]
+  );
+
+  useEffect(() => {
+    const normalizedDepartment = normalizeAcademicValue(department);
+    const normalizedClassGroup = normalizeAcademicValue(classGroup);
+
+    if (!normalizedDepartment || !normalizedClassGroup) {
+      setPublishedResults([]);
+      setAcademicSubmissionStates([]);
+      setAcademicNotice('Add your department and class in your profile to unlock your academic summary.');
+      setIsAcademicLoading(false);
+      return;
+    }
+
+    let active = true;
+
+    const loadAcademicResults = async () => {
+      setIsAcademicLoading(true);
+      try {
+        const payload = await fetchStudentExams({
+          department: normalizedDepartment,
+          classGroup: normalizedClassGroup,
+        });
+        if (!active) {
+          return;
+        }
+
+        const exams = Array.isArray(payload.exams) ? payload.exams : [];
+        const submissions = Array.isArray(payload.submissions) ? payload.submissions : [];
+        const examLookup = exams.reduce<Record<string, SchoolExam>>((collection, exam) => {
+          collection[exam.id] = exam;
+          return collection;
+        }, {});
+
+        const nextPublishedResults = submissions
+          .flatMap((submission) => {
+            if (submission.status !== 'published') {
+              return [];
+            }
+
+            const exam = examLookup[submission.examId];
+            if (!exam) {
+              return [];
+            }
+
+            return [
+              {
+                exam,
+                submission,
+                percentage:
+                  typeof submission.score === 'number' && submission.maxScore > 0
+                    ? (submission.score / submission.maxScore) * 100
+                    : null,
+                publishedAt:
+                  submission.publishedAt || submission.gradedAt || submission.submittedAt || exam.startAt,
+              },
+            ];
+          })
+          .sort((left, right) => new Date(right.publishedAt).getTime() - new Date(left.publishedAt).getTime());
+
+        setPublishedResults(nextPublishedResults);
+        setAcademicSubmissionStates(submissions);
+        setAcademicNotice(
+          nextPublishedResults.length === 0
+            ? 'No published exam results yet for your current class profile.'
+            : null
+        );
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        const message =
+          error instanceof Error ? error.message : 'Could not load your academic summary right now.';
+        setPublishedResults([]);
+        setAcademicSubmissionStates([]);
+        setAcademicNotice(message);
+      } finally {
+        if (active) {
+          setIsAcademicLoading(false);
+        }
+      }
+    };
+
+    void loadAcademicResults();
+    return () => {
+      active = false;
+    };
+  }, [classGroup, department]);
+
+  const academicSnapshot = useMemo<AcademicSnapshot>(() => {
+    const awaitingReleaseCount = academicSubmissionStates.filter(
+      (submission) => submission.status === 'submitted' || submission.status === 'graded'
+    ).length;
+    const averageScore =
+      publishedResults.length > 0
+        ? publishedResults.reduce((total, item) => total + (item.percentage || 0), 0) /
+          publishedResults.length
+        : null;
+
+    const subjectSummary = publishedResults.reduce<
+      Record<string, { total: number; count: number }>
+    >((collection, item) => {
+      const key = item.exam.subject;
+      if (!collection[key]) {
+        collection[key] = { total: 0, count: 0 };
+      }
+      collection[key].total += item.percentage || 0;
+      collection[key].count += 1;
+      return collection;
+    }, {});
+
+    const bestSubjectEntry = Object.entries(subjectSummary)
+      .map(([subject, summary]) => ({
+        subject,
+        average: summary.count > 0 ? summary.total / summary.count : 0,
+      }))
+      .sort((left, right) => right.average - left.average)[0];
+
+    return {
+      averageScore,
+      publishedResultsCount: publishedResults.length,
+      awaitingReleaseCount,
+      bestSubject: bestSubjectEntry?.subject || null,
+      bestSubjectAverage: bestSubjectEntry?.average ?? null,
+    };
+  }, [academicSubmissionStates, publishedResults]);
+
+  const performanceStats = useMemo<StatCard[]>(() => {
+    return [
+      {
+        id: 'average-score',
+        label: 'Average result',
+        value:
+          academicSnapshot.averageScore === null
+            ? '--'
+            : `${clampPercentage(academicSnapshot.averageScore)}%`,
+        change:
+          publishedResults.length > 0
+            ? `${publishedResults.length} published result${publishedResults.length === 1 ? '' : 's'} tracked`
+            : 'Waiting for your first published result',
+        trend:
+          academicSnapshot.averageScore !== null && academicSnapshot.averageScore >= 60
+            ? 'up'
+            : 'neutral',
+        icon: ChartBarIcon,
+        color: 'text-blue-600',
+        bgColor: 'bg-blue-50',
+      },
+      {
+        id: 'published-results',
+        label: 'Published results',
+        value: String(academicSnapshot.publishedResultsCount),
+        change: 'Results already released to you',
+        trend: academicSnapshot.publishedResultsCount > 0 ? 'up' : 'neutral',
+        icon: CheckCircleIcon,
+        color: 'text-emerald-600',
+        bgColor: 'bg-emerald-50',
+      },
+      {
+        id: 'best-subject',
+        label: 'Best subject',
+        value: academicSnapshot.bestSubject || '--',
+        change:
+          academicSnapshot.bestSubjectAverage === null
+            ? 'Best subject will appear after results are released'
+            : `${clampPercentage(academicSnapshot.bestSubjectAverage)}% average`,
+        trend: academicSnapshot.bestSubjectAverage !== null ? 'up' : 'neutral',
+        icon: TrophyIcon,
+        color: 'text-purple-600',
+        bgColor: 'bg-purple-50',
+      },
+      {
+        id: 'awaiting-release',
+        label: 'Awaiting release',
+        value: String(academicSnapshot.awaitingReleaseCount),
+        change:
+          academicSnapshot.awaitingReleaseCount > 0
+            ? 'Still with your school for review/release'
+            : 'Nothing pending at the moment',
+        trend: academicSnapshot.awaitingReleaseCount > 0 ? 'neutral' : 'up',
+        icon: ClockIcon,
+        color: 'text-amber-600',
+        bgColor: 'bg-amber-50',
+      },
+    ];
+  }, [academicSnapshot, publishedResults.length]);
+
+  const subjectPerformance = useMemo<SubjectProgress[]>(() => {
+    const colors = ['bg-blue-500', 'bg-[#3D08BA]', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500'];
+    const grouped = publishedResults.reduce<
+      Record<
+        string,
+        {
+          totalPercentage: number;
+          count: number;
+          latestTitle: string;
+          latestPublishedAt: string;
+        }
+      >
+    >((collection, item) => {
+      const key = item.exam.subject;
+      const current = collection[key] || {
+        totalPercentage: 0,
+        count: 0,
+        latestTitle: item.exam.title,
+        latestPublishedAt: item.publishedAt,
+      };
+      current.totalPercentage += item.percentage || 0;
+      current.count += 1;
+      if (new Date(item.publishedAt).getTime() > new Date(current.latestPublishedAt).getTime()) {
+        current.latestPublishedAt = item.publishedAt;
+        current.latestTitle = item.exam.title;
+      }
+      collection[key] = current;
+      return collection;
+    }, {});
+
+    return Object.entries(grouped)
+      .map(([subject, summary], index) => {
+        const average = summary.count > 0 ? summary.totalPercentage / summary.count : 0;
+        return {
+          id: subject,
+          subject,
+          progress: clampPercentage(average),
+          totalItems: summary.count,
+          completedItems: summary.count,
+          color: colors[index % colors.length],
+          nextLabel: summary.latestTitle,
+          summaryLabel: `${summary.count} published assessment${summary.count === 1 ? '' : 's'} recorded`,
+        };
+      })
+      .sort((left, right) => right.progress - left.progress)
+      .slice(0, 5);
+  }, [publishedResults]);
+
   const handleProfileUpdate = (updatedProfile: {
     name: string;
     username: string;
     email: string;
     bio: string;
     profileImage: string | null;
+    schoolLevel: StudentSchoolLevel;
+    department: string;
+    classGroup: string;
   }) => {
     setName(updatedProfile.name);
     setUsername(updatedProfile.username);
     setEmail(updatedProfile.email);
     setDescription(updatedProfile.bio);
-    saveStudentIdentity({ name: updatedProfile.name });
+    setSchoolLevel(updatedProfile.schoolLevel);
+    setDepartment(updatedProfile.department);
+    setClassGroup(updatedProfile.classGroup);
+    saveStudentIdentity({
+      name: updatedProfile.name,
+      schoolLevel: updatedProfile.schoolLevel,
+      department: updatedProfile.department,
+      classGroup: updatedProfile.classGroup,
+    });
     // setProfileSrc(updatedProfile.profileImage);
   };
 
@@ -555,11 +1030,33 @@ const StudentDashboard = () => {
         const rightTs = right.createdAt ? new Date(right.createdAt).getTime() : 0;
         return rightTs - leftTs;
       });
+    const homeworkNotifications = notifications
+      .filter(isAssignmentNotification)
+      .sort((left, right) => {
+        const leftTs = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+        const rightTs = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+        return rightTs - leftTs;
+      });
     setResultNotifications(examNotifications);
+    setAssignmentNotifications(homeworkNotifications);
   };
 
   const handleAssignmentsClick = () => {
     navigate('/assignments');
+  };
+
+  const handleCertificatesClick = () => {
+    navigate('/student-certificates');
+  };
+
+  const handleAccountSettingsClick = () => {
+    navigate('/settings');
+    setMenuOpen(false);
+  };
+
+  const handleHelpSupportClick = () => {
+    window.location.href = 'mailto:support@edamaa3d.com?subject=Edamaa3D%20Student%20Support';
+    setMenuOpen(false);
   };
 
   const handlePerformanceClick = () => {
@@ -702,6 +1199,13 @@ const StudentDashboard = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (location.state?.openProfile) {
+      setShowProfile(true);
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.pathname, location.state, navigate]);
+
   const openPublishedResult = async (notification: DashboardNotification) => {
     if (!isExamNotification(notification)) {
       return;
@@ -748,6 +1252,62 @@ const StudentDashboard = () => {
     }
   };
 
+  const openAssignmentNotification = async (notification: DashboardNotification) => {
+    if (!isAssignmentNotification(notification)) {
+      return;
+    }
+
+    setActiveResultNotificationId(notification.id);
+    const nextNotifications = readDashboardNotifications().map((item) =>
+      item.id === notification.id ? { ...item, isRead: true } : item
+    );
+    writeDashboardNotifications(nextNotifications);
+
+    try {
+      await markStudentAssignmentNotificationAsRead({
+        notificationId: fromAssignmentNotificationId(notification.id),
+        department: notification.assignmentDepartment || '',
+        classGroup: notification.assignmentClassGroup || '',
+        studentId: dashboardStudentIdentity.id,
+      });
+    } catch {
+      // Keep optimistic local read state to avoid blocking task access.
+    } finally {
+      setActiveResultNotificationId('');
+    }
+
+    const params = new URLSearchParams({
+      assignmentId: notification.assignmentId || '',
+      department: notification.assignmentDepartment || '',
+      classGroup: notification.assignmentClassGroup || '',
+      ...(notification.assignmentSessionId ? { sessionId: notification.assignmentSessionId } : {}),
+    });
+    navigate(`/assignments?${params.toString()}`);
+  };
+
+  const dismissAssignmentNotification = async (notification: DashboardNotification) => {
+    if (!isAssignmentNotification(notification)) {
+      return;
+    }
+
+    setActiveResultNotificationId(notification.id);
+    const nextNotifications = readDashboardNotifications().filter((item) => item.id !== notification.id);
+    writeDashboardNotifications(nextNotifications);
+
+    try {
+      await archiveStudentAssignmentNotification({
+        notificationId: fromAssignmentNotificationId(notification.id),
+        department: notification.assignmentDepartment || '',
+        classGroup: notification.assignmentClassGroup || '',
+        studentId: dashboardStudentIdentity.id,
+      });
+    } catch {
+      // Keep local dismissal to avoid a disruptive UX.
+    } finally {
+      setActiveResultNotificationId('');
+    }
+  };
+
   // Menu items configuration
   const menuItems = [
     { 
@@ -769,15 +1329,20 @@ const StudentDashboard = () => {
       label: 'My Courses', 
       onClick: OnCoursesClick
     },
+    {
+      icon: TrophyIcon,
+      label: 'Certificates',
+      onClick: handleCertificatesClick,
+    },
     { 
       icon: Cog6ToothIcon, 
       label: 'Account Settings', 
-      onClick: () => navigate('/settings')
+      onClick: handleAccountSettingsClick
     },
     { 
       icon: QuestionMarkCircleIcon, 
       label: 'Help & Support', 
-      onClick: () => navigate('/help')
+      onClick: handleHelpSupportClick
     },
   ];
 
@@ -933,6 +1498,17 @@ const StudentDashboard = () => {
               <p className="text-[10px] sm:text-xs text-gray-500 mt-1">
                 @{username}
               </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <span className="inline-flex items-center rounded-full bg-[#3D08BA]/8 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#3D08BA]">
+                  {schoolLevel ? `${schoolLevel} level` : 'Level pending'}
+                </span>
+                <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-[10px] font-semibold text-gray-600">
+                  {department || 'Department pending'}
+                </span>
+                <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-[10px] font-semibold text-gray-600">
+                  {classGroup || 'Class pending'}
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -1014,13 +1590,99 @@ const StudentDashboard = () => {
               </div>
             )}
 
+            {unreadAssignmentNotifications.length > 0 && (
+              <div className="bg-[linear-gradient(135deg,_rgba(16,185,129,0.08),_rgba(255,255,255,0.98))] rounded-xl sm:rounded-2xl border border-emerald-200 shadow-sm p-4 sm:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                      <BookOpenIcon className="h-4 w-4" />
+                      Homework update
+                    </div>
+                    <h2 className="mt-3 text-lg sm:text-xl font-bold text-gray-900">
+                      New task{unreadAssignmentNotifications.length === 1 ? '' : 's'} to review
+                    </h2>
+                    <p className="mt-1 text-xs sm:text-sm text-gray-600">
+                      Newly released homework and recently graded work appear here so you can open them straight away.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleNotificationClick}
+                    className="inline-flex items-center rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs sm:text-sm font-semibold text-emerald-700 hover:bg-emerald-50 transition-colors"
+                  >
+                    View all notifications
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {unreadAssignmentNotifications.slice(0, 2).map((notification) => (
+                    <div
+                      key={notification.id}
+                      className="rounded-xl border border-white/80 bg-white/90 px-4 py-4 shadow-sm"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm sm:text-base font-semibold text-gray-900">
+                            {notification.title || 'Homework update'}
+                          </p>
+                          <p className="mt-1 text-xs sm:text-sm text-gray-600 leading-5">
+                            {notification.message}
+                          </p>
+                          <p className="mt-2 text-[11px] text-gray-500">
+                            {notification.time || 'Recently'}
+                          </p>
+                        </div>
+                        <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                          {notification.assignmentKind === 'graded' ? 'Graded' : 'Open now'}
+                        </span>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void openAssignmentNotification(notification)}
+                          disabled={activeResultNotificationId === notification.id}
+                          className="inline-flex items-center rounded-lg bg-emerald-600 px-3 py-2 text-xs sm:text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                        >
+                          {activeResultNotificationId === notification.id ? 'Opening...' : 'Open task'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void dismissAssignmentNotification(notification)}
+                          disabled={activeResultNotificationId === notification.id}
+                          className="inline-flex items-center rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs sm:text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <StudentAttendanceOverview
               studentIdentity={dashboardStudentIdentity}
               onOpenClasses={handleJoinClassClick}
             />
 
+            <StudentCertificateWalletOverview
+              onOpenWallet={handleCertificatesClick}
+              onOpenCourse={(courseId) => navigate(`/course/${courseId}`)}
+            />
+
             {/* Performance Stats */}
-            <PerformanceStats />
+            <PerformanceStats
+              stats={performanceStats}
+              isLoading={isAcademicLoading}
+              notice={academicNotice}
+              title="Academic snapshot"
+              subtitle={
+                department && classGroup
+                  ? `${department} • ${classGroup}`
+                  : 'Save your academic profile to unlock real result reporting.'
+              }
+            />
 
             {/* Quick Access Grid */}
             <QuickAccessGrid
@@ -1132,7 +1794,20 @@ const StudentDashboard = () => {
             <UpcomingClasses />
 
             {/* Progress Overview */}
-            <ProgressOverview />
+            <ProgressOverview
+              subjects={subjectPerformance}
+              isLoading={isAcademicLoading}
+              title="Subject performance"
+              subtitle="Published exam results grouped by subject."
+              actionLabel="Open exams"
+              onAction={handleExamsClick}
+              emptyMessage={
+                academicNotice ||
+                (department && classGroup
+                  ? 'Published subject performance will appear here after your school releases results.'
+                  : 'Set your department and class in your profile to unlock subject performance.')
+              }
+            />
 
             {/* Recent Activity */}
             <RecentActivity />
@@ -1218,10 +1893,7 @@ const StudentDashboard = () => {
                 ))}
                 
                 <button 
-                  onClick={() => {
-                    navigate('/preferences');
-                    setMenuOpen(false);
-                  }}
+                  onClick={handleAccountSettingsClick}
                   className="w-full text-left px-4 py-3 rounded-xl hover:bg-gray-100 text-gray-700 font-medium transition-all flex items-center gap-3 group hover:shadow-sm"
                 >
                   <div className="w-10 h-10 rounded-lg bg-gray-100 group-hover:bg-[#3D08BA] flex items-center justify-center transition-colors">
@@ -1275,6 +1947,9 @@ const StudentDashboard = () => {
               initialEmail={email}
               initialBio={description}
               initialProfileImage={profileSrc}
+              initialSchoolLevel={schoolLevel}
+              initialDepartment={department}
+              initialClassGroup={classGroup}
             />
           </div>
         </div>

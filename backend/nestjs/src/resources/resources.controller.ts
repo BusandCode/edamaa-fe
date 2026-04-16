@@ -1,8 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -26,6 +28,33 @@ type UploadResourceBody = {
   price?: string | number;
   uploaderRole?: string;
   instructorName?: string;
+};
+
+type FreeLibraryRecommendationBody = {
+  id?: string;
+  source?: string;
+  sourceLabel?: string;
+  title?: string;
+  authors?: string[];
+  description?: string;
+  subject?: string;
+  coverImageUrl?: string | null;
+  actionUrl?: string;
+  actionLabel?: string;
+  accessLabel?: string;
+  licenseLabel?: string;
+  publishedAt?: string | null;
+  note?: string;
+  targetSchoolLevel?: string;
+  targetDepartment?: string;
+  targetClassGroup?: string;
+};
+
+type FreeLibraryAudiencePresetBody = {
+  label?: string;
+  targetSchoolLevel?: string;
+  targetDepartment?: string;
+  targetClassGroup?: string;
 };
 
 @UseGuards(SupabaseAuthGuard)
@@ -64,6 +93,83 @@ export class ResourcesController {
     return this.resourcesService.getUploadsForAuthUser(this.getAuthUser(request));
   }
 
+  @Get('discover/free-books')
+  discoverFreeBooks(
+    @Req() request: Request,
+    @Query('q') query: string | undefined,
+    @Query('subject') subject: string | undefined,
+    @Query('limit') limit: string | undefined
+  ) {
+    return this.resourcesService.searchFreeLibraryForAuthUser(this.getAuthUser(request), {
+      query,
+      subject,
+      limit,
+    });
+  }
+
+  @Get('free-books/recommended')
+  getRecommendedFreeBooks(@Req() request: Request) {
+    return this.resourcesService.getRecommendedFreeBooksForAuthUser(this.getAuthUser(request));
+  }
+
+  @Get('free-books/recommendation-presets')
+  getRecommendationPresets(@Req() request: Request) {
+    return this.resourcesService.getFreeLibraryAudiencePresetsForAuthUser(
+      this.getAuthUser(request)
+    );
+  }
+
+  @Post('free-books/recommended')
+  recommendFreeBook(
+    @Req() request: Request,
+    @Body() body: FreeLibraryRecommendationBody
+  ) {
+    return this.resourcesService.recommendFreeBookForAuthUser(this.getAuthUser(request), body);
+  }
+
+  @Post('free-books/recommendation-presets')
+  saveRecommendationPreset(
+    @Req() request: Request,
+    @Body() body: FreeLibraryAudiencePresetBody
+  ) {
+    return this.resourcesService.saveFreeLibraryAudiencePresetForAuthUser(
+      this.getAuthUser(request),
+      body
+    );
+  }
+
+  @Patch('free-books/recommendation-presets/:presetId')
+  updateRecommendationPreset(
+    @Req() request: Request,
+    @Param('presetId') presetId: string,
+    @Body() body: FreeLibraryAudiencePresetBody
+  ) {
+    return this.resourcesService.updateFreeLibraryAudiencePresetForAuthUser(
+      this.getAuthUser(request),
+      presetId,
+      body
+    );
+  }
+
+  @Delete('free-books/recommended/:recommendationId')
+  removeRecommendedFreeBook(
+    @Req() request: Request,
+    @Param('recommendationId') recommendationId: string
+  ) {
+    return this.resourcesService.removeRecommendedFreeBookForAuthUser(
+      this.getAuthUser(request),
+      recommendationId
+    );
+  }
+
+  @Delete('free-books/recommendation-presets/:presetId')
+  removeRecommendationPreset(@Req() request: Request, @Param('presetId') presetId: string) {
+    return this.resourcesService.removeFreeLibraryAudiencePresetForAuthUser(
+      this.getAuthUser(request),
+      presetId
+    );
+  }
+
   @Post('me/upload')
   @UseInterceptors(
     FileInterceptor('file', {
@@ -94,9 +200,46 @@ export class ResourcesController {
     );
   }
 
+  @Patch('me/items/:resourceId')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: {
+        fileSize: 25 * 1024 * 1024,
+      },
+    })
+  )
+  updateResource(
+    @Req() request: Request,
+    @Param('resourceId') resourceId: string,
+    @Body() body: UploadResourceBody,
+    @UploadedFile() uploadedFile: any
+  ) {
+    return this.resourcesService.updateResourceForAuthUser(
+      this.getAuthUser(request),
+      resourceId,
+      {
+        title: body.title,
+        description: body.description,
+        subject: body.subject,
+        type: body.type,
+        category: body.category,
+        pricingType: body.pricingType,
+        price: body.price,
+        uploaderRole: body.uploaderRole,
+        instructorName: body.instructorName,
+      },
+      uploadedFile
+    );
+  }
+
   @Post('me/items/:resourceId/purchase')
   purchaseResource(@Req() request: Request, @Param('resourceId') resourceId: string) {
     return this.resourcesService.purchaseResourceForAuthUser(this.getAuthUser(request), resourceId);
+  }
+
+  @Delete('me/items/:resourceId')
+  deleteResource(@Req() request: Request, @Param('resourceId') resourceId: string) {
+    return this.resourcesService.deleteResourceForAuthUser(this.getAuthUser(request), resourceId);
   }
 
   @Get('me/items/:resourceId/download')
@@ -157,6 +300,8 @@ export class ResourcesController {
           (authUser?.user_metadata?.full_name as string).trim()) ||
         null,
       role: resolvedRole,
+      appMetadata: authUser?.app_metadata ?? null,
+      userMetadata: authUser?.user_metadata ?? null,
     };
   }
 

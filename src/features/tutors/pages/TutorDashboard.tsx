@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FaSearch, FaBook, FaUserGraduate, FaMoneyBillWave, FaHome, FaClock, FaCalendar, FaCopy, FaVideo, FaPlus } from 'react-icons/fa';
+import { FaSearch, FaBook, FaUserGraduate, FaMoneyBillWave, FaHome, FaClock, FaCalendar, FaCopy, FaVideo, FaPlus, FaClipboardList } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import NewLogo from '../../../components/common/NewLogo';
 import { students } from './lists/students';
@@ -21,9 +21,23 @@ import { BellIcon as BellSolidIcon } from '@heroicons/react/24/solid';
 import { HiOutlineMenu, HiOutlineX } from 'react-icons/hi';
 import { signOutEverywhere } from '../../../utils/signOut';
 import {
+  loadTutorBranding,
+  persistTutorDisplayName,
+  persistTutorProfileImage,
+} from '../../../utils/tutorBranding';
+import {
   fetchTeachingSubscriptionState,
   type TeachingSubscriptionState,
 } from '../../subscriptions/utils/teachingSubscriptionApi';
+import {
+  fetchTutorAssignments,
+  fetchTutorAssignmentNotifications,
+  type SchoolAssignmentNotification,
+} from '../../schools/utils/assignmentsApi';
+import {
+  fetchMyResourceUploads,
+  type ResourceItem,
+} from '../../schools/utils/resourcesApi';
 import {
   fetchSchoolScheduleFeed,
   type SchoolScheduleFeedSession,
@@ -69,6 +83,32 @@ const formatDashboardDuration = (durationMinutes: number) => {
   return `${hours} hr ${minutes} mins`;
 };
 
+const formatRelativeUpdateTime = (value: string) => {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) {
+    return 'Recently';
+  }
+
+  const diffMinutes = Math.max(0, Math.round((Date.now() - timestamp) / 60000));
+  if (diffMinutes <= 1) {
+    return 'Just now';
+  }
+  if (diffMinutes < 60) {
+    return `${diffMinutes} mins ago`;
+  }
+
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours} hr${diffHours === 1 ? '' : 's'} ago`;
+  }
+
+  const diffDays = Math.round(diffHours / 24);
+  return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+};
+
+const isLiveRecordingUpload = (resource: ResourceItem) =>
+  resource.type === 'video' && resource.category === 'live_recording';
+
 const mapAssignedSessionToTutorClass = (
   session: SchoolScheduleFeedSession
 ): NewClassData => ({
@@ -91,14 +131,35 @@ const mapAssignedSessionToTutorClass = (
 });
 
 const INDEPENDENT_CLASSES_STORAGE_KEY = 'edamaa_tutor_independent_classes';
+=========
+import { useState } from "react";
 
-const TutorDashboard = () => {
-  const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('classroom');
-  const [showProfile, setShowProfile] = useState(false);
-  const [showScheduleModal, setShowScheduleModal] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
+// ── Types ──────────────────────────────────────────────────────────────────
+import type { TabId, FilterType, NotificationState } from "./Types";
 
+// ── Data ───────────────────────────────────────────────────────────────────
+import {
+  tutorData,
+  earningsData,
+  courses,
+  students,
+  schedule,
+  recentActivity,
+  TABS,
+} from "./Data";
+>>>>>>>>> Temporary merge branch 2
+
+// ── Components ─────────────────────────────────────────────────────────────
+import DashboardHeader    from "./DashboardHeader"
+import BottomNav          from "./Bottomnav";
+import NotificationToast    from "./NotificationToast";
+import OverviewTab from "./OverviewTab";
+import CoursesTab from "./CoursesTab";
+import StudentsTab        from "./StudentsTab"
+import EarningsTab        from "./EarningsTab"
+import ScheduleTab        from "./ScheduleTab"
+
+<<<<<<<<< Temporary merge branch 1
   const [profileSrc, setProfileSrc] = useState<string | null>(null);
   const [name, setName] = useState('Abdulrahman Farhan');
   const [username, setUsername] = useState('abdulrahman');
@@ -109,27 +170,37 @@ const TutorDashboard = () => {
   const [isSubscriptionLoading, setIsSubscriptionLoading] = useState(false);
   const [isUpcomingLoading, setIsUpcomingLoading] = useState(false);
   const [upcomingNotice, setUpcomingNotice] = useState('');
+  const [homeworkSummary, setHomeworkSummary] = useState({ total: 0, active: 0, awaitingReview: 0 });
+  const [homeworkUnreadCount, setHomeworkUnreadCount] = useState(0);
+  const [homeworkUpdates, setHomeworkUpdates] = useState<SchoolAssignmentNotification[]>([]);
+  const [isHomeworkLoading, setIsHomeworkLoading] = useState(false);
+  const [homeworkNotice, setHomeworkNotice] = useState('');
+  const [replayUploads, setReplayUploads] = useState<ResourceItem[]>([]);
+  const [isReplayLoading, setIsReplayLoading] = useState(false);
+  const [replayNotice, setReplayNotice] = useState('');
   const [editingClass, setEditingClass] = useState<NewClassData | null>(null);
   const [activeClassActionId, setActiveClassActionId] = useState<string | null>(null);
   const [independentClasses, setIndependentClasses] = useState<NewClassData[]>([]);
   const [assignedSchoolClasses, setAssignedSchoolClasses] = useState<NewClassData[]>([]);
+=========
+// ── Styles ─────────────────────────────────────────────────────────────────
+import { S } from "./Styles";
+// ── Main Component ─────────────────────────────────────────────────────────
+>>>>>>>>> Temporary merge branch 2
 
-  const handleProfileUpdate = (updatedProfile: {
-    name: string;
-    username?: string;
-    email: string;
-    bio: string;
-    subjects?: string;
-    experience?: string;
-    profileImage: string | null;
-  }) => {
-    setName(updatedProfile.name);
-    if (typeof updatedProfile.username !== 'undefined') setUsername(updatedProfile.username);
-    setEmail(updatedProfile.email);
-    setDescription(updatedProfile.bio);
-    setProfileSrc(updatedProfile.profileImage);
+export default function TutorDashboard() {
+  const [activeTab,    setActiveTab]    = useState<TabId>("overview");
+  const [copied,       setCopied]       = useState(false);
+  const [activeFilter, setActiveFilter] = useState<FilterType>("all");
+  const [profileImg]                    = useState<string | null>(null);
+  const [notification, setNotification] = useState<NotificationState | null>(null);
+
+  const notify = (msg: string, type: NotificationState["type"] = "info"): void => {
+    setNotification({ msg, type });
+    setTimeout(() => setNotification(null), 3000);
   };
 
+<<<<<<<<< Temporary merge branch 1
   const classroomId = '224091556';
   const isSubscriptionActive = Boolean(subscriptionState?.isActive);
   const offlineScheduleLimit = subscriptionState?.features.maxScheduledOfflineClasses ?? 1;
@@ -146,6 +217,39 @@ const TutorDashboard = () => {
   const openSubscriptionPage = (message: string) => {
     toast.info(message);
     navigate('/subscription?actor=tutor');
+  };
+
+  const handleHomeworkUpdatesClick = () => {
+    navigate('/tutor-assignments');
+  };
+
+  const handleAssignmentsClick = () => {
+    navigate('/tutor-assignments');
+  };
+
+  const handleReplayHubClick = () => {
+    navigate('/tutor-resources?category=live_recording');
+  };
+
+  const handleAccountSettingsClick = () => {
+    navigate('/settings');
+    setMenuOpen(false);
+  };
+
+  const handleHelpSupportClick = () => {
+    window.location.href = 'mailto:support@edamaa3d.com?subject=Edamaa3D%20Tutor%20Support';
+    setMenuOpen(false);
+  };
+
+  const handleHomeworkUpdateDrilldown = (notification: SchoolAssignmentNotification) => {
+    const params = new URLSearchParams({
+      assignmentId: notification.assignmentId,
+      focus: 'submissions',
+    });
+    if (notification.id) {
+      params.set('notificationId', notification.id);
+    }
+    navigate(`/tutor-assignments?${params.toString()}`);
   };
 
   const loadSubscriptionState = async () => {
@@ -186,6 +290,52 @@ const TutorDashboard = () => {
     }
   };
 
+  const loadHomeworkOverview = async () => {
+    setIsHomeworkLoading(true);
+    setHomeworkNotice('');
+    try {
+      const [assignmentsPayload, notificationsPayload] = await Promise.all([
+        fetchTutorAssignments(),
+        fetchTutorAssignmentNotifications(),
+      ]);
+      setHomeworkSummary(assignmentsPayload.summary);
+      setHomeworkUnreadCount(notificationsPayload.unreadCount);
+      setHomeworkUpdates(notificationsPayload.notifications.slice(0, 3));
+    } catch {
+      setHomeworkSummary({ total: 0, active: 0, awaitingReview: 0 });
+      setHomeworkUnreadCount(0);
+      setHomeworkUpdates([]);
+      setHomeworkNotice('Homework updates are not available right now.');
+    } finally {
+      setIsHomeworkLoading(false);
+    }
+  };
+
+  const loadReplayOverview = async () => {
+    setIsReplayLoading(true);
+    setReplayNotice('');
+    try {
+      const payload = await fetchMyResourceUploads('tutor');
+      const nextUploads = Array.isArray(payload.uploads)
+        ? payload.uploads
+            .filter(isLiveRecordingUpload)
+            .sort(
+              (left, right) =>
+                new Date(right.uploadedAt).getTime() - new Date(left.uploadedAt).getTime()
+            )
+        : [];
+      setReplayUploads(nextUploads);
+      if (nextUploads.length === 0) {
+        setReplayNotice('No live class replays published yet.');
+      }
+    } catch {
+      setReplayUploads([]);
+      setReplayNotice('Replay uploads are not available right now.');
+    } finally {
+      setIsReplayLoading(false);
+    }
+  };
+
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(INDEPENDENT_CLASSES_STORAGE_KEY);
@@ -200,7 +350,23 @@ const TutorDashboard = () => {
     }
     void loadSubscriptionState();
     void loadUpcomingClasses();
+    void loadHomeworkOverview();
+    void loadReplayOverview();
   }, []);
+
+  const recentReplayUploads = useMemo(() => replayUploads.slice(0, 3), [replayUploads]);
+
+  const replaySummary = useMemo(() => {
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return {
+      total: replayUploads.length,
+      thisWeek: replayUploads.filter(
+        (resource) => new Date(resource.uploadedAt).getTime() >= weekAgo
+      ).length,
+      latestLabel:
+        replayUploads[0]?.uploadedAt ? formatRelativeUpdateTime(replayUploads[0].uploadedAt) : '--',
+    };
+  }, [replayUploads]);
 
   const copyToClipboard = async () => {
     try {
@@ -322,7 +488,7 @@ const TutorDashboard = () => {
     navigate(`/live-class/${liveClassId}?role=teacher`, { state: { classItem } });
   };
 
-  const handleStudentListClick = () => navigate('/student-list');
+  const handleStudentListClick = () => navigate('/student-list-tutor');
   const handleCourseClick = () => {
     if (!isSubscriptionActive) {
       openSubscriptionPage(
@@ -361,7 +527,7 @@ const TutorDashboard = () => {
   };
 
   const handleResourceUploadClick = () => {
-    navigate('/resources?actor=tutor&mode=upload');
+    navigate('/tutor-resources?mode=upload');
   };
 
   const handleLogout = async () => {
@@ -378,18 +544,19 @@ const TutorDashboard = () => {
     },
     {
       icon: BellSolidIcon,
-      label: 'Notifications',
-      onClick: () => navigate('/notifications')
+      label: 'Homework Updates',
+      onClick: handleHomeworkUpdatesClick,
+      badge: homeworkUnreadCount,
     },
     {
       icon: Cog6ToothIcon,
       label: 'Account Settings',
-      onClick: () => navigate('/settings')
+      onClick: handleAccountSettingsClick
     },
     {
       icon: QuestionMarkCircleIcon,
       label: 'Help & Support',
-      onClick: () => navigate('/help')
+      onClick: handleHelpSupportClick
     },
     {
       icon: ShieldCheckIcon,
@@ -404,90 +571,63 @@ const TutorDashboard = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+    <div style={S.root}>
+      <link
+        href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet"
+      />
 
-      {/* STICKY TOP BAR */}
-      <div className="bg-white shadow-sm sticky top-0 z-50 border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6">
-          <div className="flex items-center justify-between py-3 sm:py-3.5">
-            {/* Logo */}
-            <div className="shrink-0">
-              <NewLogo logoWidth={32} logoHeight={32} textSize="text-sm sm:text-base" gap="gap-2" centered={false} />
-            </div>
+      {notification && <NotificationToast notification={notification} />}
 
-            {/* Desktop Search */}
-            <div className="hidden md:flex items-center flex-1 max-w-md mx-8">
-              <div className="relative w-full">
-                <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
-                <input
-                  type="text"
-                  placeholder="Search course, tutorial..."
-                  className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:border-[#3D08BA] text-sm"
-                />
-              </div>
-            </div>
+      <DashboardHeader
+        tutorData={tutorData}
+        copied={copied}
+        profileImg={profileImg}
+        onCopyId={copyId} tabs={[]} activeTab={"overview"} onTabChange={function (_tab: TabId): void {
+          throw new Error("Function not implemented.");
+        } }      />
 
-            {/* Right Side */}
-            <div className="flex items-center gap-2 sm:gap-3">
-              {/* Mobile Search */}
-              <button
-                onClick={() => setShowMobileSearch(s => !s)}
-                className="md:hidden p-1.5 sm:p-2 rounded-full hover:bg-gray-100 transition-colors"
-                aria-label="Search"
-              >
-                <FaSearch className="text-gray-600 text-base" />
-              </button>
+      <div style={S.main}>
+        {activeTab === "overview" && (
+          <OverviewTab
+            tutorData={tutorData}
+            earningsData={earningsData}
+            schedule={schedule}
+            recentActivity={recentActivity}
+            onTabChange={setActiveTab}
+            onNotify={notify}
+          />
+        )}
 
-              {/* Notification Bell */}
-              <button
-                onClick={() => navigate('/notifications')}
-                className="relative shrink-0 p-1.5 sm:p-2 rounded-full hover:bg-gray-100 transition-colors"
-                aria-label="Notifications"
-              >
-                <div className="relative">
-                  <div className="w-9 h-9 sm:w-10 sm:h-10 bg-[#3D08BA] rounded-full flex items-center justify-center">
-                    <BellSolidIcon className="w-5 h-5 text-white" />
-                  </div>
-                  <div className="absolute -top-1 -right-1 min-w-5 h-5 px-1.5 bg-red-500 rounded-full flex items-center justify-center shadow-md">
-                    <span className="text-white text-[10px] font-bold">3</span>
-                  </div>
-                </div>
-              </button>
+        {activeTab === "courses" && (
+          <CoursesTab
+            courses={courses}
+            onNotify={notify}
+          />
+        )}
 
-              {/* Hamburger Menu */}
-              <button
-                onClick={() => setMenuOpen(!menuOpen)}
-                className="p-1.5 sm:p-2 rounded-full hover:bg-gray-100 transition-colors"
-                aria-label="Menu"
-              >
-                {menuOpen
-                  ? <HiOutlineX className="w-6 h-6 text-gray-600" />
-                  : <HiOutlineMenu className="w-6 h-6 text-gray-600" />
-                }
-              </button>
-            </div>
-          </div>
-        </div>
+        {activeTab === "students" && (
+          <StudentsTab
+            students={students}
+            activeFilter={activeFilter}
+            onFilterChange={setActiveFilter}
+            onNotify={notify}
+          />
+        )}
 
-        {/* Mobile Search Overlay */}
-        {showMobileSearch && (
-          <div className="md:hidden border-t border-gray-100 px-3 py-2 bg-white">
-            <div className="relative max-w-7xl mx-auto">
-              <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={12} />
-              <input
-                type="text"
-                placeholder="Search course, tutorial..."
-                className="w-full pl-9 pr-10 py-2 border border-gray-200 rounded-lg focus:outline-none focus:border-[#3D08BA] text-sm"
-              />
-              <button
-                onClick={() => setShowMobileSearch(false)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-lg"
-                aria-label="Close search"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
+        {activeTab === "earnings" && (
+          <EarningsTab
+            tutorData={tutorData}
+            courses={courses}
+            earningsData={earningsData}
+          />
+        )}
+
+        {activeTab === "schedule" && (
+          <ScheduleTab
+            schedule={schedule}
+            onNotify={notify}
+          />
         )}
       </div>
 
@@ -582,6 +722,12 @@ const TutorDashboard = () => {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
+                  onClick={handleAssignmentsClick}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
+                >
+                  Manage Homework
+                </button>
+                <button
                   onClick={handleResourceUploadClick}
                   className="rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10"
                 >
@@ -606,6 +752,12 @@ const TutorDashboard = () => {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
+                  onClick={handleAssignmentsClick}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
+                >
+                  Manage Homework
+                </button>
+                <button
                   onClick={handleResourceUploadClick}
                   className="rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-3 py-2 text-xs font-semibold text-[#3D08BA] hover:bg-[#3D08BA]/10"
                 >
@@ -620,6 +772,183 @@ const TutorDashboard = () => {
               </div>
             </div>
           )}
+        </div>
+
+        <div className="mb-5 sm:mb-6 rounded-2xl border border-[#3D08BA]/10 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3D08BA]">
+                Homework review
+              </p>
+              <h2 className="mt-1 text-lg font-bold text-gray-900">Tasks waiting for your attention</h2>
+              <p className="mt-1 text-sm text-gray-600">
+                Keep up with student submissions and open homework from one dashboard block.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleHomeworkUpdatesClick}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
+              >
+                Open homework hub
+              </button>
+              <button
+                onClick={handleAssignmentsClick}
+                className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2c0691]"
+              >
+                New task
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            {[
+              { label: 'Awaiting review', value: homeworkSummary.awaitingReview, tone: 'text-rose-600 bg-rose-50 border-rose-100' },
+              { label: 'Open homework', value: homeworkSummary.active, tone: 'text-emerald-700 bg-emerald-50 border-emerald-100' },
+              { label: 'Unread updates', value: homeworkUnreadCount, tone: 'text-[#3D08BA] bg-[#3D08BA]/5 border-[#3D08BA]/10' },
+            ].map((item) => (
+              <div key={item.label} className={`rounded-xl border px-4 py-3 ${item.tone}`}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em]">{item.label}</p>
+                <p className="mt-2 text-2xl font-bold">{item.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Latest homework updates</p>
+                <p className="text-xs text-gray-500">Recent submissions and review items for your classes.</p>
+              </div>
+            </div>
+
+            {isHomeworkLoading ? (
+              <p className="mt-3 text-sm text-gray-600">Loading homework updates...</p>
+            ) : homeworkNotice ? (
+              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {homeworkNotice}
+              </p>
+            ) : homeworkUpdates.length === 0 ? (
+              <p className="mt-3 text-sm text-gray-600">No homework updates yet.</p>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {homeworkUpdates.map((update) => (
+                  <button
+                    key={update.id}
+                    type="button"
+                    onClick={() => handleHomeworkUpdateDrilldown(update)}
+                    className="flex w-full items-start justify-between gap-3 rounded-xl border border-white bg-white px-3 py-3 text-left shadow-sm transition hover:border-[#3D08BA]/15 hover:shadow-md"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-semibold text-gray-900">{update.title}</p>
+                        {!update.isRead ? (
+                          <span className="rounded-full bg-[#3D08BA]/10 px-2 py-0.5 text-[10px] font-semibold text-[#3D08BA]">
+                            New
+                          </span>
+                        ) : null}
+                        {update.needsReview ? (
+                          <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700">
+                            Review
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-gray-600">{update.message}</p>
+                    </div>
+                    <span className="shrink-0 text-[11px] font-medium text-gray-500">
+                      {formatRelativeUpdateTime(update.createdAt)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mb-5 sm:mb-6 rounded-2xl border border-[#3D08BA]/10 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3D08BA]">
+                Class replays
+              </p>
+              <h2 className="mt-1 text-lg font-bold text-gray-900">Recent live recordings</h2>
+              <p className="mt-1 text-sm text-gray-600">
+                Review class replays and reopen the tutor recording library without leaving the dashboard.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleReplayHubClick}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-[#3D08BA]/20 hover:text-[#3D08BA]"
+              >
+                Open recordings
+              </button>
+              <button
+                onClick={handleResourceUploadClick}
+                className="rounded-lg bg-[#3D08BA] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2c0691]"
+              >
+                Upload video
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            {[
+              { label: 'Published replays', value: replaySummary.total, tone: 'text-[#3D08BA] bg-[#3D08BA]/5 border-[#3D08BA]/10' },
+              { label: 'Added this week', value: replaySummary.thisWeek, tone: 'text-sky-700 bg-sky-50 border-sky-100' },
+              { label: 'Latest upload', value: replaySummary.latestLabel, tone: 'text-emerald-700 bg-emerald-50 border-emerald-100' },
+            ].map((item) => (
+              <div key={item.label} className={`rounded-xl border px-4 py-3 ${item.tone}`}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em]">{item.label}</p>
+                <p className="mt-2 text-2xl font-bold">{item.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50/70 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Latest replay uploads</p>
+                <p className="text-xs text-gray-500">Recent class recordings published from the live room.</p>
+              </div>
+            </div>
+
+            {isReplayLoading ? (
+              <p className="mt-3 text-sm text-gray-600">Loading class replays...</p>
+            ) : replayNotice && recentReplayUploads.length === 0 ? (
+              <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {replayNotice}
+              </p>
+            ) : recentReplayUploads.length === 0 ? (
+              <p className="mt-3 text-sm text-gray-600">No class replays yet.</p>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {recentReplayUploads.map((recording) => (
+                  <button
+                    key={recording.id}
+                    type="button"
+                    onClick={handleReplayHubClick}
+                    className="flex w-full items-start justify-between gap-3 rounded-xl border border-white bg-white px-3 py-3 text-left shadow-sm transition hover:border-[#3D08BA]/15 hover:shadow-md"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-semibold text-gray-900">{recording.title}</p>
+                        <span className="rounded-full bg-[#3D08BA]/10 px-2 py-0.5 text-[10px] font-semibold text-[#3D08BA]">
+                          Replay
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-gray-600">
+                        {recording.subject} · {recording.sizeLabel}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-[11px] font-medium text-gray-500">
+                      {formatRelativeUpdateTime(recording.uploadedAt)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Stats Cards */}
@@ -877,11 +1206,19 @@ const TutorDashboard = () => {
             </div>
             <span className="text-[11px]">Students</span>
           </button>
-          <button className="flex flex-col items-center gap-0.5 sm:gap-1 text-gray-500 hover:text-[#F68C29]">
-            <div className="p-2 sm:p-2.5 rounded-lg hover:bg-orange-50">
-              <FaMoneyBillWave size={16} />
+          <button
+            onClick={handleHomeworkUpdatesClick}
+            className="relative flex flex-col items-center gap-0.5 sm:gap-1 text-gray-500 hover:text-[#F68C29]"
+          >
+            <div className="relative p-2 sm:p-2.5 rounded-lg hover:bg-orange-50">
+              <FaClipboardList size={16} />
+              {homeworkUnreadCount > 0 ? (
+                <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-red-500 px-1 text-center text-[9px] font-bold leading-4 text-white">
+                  {homeworkUnreadCount > 9 ? '9+' : homeworkUnreadCount}
+                </span>
+              ) : null}
             </div>
-            <span className="text-[11px]">Earnings</span>
+            <span className="text-[11px]">Homework</span>
           </button>
         </div>
       </div>
@@ -929,6 +1266,11 @@ const TutorDashboard = () => {
                       <item.icon className="w-5 h-5 text-gray-600 group-hover:text-white transition-colors" />
                     </div>
                     <span className="flex-1">{item.label}</span>
+                    {typeof item.badge === 'number' && item.badge > 0 ? (
+                      <span className="rounded-full bg-[#3D08BA] px-2 py-0.5 text-[10px] font-semibold text-white">
+                        {item.badge > 99 ? '99+' : item.badge}
+                      </span>
+                    ) : null}
                   </button>
                 ))}
               </div>

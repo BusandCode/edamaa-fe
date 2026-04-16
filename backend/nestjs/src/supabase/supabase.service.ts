@@ -29,7 +29,9 @@ export class SupabaseService {
   async getUserFromAuthHeader(
     authHeader?: string,
     devEmailHeader?: string,
-    devRoleHeader?: string
+    devRoleHeader?: string,
+    devUserMetadataHeader?: string,
+    devAppMetadataHeader?: string
   ) {
     if (!this.adminClient) {
       if (this.allowLocalDevBypass) {
@@ -37,6 +39,8 @@ export class SupabaseService {
           this.normalizeEmail(devEmailHeader) || this.extractEmailFromBearerToken(authHeader);
         const role =
           this.normalizeRole(devRoleHeader) || this.extractRoleFromBearerToken(authHeader) || 'student';
+        const devUserMetadata = this.parseOptionalMetadataJson(devUserMetadataHeader);
+        const devAppMetadata = this.parseOptionalMetadataJson(devAppMetadataHeader);
         if (email && email.includes('@')) {
           return {
             id: `local-dev-${email}`,
@@ -45,10 +49,12 @@ export class SupabaseService {
             user_metadata: {
               full_name: email.split('@')[0] || 'Local Dev User',
               role,
+              ...devUserMetadata,
             },
             app_metadata: {
               provider: 'local-dev',
               role,
+              ...devAppMetadata,
             },
           };
         }
@@ -157,5 +163,19 @@ export class SupabaseService {
 
   private readString(value: unknown) {
     return typeof value === 'string' ? value : '';
+  }
+
+  private parseOptionalMetadataJson(value?: string | null) {
+    const normalized = String(value || '').trim();
+    if (!normalized) {
+      return {};
+    }
+
+    try {
+      const parsed = JSON.parse(normalized) as Record<string, unknown>;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
   }
 }

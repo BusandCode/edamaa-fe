@@ -11,6 +11,11 @@ import {
   persistSupabaseSession,
   type AppAccountRole,
 } from '../../utils/authSession';
+import {
+  buildSchoolWorkspaceMetadata,
+  loadSchoolHasHostelPreference,
+  persistSchoolHasHostelPreference,
+} from '../../utils/schoolBranding';
 import { getSupabaseBrowserClient, isSupabaseBrowserConfigured } from '../../utils/supabaseClient';
 import { loadStudentIdentity, saveStudentIdentity } from '../students/utils/studentIdentity';
 import { fetchMyAccountRoles, switchDefaultAccountRole } from './utils/accountRolesApi';
@@ -29,6 +34,25 @@ const SignIn: React.FC = () => {
   };
 
   const normalizeEmail = (value: string) => value.trim().toLowerCase();
+  const readMetadataString = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+  const readMetadataBoolean = (value: unknown) => {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number') {
+      return value === 1 ? true : value === 0 ? false : null;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['true', 'yes', '1'].includes(normalized)) {
+        return true;
+      }
+      if (['false', 'no', '0'].includes(normalized)) {
+        return false;
+      }
+    }
+    return null;
+  };
 
   const deriveFriendlyName = (userEmail: string, fullNameValue: unknown, fallbackName: string) => {
     const metadataName = typeof fullNameValue === 'string' ? fullNameValue.trim() : '';
@@ -48,30 +72,132 @@ const SignIn: React.FC = () => {
     return fallbackName;
   };
 
+  const resolveSchoolWorkspaceMetadata = (
+    normalizedEmail: string,
+    user?: {
+      app_metadata?: Record<string, unknown> | null;
+      user_metadata?: Record<string, unknown> | null;
+    } | null,
+    fallbackSchoolName?: string
+  ) => {
+    const storedSchoolName = (window.localStorage.getItem('edamaa_school_display_name') || '').trim();
+    const metadataSchoolName =
+      readMetadataString(user?.user_metadata?.school_name) ||
+      readMetadataString(user?.app_metadata?.school_name);
+    const metadataWorkspaceKey =
+      readMetadataString(user?.user_metadata?.school_workspace_key) ||
+      readMetadataString(user?.app_metadata?.school_workspace_key);
+    const metadataHasHostel =
+      readMetadataBoolean(user?.user_metadata?.school_has_hostel) ??
+      readMetadataBoolean(user?.app_metadata?.school_has_hostel) ??
+      loadSchoolHasHostelPreference();
+
+    return buildSchoolWorkspaceMetadata({
+      schoolName: metadataSchoolName || storedSchoolName || fallbackSchoolName || 'School',
+      email: normalizedEmail,
+      preferredKey: metadataWorkspaceKey,
+      hasHostel: metadataHasHostel,
+    });
+  };
+
+  const ensureSupabaseSchoolWorkspaceMetadata = async (
+    supabase: ReturnType<typeof getSupabaseBrowserClient>,
+    session: { user?: { email?: string | null } | null } | null,
+    user: {
+      email?: string | null;
+      app_metadata?: Record<string, unknown> | null;
+      user_metadata?: Record<string, unknown> | null;
+    } | null,
+    role: AppAccountRole,
+    fallbackSchoolName: string
+  ) => {
+    if (!supabase || role !== 'school') {
+      return user;
+    }
+
+    const normalizedEmail = normalizeEmail(user?.email || session?.user?.email || '');
+    const schoolWorkspaceMetadata = resolveSchoolWorkspaceMetadata(normalizedEmail, user, fallbackSchoolName);
+    const currentWorkspaceKey =
+      readMetadataString(user?.user_metadata?.school_workspace_key) ||
+      readMetadataString(user?.app_metadata?.school_workspace_key);
+    const currentSchoolName =
+      readMetadataString(user?.user_metadata?.school_name) ||
+      readMetadataString(user?.app_metadata?.school_name);
+    const currentHasHostel =
+      readMetadataBoolean(user?.user_metadata?.school_has_hostel) ??
+      readMetadataBoolean(user?.app_metadata?.school_has_hostel);
+    const shouldUpdateUserMetadata =
+      currentWorkspaceKey !== schoolWorkspaceMetadata.school_workspace_key ||
+      currentSchoolName !== schoolWorkspaceMetadata.school_name ||
+      currentHasHostel !== schoolWorkspaceMetadata.school_has_hostel;
+
+    if (!shouldUpdateUserMetadata) {
+      return user;
+    }
+
+    try {
+      const nextUserMetadata = {
+        ...((user?.user_metadata as Record<string, unknown> | null | undefined) || {}),
+        ...schoolWorkspaceMetadata,
+      };
+      const { data: updatedUserData, error: updateError } = await supabase.auth.updateUser({
+        data: nextUserMetadata,
+      });
+
+      if (updateError) {
+        return user;
+      }
+
+      const { data: refreshedData } = await supabase.auth.refreshSession();
+      if (refreshedData.session) {
+        persistSupabaseSession(refreshedData.session);
+        return refreshedData.session.user;
+      }
+
+      return updatedUserData.user ?? user;
+    } catch {
+      return user;
+    }
+  };
+
   const persistDisplayNameByRole = (
     fullName: string,
     role: AppAccountRole,
     user?: {
+      email?: string | null;
       app_metadata?: Record<string, unknown> | null;
       user_metadata?: Record<string, unknown> | null;
     } | null
   ) => {
-    const readMetadataString = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
     const metadataSchoolName = readMetadataString(
       user?.user_metadata?.school_name
     );
     const metadataAppSchoolName = readMetadataString(
       user?.app_metadata?.school_name
     );
+    const metadataWorkspaceKey =
+      readMetadataString(user?.user_metadata?.school_workspace_key) ||
+      readMetadataString(user?.app_metadata?.school_workspace_key);
+    const metadataHasHostel =
+      readMetadataBoolean(user?.user_metadata?.school_has_hostel) ??
+      readMetadataBoolean(user?.app_metadata?.school_has_hostel);
 
     if (role === 'school') {
       const schoolNameFromStorage = (window.localStorage.getItem('edamaa_school_display_name') || '').trim();
       const schoolName = metadataSchoolName || metadataAppSchoolName || schoolNameFromStorage || fullName || 'School';
       const adminNameFromStorage = (window.localStorage.getItem('edamaa_school_admin_name') || '').trim();
       const adminName = fullName || adminNameFromStorage || 'School Admin';
+      const schoolHasHostel = metadataHasHostel ?? loadSchoolHasHostelPreference();
 
       window.localStorage.setItem('edamaa_school_display_name', schoolName);
       window.localStorage.setItem('edamaa_school_admin_name', adminName);
+      persistSchoolHasHostelPreference(schoolHasHostel);
+      buildSchoolWorkspaceMetadata({
+        schoolName,
+        email: normalizeEmail(user?.email || ''),
+        preferredKey: metadataWorkspaceKey,
+        hasHostel: schoolHasHostel,
+      });
       return;
     }
     if (role === 'tutor') {
@@ -232,6 +358,7 @@ const SignIn: React.FC = () => {
     notice: string,
     role: AppAccountRole = 'student',
     user?: {
+      email?: string | null;
       app_metadata?: Record<string, unknown> | null;
       user_metadata?: Record<string, unknown> | null;
     } | null
@@ -326,10 +453,22 @@ const SignIn: React.FC = () => {
           persistKnownAccountRoleForEmail(normalizedEmail, syncedRoleState.defaultRole);
         }
 
-        const fullName = deriveFriendlyName(
+        const preliminaryFullName = deriveFriendlyName(
           data.session.user?.email || normalizedEmail || 'student@edamaa.local',
           (data.session.user?.user_metadata as Record<string, unknown> | undefined)?.full_name,
           'Student'
+        );
+        const resolvedUser = await ensureSupabaseSchoolWorkspaceMetadata(
+          supabase,
+          data.session,
+          data.session.user,
+          syncedRoleState.defaultRole,
+          preliminaryFullName
+        );
+        const fullName = deriveFriendlyName(
+          resolvedUser?.email || data.session.user?.email || normalizedEmail || 'student@edamaa.local',
+          (resolvedUser?.user_metadata as Record<string, unknown> | undefined)?.full_name,
+          preliminaryFullName
         );
 
         if (!cancelled) {
@@ -337,7 +476,7 @@ const SignIn: React.FC = () => {
             fullName,
             'Sign-in successful. Redirecting to your dashboard...',
             syncedRoleState.defaultRole,
-            data.session.user
+            resolvedUser
           );
         }
       } catch (error) {
@@ -397,15 +536,36 @@ const SignIn: React.FC = () => {
         loadPersistedLocalDevAuthSession()?.defaultRole ||
         'student';
 
+      const fallbackSchoolWorkspaceMetadata =
+        fallbackRole === 'school'
+          ? resolveSchoolWorkspaceMetadata(normalizedEmail, null, fallbackName)
+          : null;
+
       persistLocalDevAuthSession(normalizedEmail, fallbackRole, {
         defaultRole: fallbackRole,
         activeRoles: fallbackRoleState?.activeRoles || [fallbackRole],
+        ...(fallbackSchoolWorkspaceMetadata
+          ? {
+              userMetadata: fallbackSchoolWorkspaceMetadata,
+              appMetadata: fallbackSchoolWorkspaceMetadata,
+            }
+          : {}),
       });
 
       const syncedRoleState = await syncRoleStateFromBackend(fallbackRole);
+      const finalSchoolWorkspaceMetadata =
+        syncedRoleState.defaultRole === 'school'
+          ? resolveSchoolWorkspaceMetadata(normalizedEmail, null, fallbackName)
+          : null;
       persistLocalDevAuthSession(normalizedEmail, syncedRoleState.defaultRole, {
         defaultRole: syncedRoleState.defaultRole,
         activeRoles: syncedRoleState.activeRoles,
+        ...(finalSchoolWorkspaceMetadata
+          ? {
+              userMetadata: finalSchoolWorkspaceMetadata,
+              appMetadata: finalSchoolWorkspaceMetadata,
+            }
+          : {}),
       });
       persistKnownAccountRoleForEmail(normalizedEmail, syncedRoleState.defaultRole);
 
@@ -441,16 +601,28 @@ const SignIn: React.FC = () => {
         knownRoleForEmail && metadataRole === 'student' ? knownRoleForEmail : metadataRole;
       const syncedRoleState = await syncRoleStateFromBackend(accountRole);
       persistKnownAccountRoleForEmail(normalizedEmail, syncedRoleState.defaultRole);
-      const fullName = deriveFriendlyName(
+      const preliminaryFullName = deriveFriendlyName(
         data.user?.email || normalizedEmail,
         (data.user?.user_metadata as Record<string, unknown> | undefined)?.full_name,
         'Student'
+      );
+      const resolvedUser = await ensureSupabaseSchoolWorkspaceMetadata(
+        supabase,
+        data.session,
+        data.user,
+        syncedRoleState.defaultRole,
+        preliminaryFullName
+      );
+      const fullName = deriveFriendlyName(
+        resolvedUser?.email || data.user?.email || normalizedEmail,
+        (resolvedUser?.user_metadata as Record<string, unknown> | undefined)?.full_name,
+        preliminaryFullName
       );
       completeSignIn(
         fullName,
         'Sign-in successful. Redirecting to your dashboard...',
         syncedRoleState.defaultRole,
-        data.user
+        resolvedUser
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to sign in right now.';

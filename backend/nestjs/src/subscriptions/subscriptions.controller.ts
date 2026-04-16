@@ -5,6 +5,7 @@ import { SubscriptionsService } from './subscriptions.service';
 
 type CreateCheckoutBody = {
   actor?: string;
+  interval?: string;
   successUrl?: string;
   cancelUrl?: string;
 };
@@ -33,6 +34,7 @@ export class SubscriptionsController {
       this.getAuthUser(request),
       {
         actor: body.actor,
+        interval: body.interval,
         successUrl: body.successUrl,
         cancelUrl: body.cancelUrl,
       }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -25,6 +25,7 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { buildRtcConfiguration } from '../../../utils/rtc';
+import { hasPersistedAuthSession } from '../../../utils/authSession';
 import { loadSchoolBrandingNames, loadSchoolProfileImage } from '../../../utils/schoolBranding';
 import {
   fetchSchoolScheduleLiveAttendance,
@@ -33,10 +34,32 @@ import {
   type SchoolScheduleAttendanceResponse,
 } from '../../schools/utils/schoolScheduleApi';
 import {
+  createTutorAssignment,
+  createSchoolAssignment,
+  fetchTutorAssignments,
+  fetchSchoolAssignments,
+  type CreateSchoolAssignmentInput,
+  fetchStudentAssignments,
+  type SchoolAssignment,
+  type StudentAssignment,
+} from '../../schools/utils/assignmentsApi';
+import {
   fetchTeachingSubscriptionState,
   type TeachingActor,
 } from '../../subscriptions/utils/teachingSubscriptionApi';
+import { uploadResourceForActor } from '../../schools/utils/resourcesApi';
 import { loadStudentIdentity } from '../utils/studentIdentity';
+import {
+  createCloudflareRealtimeKitSession,
+  fetchCloudflareRealtimeKitStatus,
+  type CloudflareRealtimeKitActor,
+  type CloudflareRealtimeKitSession,
+} from '../utils/cloudflareRealtimeKitApi';
+import {
+  fetchSchoolScheduleSessions,
+  type SchoolScheduleSession,
+} from '../../schools/utils/schoolScheduleApi';
+import { downloadFile } from '../../../utils/exportFiles';
 
 type ClassLevel = 'Beginner' | 'Intermediate' | 'Advanced';
 type RoomRole = 'teacher' | 'student';
@@ -195,6 +218,8 @@ type PendingStageInvite = {
   sentAt: string;
 };
 
+const CloudflareRealtimeKitOverlay = lazy(() => import('../components/CloudflareRealtimeKitOverlay'));
+
 type IncomingStageInvite = {
   inviteId: string;
   hostClientId: string;
@@ -220,9 +245,86 @@ type LiveTaskRuntime = LiveTaskPlan & {
   remainingMs?: number;
 };
 
+type LiveLinkedAssignment = Pick<
+  StudentAssignment | SchoolAssignment,
+  | 'id'
+  | 'title'
+  | 'content'
+  | 'checklist'
+  | 'dueAt'
+  | 'isReleased'
+  | 'releaseMode'
+  | 'linkedSessionStatus'
+  | 'type'
+  | 'sessionId'
+>;
+
+type LiveLinkedAssignmentDraft = {
+  title: string;
+  subject: string;
+  department: string;
+  classGroup: string;
+  dueAt: string;
+  points: number;
+  description: string;
+  content: string;
+  checklistText: string;
+};
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '');
+const CLOUDFLARE_REALTIMEKIT_ENABLED =
+  String(import.meta.env.VITE_CLOUDFLARE_REALTIMEKIT_ENABLED || 'false').trim().toLowerCase() ===
+  'true';
 
 const RTC_CONFIGURATION: RTCConfiguration = buildRtcConfiguration();
+
+const formatLiveDateTime = (value: string | null | undefined) => {
+  if (!value) {
+    return '--';
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return '--';
+  }
+  return parsed.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const toDateTimeLocalValue = (value: string | Date | null | undefined) => {
+  if (!value) {
+    return '';
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+  const offset = parsed.getTimezoneOffset();
+  return new Date(parsed.getTime() - offset * 60_000).toISOString().slice(0, 16);
+};
+
+const buildLiveLinkedAssignmentDraft = (
+  liveClass: ClassDetails,
+  session: SchoolScheduleSession | null
+): LiveLinkedAssignmentDraft => {
+  const dueBase = session?.endAt ? new Date(session.endAt) : new Date();
+  dueBase.setDate(dueBase.getDate() + 2);
+
+  return {
+    title: `${liveClass.subject} follow-up homework`,
+    subject: session?.subject || liveClass.subject,
+    department: session?.department || '',
+    classGroup: session?.classGroup || '',
+    dueAt: toDateTimeLocalValue(dueBase),
+    points: 20,
+    description: `Follow-up task for ${session?.title || liveClass.name}.`,
+    content: '',
+    checklistText: '',
+  };
+};
 
 const AVATAR_GRADIENTS: Array<[string, string]> = [
   ['#3D08BA', '#5f2ce0'],
@@ -268,7 +370,6 @@ const REACTION_PALETTE_BY_SET: Record<string, typeof DEFAULT_REACTION_PALETTE> =
     { emoji: '🤝', label: 'Agree', accentClass: 'from-slate-400 to-blue-500' },
   ],
 };
-const LIVE_CLASS_END_STORAGE_KEY = 'edamaa_live_class_last_ended_at';
 
 const COIN_PACKS: CoinPack[] = [
   { id: 'starter', label: 'Starter', coins: 120, bonusCoins: 0, priceLabel: '$1.99' },
@@ -440,6 +541,34 @@ const getBadgeForTotalGiftedCoins = (totalGiftedCoins: number) => {
 const sanitizeCardNumber = (value: string) => value.replace(/[^\d]/g, '').slice(0, 16);
 const sanitizeExpiry = (value: string) => value.replace(/[^\d/]/g, '').slice(0, 5);
 const sanitizeCvv = (value: string) => value.replace(/[^\d]/g, '').slice(0, 4);
+const LIVE_RECORDING_UPLOAD_LIMIT_BYTES = 250 * 1024 * 1024;
+const LIVE_RECORDING_TARGET_VIDEO_BITRATE = 650_000;
+const LIVE_RECORDING_TARGET_AUDIO_BITRATE = 64_000;
+const LIVE_RECORDING_CAPTURE_CONSTRAINTS: MediaTrackConstraints = {
+  width: { ideal: 1280, max: 1280 },
+  height: { ideal: 720, max: 720 },
+  frameRate: { ideal: 24, max: 24 },
+};
+const sanitizeFilePart = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'recording';
+
+const getPreferredRecordingMimeType = () => {
+  if (typeof MediaRecorder === 'undefined') {
+    return '';
+  }
+
+  const preferredTypes = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm',
+  ];
+
+  return preferredTypes.find((value) => MediaRecorder.isTypeSupported(value)) || '';
+};
 
 const LiveClassroom = () => {
   const navigate = useNavigate();
@@ -482,6 +611,10 @@ const LiveClassroom = () => {
   const schoolSupportId = useMemo(() => `school-${liveClass.id}`, [liveClass.id]);
   const schoolSupportName = useMemo(() => `${liveClass.subject} School Support`, [liveClass.subject]);
   const channelName = useMemo(() => `live-class:${liveClass.id}`, [liveClass.id]);
+  const cloudflareRealtimeKitActor: CloudflareRealtimeKitActor = isTeacher ? teacherActor : 'student';
+  const hasTeacherAuthSession = useMemo(() => hasPersistedAuthSession(), []);
+  const canManageLinkedAssignments = isTeacher && hasTeacherAuthSession && Boolean(liveClass.id);
+  const canAutoPublishLiveRecording = isTeacher && hasTeacherAuthSession && Boolean(liveClass.id);
 
   const clientIdRef = useRef(`client-${Date.now()}-${Math.floor(Math.random() * 100000)}`);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -489,6 +622,11 @@ const LiveClassroom = () => {
   const stageLocalVideoRef = useRef<HTMLVideoElement | null>(null);
   const stageRemoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const liveRecordingMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const liveRecordingChunksRef = useRef<BlobPart[]>([]);
+  const liveRecordingStartMsRef = useRef<number | null>(null);
+  const liveRecordingTickerRef = useRef<number | null>(null);
+  const liveRecordingStopResolverRef = useRef<(() => void) | null>(null);
 
   const chatBodyRef = useRef<HTMLDivElement | null>(null);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
@@ -597,6 +735,13 @@ const LiveClassroom = () => {
   const [isSchoolAttendanceLoading, setIsSchoolAttendanceLoading] = useState(false);
   const [attendanceActionState, setAttendanceActionState] = useState<'open' | 'close' | 'check_in' | null>(null);
   const isSchoolAttendanceClass = teacherActor === 'school' && Boolean(liveClass.id);
+  const [linkedAssignmentSession, setLinkedAssignmentSession] = useState<SchoolScheduleSession | null>(null);
+  const [isLinkedAssignmentSessionLoading, setIsLinkedAssignmentSessionLoading] = useState(false);
+  const [isLinkedAssignmentComposerOpen, setIsLinkedAssignmentComposerOpen] = useState(false);
+  const [isLinkedAssignmentSaving, setIsLinkedAssignmentSaving] = useState(false);
+  const [linkedAssignmentDraft, setLinkedAssignmentDraft] = useState<LiveLinkedAssignmentDraft>(() =>
+    buildLiveLinkedAssignmentDraft(liveClass, null)
+  );
 
   useEffect(() => {
     if (isTeacher || !liveClass.id) {
@@ -631,16 +776,45 @@ const LiveClassroom = () => {
       });
     };
   }, [attendanceParticipantId, attendanceParticipantName, isTeacher, liveClass.id]);
+
+  useEffect(() => {
+    if (!canManageLinkedAssignments) {
+      setLinkedAssignmentSession(null);
+      setIsLinkedAssignmentSessionLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadCurrentScheduleSession = async () => {
+      setIsLinkedAssignmentSessionLoading(true);
+      try {
+        const payload = await fetchSchoolScheduleSessions({ status: 'all' });
+        if (!cancelled) {
+          setLinkedAssignmentSession(
+            payload.sessions.find((session) => session.id === liveClass.id) || null
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setLinkedAssignmentSession(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLinkedAssignmentSessionLoading(false);
+        }
+      }
+    };
+
+    void loadCurrentScheduleSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canManageLinkedAssignments, liveClass.id]);
   const [isTeacherSubscriptionChecking, setIsTeacherSubscriptionChecking] = useState(isTeacher);
   const [isTeacherSubscriptionLocked, setIsTeacherSubscriptionLocked] = useState(false);
   const [teacherSubscriptionLockReason, setTeacherSubscriptionLockReason] = useState('');
   const [liveNowMs, setLiveNowMs] = useState(() => Date.now());
-  const [classEndedAtIso, setClassEndedAtIso] = useState<string | null>(() => {
-    if (typeof window === 'undefined') {
-      return null;
-    }
-    return window.localStorage.getItem(LIVE_CLASS_END_STORAGE_KEY);
-  });
   const [activeClassworkPromptId, setActiveClassworkPromptId] = useState<string | null>(null);
   const [showTeacherWelcome, setShowTeacherWelcome] = useState(false);
 
@@ -743,6 +917,16 @@ const LiveClassroom = () => {
   const [screenShared, setScreenShared] = useState(false);
   const [mediaError, setMediaError] = useState('');
   const [settingsToastVisible, setSettingsToastVisible] = useState(false);
+  const [isLiveRecording, setIsLiveRecording] = useState(false);
+  const [isPublishingLiveRecording, setIsPublishingLiveRecording] = useState(false);
+  const [liveRecordingSeconds, setLiveRecordingSeconds] = useState(0);
+  const [cloudflareRealtimeKitBootstrapState, setCloudflareRealtimeKitBootstrapState] = useState<
+    'disabled' | 'checking' | 'ready' | 'unavailable' | 'error'
+  >(CLOUDFLARE_REALTIMEKIT_ENABLED ? 'checking' : 'disabled');
+  const [cloudflareRealtimeKitSession, setCloudflareRealtimeKitSession] =
+    useState<CloudflareRealtimeKitSession | null>(null);
+  const [cloudflareRealtimeKitStatusMessage, setCloudflareRealtimeKitStatusMessage] = useState('');
+  const [isCloudflareRealtimeKitOverlayOpen, setIsCloudflareRealtimeKitOverlayOpen] = useState(false);
 
   const pushNotice = useCallback((text: string, type: NoticeTone = 'info') => {
     setNoticeState({ type, text });
@@ -751,6 +935,119 @@ const LiveClassroom = () => {
   const clearNotice = useCallback(() => {
     setNoticeState(null);
   }, []);
+
+  const clearLiveRecordingTicker = useCallback(() => {
+    if (liveRecordingTickerRef.current !== null) {
+      window.clearInterval(liveRecordingTickerRef.current);
+      liveRecordingTickerRef.current = null;
+    }
+  }, []);
+
+  const publishCapturedLiveRecording = useCallback(
+    async (blob: Blob, startedAtMs: number | null) => {
+      const startedAt = startedAtMs ? new Date(startedAtMs) : new Date();
+      const startedAtLabel = startedAt.toLocaleString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      const baseTitle = `${liveClass.subject} live class recording`;
+      const fileName = `${sanitizeFilePart(liveClass.subject)}-live-recording-${startedAt
+        .toISOString()
+        .replace(/[:.]/g, '-')}.webm`;
+      const file = new File([blob], fileName, {
+        type: blob.type || 'video/webm',
+      });
+
+      if (file.size > LIVE_RECORDING_UPLOAD_LIMIT_BYTES) {
+        downloadFile(blob, fileName);
+        pushNotice(
+          'Recording saved to your device. It is too large for direct resource upload, so publish it manually if needed.',
+          'warning'
+        );
+        return;
+      }
+
+      if (!canAutoPublishLiveRecording) {
+        downloadFile(blob, fileName);
+        pushNotice(
+          'Recording saved to your device. Sign in with a school or tutor account to auto-publish replays.',
+          'warning'
+        );
+        return;
+      }
+
+      setIsPublishingLiveRecording(true);
+      try {
+        const instructorName =
+          teacherActor === 'school'
+            ? schoolBranding?.schoolName || selfParticipant.name || liveClass.instructor
+            : selfParticipant.name || liveClass.instructor;
+
+        await uploadResourceForActor(
+          {
+            title: `${baseTitle} • ${startedAtLabel}`,
+            description: `Replay of ${liveClass.name} recorded on ${startedAtLabel}. Students can use this to revisit the live lesson and key explanations.`,
+            subject: linkedAssignmentSession?.subject || liveClass.subject,
+            type: 'video',
+            category: 'live_recording',
+            pricingType: 'free',
+            price: '',
+            uploaderRole: teacherActor,
+            instructorName,
+            file,
+          },
+          teacherActor
+        );
+
+        pushNotice(
+          teacherActor === 'school'
+            ? 'Live recording published to school resources.'
+            : 'Live recording published to tutor resources.',
+          'success'
+        );
+      } catch (error) {
+        downloadFile(blob, fileName);
+        pushNotice(
+          error instanceof Error
+            ? `${error.message} Recording was saved to your device instead.`
+            : 'Could not auto-publish the recording. It was saved to your device instead.',
+          'warning'
+        );
+      } finally {
+        setIsPublishingLiveRecording(false);
+      }
+    },
+    [
+      canAutoPublishLiveRecording,
+      linkedAssignmentSession?.subject,
+      liveClass.instructor,
+      liveClass.name,
+      liveClass.subject,
+      pushNotice,
+      schoolBranding?.schoolName,
+      selfParticipant.name,
+      teacherActor,
+    ]
+  );
+
+  const finalizeLiveRecording = useCallback(async () => {
+    const recorder = liveRecordingMediaRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') {
+      return;
+    }
+
+    clearLiveRecordingTicker();
+    setIsLiveRecording(false);
+
+    const completion = new Promise<void>((resolve) => {
+      liveRecordingStopResolverRef.current = resolve;
+    });
+
+    recorder.stop();
+    await completion;
+  }, [clearLiveRecordingTicker]);
 
   const refreshSchoolAttendanceState = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -1044,21 +1341,151 @@ const LiveClassroom = () => {
     );
   }, [liveClassworkTasks, liveNowMs, streamStatus]);
 
-  const postClassAssignments = useMemo(
-    () => LIVE_TASK_PLAN.filter((task) => task.kind === 'assignment'),
-    []
-  );
-  const shouldShowPostClassAssignmentContent = streamStatus === 'ended' || !!classEndedAtIso;
-
-  const markClassEnded = useCallback(() => {
-    if (typeof window === 'undefined') {
+  const [linkedPostClassAssignments, setLinkedPostClassAssignments] = useState<LiveLinkedAssignment[]>([]);
+  const [isLinkedAssignmentsLoading, setIsLinkedAssignmentsLoading] = useState(false);
+  const loadLinkedAssignments = useCallback(async () => {
+    if (teacherActor !== 'school' || !liveClass.id) {
+      setLinkedPostClassAssignments([]);
       return;
     }
 
-    const endedAtIso = new Date().toISOString();
-    window.localStorage.setItem(LIVE_CLASS_END_STORAGE_KEY, endedAtIso);
-    setClassEndedAtIso(endedAtIso);
+    setIsLinkedAssignmentsLoading(true);
+    try {
+      if (isTeacher) {
+        if (!hasTeacherAuthSession) {
+          setLinkedPostClassAssignments([]);
+          return;
+        }
+
+        const payload =
+          teacherActor === 'school' ? await fetchSchoolAssignments() : await fetchTutorAssignments();
+        setLinkedPostClassAssignments(
+          payload.assignments.filter((assignment) => assignment.sessionId === liveClass.id)
+        );
+        return;
+      }
+
+      if (!studentIdentity.department || !studentIdentity.classGroup) {
+        setLinkedPostClassAssignments([]);
+        return;
+      }
+
+      const payload = await fetchStudentAssignments({
+        department: studentIdentity.department,
+        classGroup: studentIdentity.classGroup,
+        studentId: studentIdentity.id,
+      });
+
+      setLinkedPostClassAssignments(
+        payload.assignments.filter((assignment) => assignment.sessionId === liveClass.id)
+      );
+    } catch {
+      setLinkedPostClassAssignments([]);
+    } finally {
+      setIsLinkedAssignmentsLoading(false);
+    }
+  }, [
+    hasTeacherAuthSession,
+    isTeacher,
+    liveClass.id,
+    studentIdentity.classGroup,
+    studentIdentity.department,
+    studentIdentity.id,
+    teacherActor,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      await loadLinkedAssignments();
+    };
+
+    void run().catch(() => {
+      if (!cancelled) {
+        setLinkedPostClassAssignments([]);
+        setIsLinkedAssignmentsLoading(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadLinkedAssignments]);
+
+  const openLinkedAssignmentComposer = useCallback(() => {
+    setLinkedAssignmentDraft(buildLiveLinkedAssignmentDraft(liveClass, linkedAssignmentSession));
+    setIsLinkedAssignmentComposerOpen(true);
+  }, [linkedAssignmentSession, liveClass]);
+
+  const closeLinkedAssignmentComposer = useCallback(() => {
+    setIsLinkedAssignmentComposerOpen(false);
+    setIsLinkedAssignmentSaving(false);
   }, []);
+
+  const handleCreateLinkedAssignment = useCallback(async () => {
+    const payload: CreateSchoolAssignmentInput = {
+      title: linkedAssignmentDraft.title.trim(),
+      subject: linkedAssignmentDraft.subject.trim(),
+      department: linkedAssignmentDraft.department.trim(),
+      classGroup: linkedAssignmentDraft.classGroup.trim(),
+      description: linkedAssignmentDraft.description.trim(),
+      content: linkedAssignmentDraft.content.trim(),
+      checklist: linkedAssignmentDraft.checklistText
+        .split('\n')
+        .map((item) => item.trim())
+        .filter(Boolean),
+      type: 'assignment',
+      deliveryMode: 'virtual',
+      releaseMode: 'on_class_end',
+      dueAt: linkedAssignmentDraft.dueAt,
+      points: Math.max(1, Number(linkedAssignmentDraft.points) || 0),
+      sessionId: liveClass.id || null,
+      attachments: 0,
+    };
+
+    if (
+      !payload.title ||
+      !payload.subject ||
+      !payload.department ||
+      !payload.classGroup ||
+      !payload.description ||
+      !payload.content ||
+      !payload.dueAt ||
+      !payload.sessionId
+    ) {
+      pushNotice('Add the class, due date, summary, and homework instructions before creating this task.', 'warning');
+      return;
+    }
+
+    setIsLinkedAssignmentSaving(true);
+    try {
+      const response =
+        teacherActor === 'school'
+          ? await createSchoolAssignment(payload)
+          : await createTutorAssignment(payload);
+      setLinkedPostClassAssignments(
+        response.assignments.filter((assignment) => assignment.sessionId === liveClass.id)
+      );
+      setIsLinkedAssignmentComposerOpen(false);
+      pushNotice('Linked homework created for this class.', 'success');
+    } catch (error) {
+      pushNotice(
+        error instanceof Error ? error.message : 'Could not create linked homework right now.',
+        'error'
+      );
+    } finally {
+      setIsLinkedAssignmentSaving(false);
+    }
+  }, [linkedAssignmentDraft, liveClass.id, pushNotice, teacherActor]);
+
+  const releasedLinkedAssignments = useMemo(
+    () => linkedPostClassAssignments.filter((assignment) => assignment.isReleased),
+    [linkedPostClassAssignments]
+  );
+  const shouldShowLinkedAssignmentsPanel =
+    (isTeacher && Boolean(liveClass.id)) ||
+    isLinkedAssignmentsLoading ||
+    linkedPostClassAssignments.length > 0;
 
   const rememberEventId = useCallback((eventId: string) => {
     if (!eventId) {
@@ -1096,6 +1523,15 @@ const LiveClassroom = () => {
   );
 
   const stopLocalStream = useCallback(() => {
+    const recorder = liveRecordingMediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      try {
+        recorder.stop();
+      } catch {
+        // Ignore recorder shutdown errors during stream teardown.
+      }
+    }
+
     const stream = localStreamRef.current;
     if (stream) {
       stream.getTracks().forEach((track) => track.stop());
@@ -1446,6 +1882,83 @@ const LiveClassroom = () => {
   }, [isTeacher, teacherActor]);
 
   useEffect(() => {
+    if (!CLOUDFLARE_REALTIMEKIT_ENABLED || !liveClass.id) {
+      setCloudflareRealtimeKitBootstrapState('disabled');
+      setCloudflareRealtimeKitSession(null);
+      setCloudflareRealtimeKitStatusMessage('');
+      return;
+    }
+
+    let cancelled = false;
+
+    const bootstrapCloudflareRealtimeKit = async () => {
+      setCloudflareRealtimeKitBootstrapState('checking');
+      setCloudflareRealtimeKitStatusMessage('Checking Cloudflare room setup...');
+      setCloudflareRealtimeKitSession(null);
+
+      try {
+        const status = await fetchCloudflareRealtimeKitStatus(cloudflareRealtimeKitActor);
+        if (cancelled) {
+          return;
+        }
+
+        if (!status.configured) {
+          setCloudflareRealtimeKitBootstrapState('unavailable');
+          setCloudflareRealtimeKitStatusMessage('Cloudflare room setup needed');
+          return;
+        }
+
+        const session = await createCloudflareRealtimeKitSession(
+          {
+            sessionId: liveClass.id,
+            title: liveClass.name,
+            participantRole: isTeacher ? 'teacher' : 'student',
+          },
+          cloudflareRealtimeKitActor
+        );
+        if (cancelled) {
+          return;
+        }
+
+        setCloudflareRealtimeKitSession(session);
+        setCloudflareRealtimeKitBootstrapState('ready');
+        setCloudflareRealtimeKitStatusMessage('Cloudflare room ready');
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setCloudflareRealtimeKitBootstrapState('error');
+        setCloudflareRealtimeKitSession(null);
+        setCloudflareRealtimeKitStatusMessage('Cloudflare room failed');
+        pushNotice(
+          error instanceof Error
+            ? `${error.message}. Continuing with the standard live classroom flow.`
+            : 'Cloudflare room setup failed. Continuing with the standard live classroom flow.',
+          'warning'
+        );
+      }
+    };
+
+    void bootstrapCloudflareRealtimeKit();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cloudflareRealtimeKitActor, isTeacher, liveClass.id, liveClass.name, pushNotice]);
+
+  useEffect(() => {
+    if (cloudflareRealtimeKitBootstrapState === 'ready' && cloudflareRealtimeKitSession) {
+      setIsCloudflareRealtimeKitOverlayOpen(true);
+      return;
+    }
+
+    if (cloudflareRealtimeKitBootstrapState !== 'ready') {
+      setIsCloudflareRealtimeKitOverlayOpen(false);
+    }
+  }, [cloudflareRealtimeKitBootstrapState, cloudflareRealtimeKitSession]);
+
+  useEffect(() => {
     if (stageRemoteVideoRef.current) {
       stageRemoteVideoRef.current.srcObject = remoteTeacherStream;
       if (remoteTeacherStream) {
@@ -1511,21 +2024,6 @@ const LiveClassroom = () => {
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === LIVE_CLASS_END_STORAGE_KEY) {
-        setClassEndedAtIso(event.newValue);
-      }
-    };
-
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, []);
-
-  useEffect(() => {
     if (!activeLiveClasswork || isTeacher) {
       return;
     }
@@ -1574,6 +2072,13 @@ const LiveClassroom = () => {
       }
     };
   }, []);
+
+  useEffect(() => {
+    return () => {
+      clearLiveRecordingTicker();
+      liveRecordingStopResolverRef.current = null;
+    };
+  }, [clearLiveRecordingTicker]);
 
   useEffect(() => {
     const chatBody = chatBodyRef.current;
@@ -1700,8 +2205,14 @@ const LiveClassroom = () => {
     const startBroadcast = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: cameraOn,
-          audio: micOn,
+          video: cameraOn ? LIVE_RECORDING_CAPTURE_CONSTRAINTS : false,
+          audio: micOn
+            ? {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+              }
+            : false,
         });
 
         if (cancelled) {
@@ -1941,7 +2452,6 @@ const LiveClassroom = () => {
           setStreamStatus('ended');
           setRemoteTeacherStream(null);
           closeAllPeerConnections();
-          markClassEnded();
           pushNotice('Tutor ended the live stream.');
         }
 
@@ -2403,7 +2913,6 @@ const LiveClassroom = () => {
     isTeacher,
     liveClass.instructor,
     liveClass.name,
-    markClassEnded,
     onStageParticipantIds,
     publishSignal,
     rememberEventId,
@@ -2560,6 +3069,110 @@ const LiveClassroom = () => {
     }
 
     setMicOn((previous) => !previous);
+  };
+
+  const toggleLiveRecording = async () => {
+    if (!isTeacher) {
+      pushNotice('Only the host can record this live class.', 'warning');
+      return;
+    }
+
+    if (isPublishingLiveRecording) {
+      pushNotice('Please wait while the current recording is being published.', 'warning');
+      return;
+    }
+
+    if (isLiveRecording) {
+      pushNotice('Stopping recording and preparing the replay file...', 'info');
+      await finalizeLiveRecording();
+      return;
+    }
+
+    if (typeof window === 'undefined' || typeof MediaRecorder === 'undefined') {
+      pushNotice('This browser does not support live class recording.', 'warning');
+      return;
+    }
+
+    const stream = localStreamRef.current;
+    if (!stream || stream.getTracks().length === 0) {
+      pushNotice('Go live with your camera before starting a recording.', 'warning');
+      return;
+    }
+
+    const hasVideoTrack = stream.getVideoTracks().some((track) => track.readyState === 'live');
+    if (!hasVideoTrack) {
+      pushNotice('Turn camera on before recording. Live recordings must include video.', 'warning');
+      return;
+    }
+
+    try {
+      const recordingMimeType = getPreferredRecordingMimeType();
+      const recorder = new MediaRecorder(stream, {
+        ...(recordingMimeType ? { mimeType: recordingMimeType } : {}),
+        videoBitsPerSecond: LIVE_RECORDING_TARGET_VIDEO_BITRATE,
+        audioBitsPerSecond: LIVE_RECORDING_TARGET_AUDIO_BITRATE,
+      });
+
+      liveRecordingChunksRef.current = [];
+      liveRecordingStartMsRef.current = Date.now();
+      setLiveRecordingSeconds(0);
+      setIsLiveRecording(true);
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          liveRecordingChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(liveRecordingChunksRef.current, {
+          type: recorder.mimeType || 'video/webm',
+        });
+        liveRecordingMediaRecorderRef.current = null;
+        liveRecordingChunksRef.current = [];
+        const startedAt = liveRecordingStartMsRef.current;
+        liveRecordingStartMsRef.current = null;
+        clearLiveRecordingTicker();
+        setIsLiveRecording(false);
+        setLiveRecordingSeconds(0);
+
+        void (async () => {
+          if (blob.size > 0) {
+            await publishCapturedLiveRecording(blob, startedAt);
+          } else {
+            pushNotice('No recording data was captured for this class session.', 'warning');
+          }
+          const resolve = liveRecordingStopResolverRef.current;
+          liveRecordingStopResolverRef.current = null;
+          resolve?.();
+        })();
+      };
+
+      recorder.onerror = () => {
+        pushNotice('Live class recording stopped because the browser could not keep recording.', 'warning');
+      };
+
+      liveRecordingMediaRecorderRef.current = recorder;
+      recorder.start(2000);
+      clearLiveRecordingTicker();
+      liveRecordingTickerRef.current = window.setInterval(() => {
+        const startedAt = liveRecordingStartMsRef.current;
+        if (!startedAt) {
+          setLiveRecordingSeconds(0);
+          return;
+        }
+        setLiveRecordingSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+      }, 1000);
+
+      pushNotice(
+        canAutoPublishLiveRecording
+          ? 'Recording started with the long-form optimized profile. It will be added to resources when you stop.'
+          : 'Recording started with the long-form optimized profile. If auto-publish is unavailable, the replay will download locally.',
+        'success'
+      );
+    } catch {
+      pushNotice('Could not start live class recording on this browser.', 'warning');
+    }
   };
 
   const toggleCamera = () => {
@@ -3226,12 +3839,17 @@ const LiveClassroom = () => {
     navigate(isTeacher ? (teacherActor === 'school' ? '/school-dashboard' : '/tutor-dashboard') : '/join-class');
   };
 
-  const handleClassroomExit = () => {
+  const handleClassroomExit = async () => {
     // Keep one exit flow, but present host/student intent clearly in the UI.
     if (isTeacher) {
-      // Persist class-end timestamp so post-class assignments can auto-release on the assignments page.
-      markClassEnded();
       pushNotice('Ending class for all participants...');
+    }
+    if (isPublishingLiveRecording) {
+      pushNotice('Please wait while the class recording finishes publishing.', 'warning');
+      return;
+    }
+    if (isLiveRecording) {
+      await finalizeLiveRecording();
     }
     leaveClassroom();
   };
@@ -3262,6 +3880,16 @@ const LiveClassroom = () => {
       : noticeTone === 'error'
       ? 'border-red-300/40 bg-red-500/10 text-red-100'
       : 'border-[#F68C29]/40 bg-[#F68C29]/10 text-[#ffe4cf]';
+  const cloudflareRealtimeKitBadgeClass =
+    cloudflareRealtimeKitBootstrapState === 'ready'
+      ? 'border-cyan-300/40 bg-cyan-500/10 text-cyan-100'
+      : cloudflareRealtimeKitBootstrapState === 'checking'
+        ? 'border-white/20 bg-white/5 text-white/75'
+        : cloudflareRealtimeKitBootstrapState === 'unavailable'
+          ? 'border-amber-300/35 bg-amber-500/10 text-amber-100'
+          : cloudflareRealtimeKitBootstrapState === 'error'
+            ? 'border-red-300/35 bg-red-500/10 text-red-100'
+            : 'border-white/15 bg-white/[0.04] text-white/55';
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -3371,6 +3999,30 @@ const LiveClassroom = () => {
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white"></span>
               LIVE
             </span>
+            {CLOUDFLARE_REALTIMEKIT_ENABLED && (
+              <span
+                className={`hidden rounded-full border px-2.5 py-1 text-[11px] sm:inline-flex ${cloudflareRealtimeKitBadgeClass}`}
+                title={
+                  cloudflareRealtimeKitSession
+                    ? `${cloudflareRealtimeKitStatusMessage} • ${cloudflareRealtimeKitSession.meetingId}`
+                    : cloudflareRealtimeKitStatusMessage || 'Cloudflare RealtimeKit status'
+                }
+              >
+                {cloudflareRealtimeKitStatusMessage || 'Cloudflare room'}
+              </span>
+            )}
+            {CLOUDFLARE_REALTIMEKIT_ENABLED &&
+              cloudflareRealtimeKitBootstrapState === 'ready' &&
+              cloudflareRealtimeKitSession &&
+              !isCloudflareRealtimeKitOverlayOpen && (
+                <button
+                  type="button"
+                  onClick={() => setIsCloudflareRealtimeKitOverlayOpen(true)}
+                  className="hidden rounded-full border border-cyan-300/35 bg-cyan-500/12 px-3 py-1 text-[11px] font-semibold text-cyan-100 transition hover:bg-cyan-500/20 sm:inline-flex"
+                >
+                  Open Cloudflare room
+                </button>
+              )}
             <span className="hidden rounded-full border border-white/20 bg-white/5 px-2.5 py-1 text-[11px] sm:inline-flex">
               {viewerCount} watching
             </span>
@@ -3445,6 +4097,241 @@ const LiveClassroom = () => {
                 className="flex-1 rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-xs font-semibold text-white hover:bg-white/10"
               >
                 Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isCloudflareRealtimeKitOverlayOpen && cloudflareRealtimeKitSession && (
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-[82] flex items-center justify-center bg-slate-950/82 px-4 text-white backdrop-blur-sm">
+              <div className="w-full max-w-md rounded-[28px] border border-white/10 bg-[#10182e] p-6 text-center shadow-[0_24px_70px_rgba(0,0,0,0.35)]">
+                <p className="text-sm font-semibold text-white">Loading Cloudflare classroom...</p>
+                <p className="mt-2 text-sm text-white/70">
+                  Preparing the meeting client for this live class.
+                </p>
+              </div>
+            </div>
+          }
+        >
+          <CloudflareRealtimeKitOverlay
+            session={cloudflareRealtimeKitSession}
+            onClose={() => setIsCloudflareRealtimeKitOverlayOpen(false)}
+            onError={(message) => {
+              setIsCloudflareRealtimeKitOverlayOpen(false);
+              setCloudflareRealtimeKitBootstrapState('error');
+              setCloudflareRealtimeKitStatusMessage('Cloudflare room failed');
+              pushNotice(`${message}. Continuing with the standard live classroom flow.`, 'warning');
+            }}
+          />
+        </Suspense>
+      )}
+
+      {isTeacher && isLinkedAssignmentComposerOpen && (
+        <div className="fixed inset-0 z-[68] flex items-center justify-center bg-black/70 px-4 py-6">
+          <div className="w-full max-w-3xl overflow-hidden rounded-[28px] border border-white/15 bg-[#0f1735] text-white shadow-[0_28px_80px_rgba(0,0,0,0.45)]">
+            <div className="border-b border-white/10 px-5 py-4 sm:px-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-200/80">
+                    Linked homework
+                  </p>
+                  <h2 className="mt-1 text-xl font-semibold text-white">Create post-class task</h2>
+                  <p className="mt-2 text-sm text-white/70">
+                    This homework is tied to <span className="font-semibold text-white">{liveClass.name}</span> and will open when this class session ends.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeLinkedAssignmentComposer}
+                  className="rounded-full border border-white/15 bg-white/5 p-2 text-white/70 transition hover:bg-white/10 hover:text-white"
+                  aria-label="Close linked homework composer"
+                >
+                  <XMarkIcon className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-0 lg:grid-cols-[minmax(0,1.25fr)_320px]">
+              <div className="space-y-4 px-5 py-5 sm:px-6">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-white/85">Task title</span>
+                    <input
+                      value={linkedAssignmentDraft.title}
+                      onChange={(event) =>
+                        setLinkedAssignmentDraft((current) => ({ ...current, title: event.target.value }))
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-emerald-300/35 focus:bg-white/10"
+                      placeholder="e.g. Fractions follow-up homework"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-white/85">Subject</span>
+                    <input
+                      value={linkedAssignmentDraft.subject}
+                      onChange={(event) =>
+                        setLinkedAssignmentDraft((current) => ({ ...current, subject: event.target.value }))
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-emerald-300/35 focus:bg-white/10"
+                      placeholder="Subject"
+                    />
+                  </label>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-white/85">Department</span>
+                    <input
+                      value={linkedAssignmentDraft.department}
+                      onChange={(event) =>
+                        setLinkedAssignmentDraft((current) => ({ ...current, department: event.target.value }))
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-emerald-300/35 focus:bg-white/10"
+                      placeholder={isLinkedAssignmentSessionLoading ? 'Loading class details...' : 'e.g. Science'}
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-white/85">Class</span>
+                    <input
+                      value={linkedAssignmentDraft.classGroup}
+                      onChange={(event) =>
+                        setLinkedAssignmentDraft((current) => ({ ...current, classGroup: event.target.value }))
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-emerald-300/35 focus:bg-white/10"
+                      placeholder={isLinkedAssignmentSessionLoading ? 'Loading class details...' : 'e.g. JSS 2A'}
+                    />
+                  </label>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-white/85">Due date and time</span>
+                    <input
+                      type="datetime-local"
+                      value={linkedAssignmentDraft.dueAt}
+                      onChange={(event) =>
+                        setLinkedAssignmentDraft((current) => ({ ...current, dueAt: event.target.value }))
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-300/35 focus:bg-white/10"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-white/85">Marks</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={linkedAssignmentDraft.points}
+                      onChange={(event) =>
+                        setLinkedAssignmentDraft((current) => ({
+                          ...current,
+                          points: Math.max(1, Number(event.target.value) || 0),
+                        }))
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-300/35 focus:bg-white/10"
+                    />
+                  </label>
+                </div>
+
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-white/85">Short summary</span>
+                  <textarea
+                    rows={3}
+                    value={linkedAssignmentDraft.description}
+                    onChange={(event) =>
+                      setLinkedAssignmentDraft((current) => ({ ...current, description: event.target.value }))
+                    }
+                    className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-emerald-300/35 focus:bg-white/10"
+                    placeholder="Tell students what this homework is about."
+                  />
+                </label>
+
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-white/85">Homework instructions</span>
+                  <textarea
+                    rows={6}
+                    value={linkedAssignmentDraft.content}
+                    onChange={(event) =>
+                      setLinkedAssignmentDraft((current) => ({ ...current, content: event.target.value }))
+                    }
+                    className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-emerald-300/35 focus:bg-white/10"
+                    placeholder="Explain what students should do after class."
+                  />
+                </label>
+
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-white/85">Checklist</span>
+                  <textarea
+                    rows={4}
+                    value={linkedAssignmentDraft.checklistText}
+                    onChange={(event) =>
+                      setLinkedAssignmentDraft((current) => ({ ...current, checklistText: event.target.value }))
+                    }
+                    className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-emerald-300/35 focus:bg-white/10"
+                    placeholder={'One item per line, for example:\nShow your working\nUpload one PDF'}
+                  />
+                </label>
+              </div>
+
+              <aside className="border-t border-white/10 bg-white/[0.03] px-5 py-5 lg:border-l lg:border-t-0 sm:px-6">
+                <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-200/75">
+                    Release preview
+                  </p>
+                  <h3 className="mt-3 text-lg font-semibold text-white">
+                    {linkedAssignmentDraft.title || 'Homework title'}
+                  </h3>
+                  <p className="mt-2 text-sm text-white/65">
+                    {[linkedAssignmentDraft.subject || 'Subject', linkedAssignmentDraft.department || 'Department', linkedAssignmentDraft.classGroup || 'Class'].join(' • ')}
+                  </p>
+
+                  <div className="mt-4 space-y-3 text-sm text-white/75">
+                    <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                      <p className="font-medium text-white">Session link</p>
+                      <p className="mt-1 text-white/65">{liveClass.name}</p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                      <p className="font-medium text-white">When students see it</p>
+                      <p className="mt-1 text-white/65">
+                        {linkedAssignmentSession?.status === 'completed'
+                          ? 'This class already ended, so students can see it as soon as you create it.'
+                          : 'Students will see this automatically when the current class ends.'}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                      <p className="font-medium text-white">Due</p>
+                      <p className="mt-1 text-white/65">
+                        {linkedAssignmentDraft.dueAt
+                          ? formatLiveDateTime(new Date(linkedAssignmentDraft.dueAt).toISOString())
+                          : 'Choose a due date'}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                      <p className="font-medium text-white">Submission type</p>
+                      <p className="mt-1 text-white/65">{linkedAssignmentDraft.points} marks • note or file submission</p>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-white/10 px-5 py-4 sm:px-6">
+              <button
+                type="button"
+                onClick={closeLinkedAssignmentComposer}
+                className="rounded-2xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white/80 transition hover:bg-white/10"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleCreateLinkedAssignment()}
+                disabled={isLinkedAssignmentSaving}
+                className="rounded-2xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isLinkedAssignmentSaving ? 'Creating...' : 'Create linked homework'}
               </button>
             </div>
           </div>
@@ -3612,6 +4499,22 @@ const LiveClassroom = () => {
 
               <div className="absolute left-3 top-3 flex items-center gap-2">
                 <span className="rounded-full bg-red-500 px-2.5 py-1 text-[11px] font-bold">LIVE</span>
+                {(isLiveRecording || isPublishingLiveRecording) && (
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                      isLiveRecording ? 'bg-rose-500/90 text-white' : 'bg-amber-400/90 text-slate-950'
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${isLiveRecording ? 'animate-pulse bg-white' : 'bg-slate-950'}`}
+                    ></span>
+                    {isLiveRecording
+                      ? `REC ${Math.floor(liveRecordingSeconds / 60)
+                          .toString()
+                          .padStart(2, '0')}:${(liveRecordingSeconds % 60).toString().padStart(2, '0')}`
+                      : 'Publishing replay'}
+                  </span>
+                )}
                 <span className="rounded-full bg-black/35 px-2.5 py-1 text-[11px] text-white/90">{viewerCount} viewers</span>
               </div>
 
@@ -3676,7 +4579,7 @@ const LiveClassroom = () => {
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-2 border-t border-white/10 bg-black/25 p-3 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="grid grid-cols-2 gap-2 border-t border-white/10 bg-black/25 p-3 sm:grid-cols-3 lg:grid-cols-7">
               <button
                 onClick={toggleMic}
                 className={`rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${
@@ -3731,6 +4634,25 @@ const LiveClassroom = () => {
                   <HandRaisedIcon className="h-4 w-4" />
                 </span>
                 {handRaised ? 'Lower Hand' : 'Raise Hand'}
+              </button>
+
+              <button
+                onClick={() => void toggleLiveRecording()}
+                disabled={!isTeacher || isPublishingLiveRecording}
+                className={`rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${
+                  isLiveRecording
+                    ? 'border-rose-400/45 bg-rose-500/20 text-rose-100'
+                    : 'border-white/20 bg-white/10 text-white/85 hover:bg-white/15'
+                } ${!isTeacher || isPublishingLiveRecording ? 'cursor-not-allowed opacity-60' : ''}`}
+              >
+                <span className="mx-auto mb-1 block w-fit">
+                  <VideoCameraIcon className="h-4 w-4" />
+                </span>
+                {isPublishingLiveRecording
+                  ? 'Publishing...'
+                  : isLiveRecording
+                  ? 'Stop Rec'
+                  : 'Record'}
               </button>
 
               {giftingEnabled && (
@@ -3934,42 +4856,120 @@ const LiveClassroom = () => {
             </div>
           )}
 
-          {shouldShowPostClassAssignmentContent && postClassAssignments.length > 0 && (
+          {shouldShowLinkedAssignmentsPanel && (
             <div className="rounded-2xl border border-emerald-300/30 bg-emerald-500/10 p-3 sm:p-4">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <h2 className="text-sm font-semibold text-emerald-100 sm:text-base">Post-Class Assignments</h2>
+                <h2 className="text-sm font-semibold text-emerald-100 sm:text-base">Class Homework</h2>
                 <span className="rounded-full border border-emerald-300/35 bg-emerald-300/20 px-2.5 py-1 text-[11px] font-semibold text-emerald-100">
-                  Now available
+                  {releasedLinkedAssignments.length > 0 ? 'Now available' : 'Opens after class'}
                 </span>
               </div>
+              <p className="mb-3 text-xs leading-relaxed text-emerald-100/85 sm:text-sm">
+                {isTeacher
+                  ? releasedLinkedAssignments.length > 0
+                    ? 'These are the real homework tasks linked to this class session.'
+                    : 'Linked homework stays locked until this class ends, then students will see it automatically.'
+                  : releasedLinkedAssignments.length > 0
+                    ? 'These homework tasks are now open because the linked class has ended.'
+                    : 'Homework linked to this class will open automatically once the class ends.'}
+              </p>
               <div className="space-y-3">
-                {postClassAssignments.map((assignment) => (
-                  <article
-                    key={assignment.id}
-                    className="rounded-xl border border-emerald-200/30 bg-black/20 p-3 text-xs text-emerald-50/95 sm:text-sm"
+                {isLinkedAssignmentsLoading ? (
+                  <div className="rounded-xl border border-emerald-200/30 bg-black/20 p-3 text-xs text-emerald-50/95 sm:text-sm">
+                    Loading linked homework...
+                  </div>
+                ) : linkedPostClassAssignments.length > 0 ? (
+                  linkedPostClassAssignments.map((assignment) => (
+                    <article
+                      key={assignment.id}
+                      className="rounded-xl border border-emerald-200/30 bg-black/20 p-3 text-xs text-emerald-50/95 sm:text-sm"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-semibold text-emerald-100">{assignment.title}</h3>
+                          <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-emerald-100/70">
+                            {assignment.type === 'classwork' ? 'Classwork' : 'Homework'}
+                          </p>
+                        </div>
+                        <span
+                          className={`rounded-full px-2 py-1 text-[10px] font-semibold ${
+                            assignment.isReleased
+                              ? 'border border-emerald-200/40 bg-emerald-300/20 text-emerald-50'
+                              : 'border border-white/15 bg-white/10 text-emerald-100/80'
+                          }`}
+                        >
+                          {assignment.isReleased ? 'Open now' : 'Waiting for class end'}
+                        </span>
+                      </div>
+                      <p className="mt-2 leading-relaxed">{assignment.content}</p>
+                      <ul className="mt-2 space-y-1 text-[11px] text-emerald-100/90 sm:text-xs">
+                        {assignment.checklist.map((item) => (
+                          <li key={`${assignment.id}-${item}`} className="flex items-start gap-2">
+                            <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-200"></span>
+                            <span>{item}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-emerald-100/80">
+                        <span>Due: {formatLiveDateTime(assignment.dueAt)}</span>
+                        {assignment.releaseMode === 'on_class_end' ? (
+                          <span>
+                            Class status:{' '}
+                            {assignment.linkedSessionStatus === 'completed'
+                              ? 'ended'
+                              : assignment.linkedSessionStatus === 'live'
+                                ? 'live'
+                                : 'upcoming'}
+                          </span>
+                        ) : null}
+                      </div>
+                    </article>
+                  ))
+                ) : (
+                  <div className="rounded-xl border border-emerald-200/20 bg-black/20 p-3 text-xs text-emerald-100/80 sm:text-sm">
+                    No homework has been linked to this class yet.
+                  </div>
+                )}
+              </div>
+              {isTeacher ? (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {canManageLinkedAssignments ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={openLinkedAssignmentComposer}
+                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-400/20 px-3 py-1.5 text-xs font-semibold text-emerald-50 transition-colors hover:bg-emerald-400/30"
+                      >
+                        {linkedPostClassAssignments.length > 0 ? 'Add linked homework' : 'Create linked homework'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          navigate(teacherActor === 'school' ? '/school-assignments' : '/tutor-assignments')
+                        }
+                        className="inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white/90 transition-colors hover:bg-white/15"
+                      >
+                        Open homework hub
+                      </button>
+                    </>
+                  ) : (
+                    <div className="rounded-xl border border-white/10 bg-white/8 px-3 py-2 text-[11px] text-emerald-100/85">
+                      Start this class from the {teacherActor === 'school' ? 'school' : 'tutor'} dashboard if you want
+                      to attach homework directly inside the live room.
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/assignments?sessionId=${encodeURIComponent(liveClass.id)}`)}
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-400/20 px-3 py-1.5 text-xs font-semibold text-emerald-50 transition-colors hover:bg-emerald-400/30"
                   >
-                    <h3 className="text-sm font-semibold text-emerald-100">{assignment.title}</h3>
-                    <p className="mt-1 leading-relaxed">{assignment.content}</p>
-                    <ul className="mt-2 space-y-1 text-[11px] text-emerald-100/90 sm:text-xs">
-                      {assignment.checklist.map((item) => (
-                        <li key={`${assignment.id}-${item}`} className="flex items-start gap-2">
-                          <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-200"></span>
-                          <span>{item}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </article>
-                ))}
-              </div>
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={() => navigate('/assignments')}
-                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-400/20 px-3 py-1.5 text-xs font-semibold text-emerald-50 transition-colors hover:bg-emerald-400/30"
-                >
-                  Open Assignments
-                </button>
-              </div>
+                    Open Assignments
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

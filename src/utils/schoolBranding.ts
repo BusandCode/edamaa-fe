@@ -1,11 +1,20 @@
 const SCHOOL_DISPLAY_NAME_STORAGE_KEY = 'edamaa_school_display_name';
 const SCHOOL_ADMIN_NAME_STORAGE_KEY = 'edamaa_school_admin_name';
+const SCHOOL_WORKSPACE_KEY_STORAGE_KEY = 'edamaa_school_workspace_key';
+const SCHOOL_HAS_HOSTEL_STORAGE_KEY = 'edamaa_school_has_hostel';
 const SCHOOL_PROFILE_IMAGE_CURRENT_STORAGE_KEY = 'edamaa_school_profile_image_current';
 const SCHOOL_PROFILE_IMAGE_BY_EMAIL_PREFIX = 'edamaa_school_profile_image_by_email::';
 const LOCAL_DEV_AUTH_SESSION_STORAGE_KEY = 'edamaa_local_dev_auth_v1';
 const SUPABASE_SESSION_STORAGE_KEY = 'edamaa_supabase_session_v1';
 
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
+
+const slugifyWorkspacePart = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 
 const readLocalStorageValue = (key: string) => {
   if (typeof window === 'undefined') {
@@ -81,6 +90,113 @@ export const loadSchoolBrandingNames = () => ({
   adminName: readLocalStorageValue(SCHOOL_ADMIN_NAME_STORAGE_KEY).trim(),
 });
 
+export const loadSchoolHasHostelPreference = () =>
+  readLocalStorageValue(SCHOOL_HAS_HOSTEL_STORAGE_KEY).trim().toLowerCase() === 'true';
+
+export const persistSchoolBrandingNames = (input: { schoolName?: string; adminName?: string }) => {
+  const schoolName = String(input.schoolName || '').trim();
+  const adminName = String(input.adminName || '').trim();
+
+  if (schoolName) {
+    writeLocalStorageValue(SCHOOL_DISPLAY_NAME_STORAGE_KEY, schoolName);
+  } else {
+    removeLocalStorageValue(SCHOOL_DISPLAY_NAME_STORAGE_KEY);
+  }
+
+  if (adminName) {
+    writeLocalStorageValue(SCHOOL_ADMIN_NAME_STORAGE_KEY, adminName);
+  } else {
+    removeLocalStorageValue(SCHOOL_ADMIN_NAME_STORAGE_KEY);
+  }
+
+  return {
+    schoolName,
+    adminName,
+  };
+};
+
+export const persistSchoolHasHostelPreference = (value: boolean) => {
+  writeLocalStorageValue(SCHOOL_HAS_HOSTEL_STORAGE_KEY, value ? 'true' : 'false');
+  return value;
+};
+
+export const loadSchoolWorkspaceKey = () =>
+  readLocalStorageValue(SCHOOL_WORKSPACE_KEY_STORAGE_KEY).trim();
+
+export const deriveSchoolWorkspaceKey = (input?: { schoolName?: string; email?: string }) => {
+  const schoolNamePart = slugifyWorkspacePart(String(input?.schoolName || ''));
+  if (schoolNamePart) {
+    return `school-${schoolNamePart}`;
+  }
+
+  const emailPrefix = normalizeEmail(String(input?.email || '')).split('@')[0] || '';
+  const emailPart = slugifyWorkspacePart(emailPrefix);
+  if (emailPart) {
+    return `school-${emailPart}`;
+  }
+
+  return 'school-workspace';
+};
+
+export const persistSchoolWorkspaceKey = (workspaceKey: string) => {
+  const normalized = slugifyWorkspacePart(workspaceKey);
+  if (!normalized) {
+    removeLocalStorageValue(SCHOOL_WORKSPACE_KEY_STORAGE_KEY);
+    return '';
+  }
+
+  writeLocalStorageValue(SCHOOL_WORKSPACE_KEY_STORAGE_KEY, normalized);
+  return normalized;
+};
+
+export const ensureStoredSchoolWorkspaceKey = (input?: {
+  schoolName?: string;
+  email?: string;
+  preferredKey?: string;
+}) => {
+  const existing = loadSchoolWorkspaceKey();
+  if (existing) {
+    return existing;
+  }
+
+  const preferred = slugifyWorkspacePart(String(input?.preferredKey || ''));
+  if (preferred) {
+    writeLocalStorageValue(SCHOOL_WORKSPACE_KEY_STORAGE_KEY, preferred);
+    return preferred;
+  }
+
+  const derived = deriveSchoolWorkspaceKey({
+    schoolName: input?.schoolName,
+    email: input?.email,
+  });
+  writeLocalStorageValue(SCHOOL_WORKSPACE_KEY_STORAGE_KEY, derived);
+  return derived;
+};
+
+export const buildSchoolWorkspaceMetadata = (input?: {
+  schoolName?: string;
+  email?: string;
+  preferredKey?: string;
+  hasHostel?: boolean;
+}) => {
+  const schoolName = String(input?.schoolName || '').trim();
+  const schoolWorkspaceKey = ensureStoredSchoolWorkspaceKey({
+    schoolName,
+    email: input?.email,
+    preferredKey: input?.preferredKey,
+  });
+  const schoolHasHostel =
+    typeof input?.hasHostel === 'boolean' ? input.hasHostel : loadSchoolHasHostelPreference();
+
+  persistSchoolHasHostelPreference(schoolHasHostel);
+
+  return {
+    school_name: schoolName || 'School',
+    school_workspace_key: schoolWorkspaceKey,
+    school_has_hostel: schoolHasHostel,
+  };
+};
+
 export const loadSchoolProfileImage = (email?: string) => {
   const normalizedEmail = normalizeEmail(email || loadPersistedAuthEmail());
   const currentImage = readLocalStorageValue(SCHOOL_PROFILE_IMAGE_CURRENT_STORAGE_KEY).trim();
@@ -123,5 +239,7 @@ export const clearCurrentSchoolProfileImage = () => {
 export const schoolBrandingStorageKeys = {
   schoolDisplayName: SCHOOL_DISPLAY_NAME_STORAGE_KEY,
   schoolAdminName: SCHOOL_ADMIN_NAME_STORAGE_KEY,
+  schoolWorkspaceKey: SCHOOL_WORKSPACE_KEY_STORAGE_KEY,
+  schoolHasHostel: SCHOOL_HAS_HOSTEL_STORAGE_KEY,
   schoolProfileImageCurrent: SCHOOL_PROFILE_IMAGE_CURRENT_STORAGE_KEY,
 };

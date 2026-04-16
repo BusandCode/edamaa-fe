@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowRightOnRectangleIcon,
   BanknotesIcon,
+  CheckBadgeIcon,
   BuildingOffice2Icon,
   ChatBubbleLeftRightIcon,
   ClockIcon,
@@ -27,7 +28,7 @@ import {
   loadPersistedLocalDevAuthSession,
   loadPersistedSupabaseAccessToken,
 } from '../../../utils/authSession';
-import { RECORDED_COURSES } from '../data/recordedCourses';
+import { getRecordedCourses } from '../data/recordedCourses';
 import { loadStudentIdentity, saveStudentIdentity } from '../utils/studentIdentity';
 
 type OnlineTutor = {
@@ -346,8 +347,10 @@ const StudentHome = () => {
     })[0];
   }, [outstandingSchoolInvoices]);
 
+  const allRecordedCourses = useMemo(() => getRecordedCourses(), []);
+
   const recommendedCourses = useMemo(() => {
-    const source = RECORDED_COURSES.filter((course) =>
+    const source = allRecordedCourses.filter((course) =>
       activeFilter === 'All' ? true : course.category.toLowerCase() === activeFilter.toLowerCase()
     );
 
@@ -364,7 +367,7 @@ const StudentHome = () => {
     });
 
     return searched.slice(0, 6);
-  }, [searchQuery, activeFilter]);
+  }, [searchQuery, activeFilter, allRecordedCourses]);
 
   const onHomeClick = () => navigate('/student-home');
   const onCoursesClick = () => navigate('/mycourses');
@@ -1010,7 +1013,7 @@ const StudentHome = () => {
                 )}
               </button>
               <button
-                onClick={() => navigate('/my-profile')}
+                onClick={() => navigate('/student-dashboard', { state: { openProfile: true } })}
                 className="rounded-full border border-gray-200 bg-white p-2 hover:bg-gray-50 transition-colors"
                 aria-label="Open my profile"
                 title="My Profile"
@@ -1396,6 +1399,9 @@ const StudentHome = () => {
                   <span className="absolute left-3 bottom-3 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-white">
                     {course.category}
                   </span>
+                  <span className="absolute right-3 bottom-3 rounded-full bg-emerald-500/95 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+                    Certificate on completion
+                  </span>
                 </div>
 
                 <div className="p-4">
@@ -1408,6 +1414,11 @@ const StudentHome = () => {
                       {course.modules[0]?.lessons[0]?.durationMinutes || 6} min next lesson
                     </span>
                     <span>{course.completedLessons}/{course.totalLessons}</span>
+                  </div>
+
+                  <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700">
+                    <CheckBadgeIcon className="h-4 w-4" />
+                    Finish all lessons and pass checkpoints to unlock your certificate.
                   </div>
 
                   <div className="mt-2 h-1.5 rounded-full bg-gray-100">

@@ -5,15 +5,15 @@ interface QuickActionButtonProps {
   icon: IconType;
   label: string;
   badge?: string | number;
-  onClick: () => void;
+  onClick?: () => void;
 }
 
 const QuickActionButton: React.FC<QuickActionButtonProps> = ({ icon: Icon, label, badge, onClick }) => {
-  return (
-    <button 
-      onClick={onClick} 
-      className='bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-all flex flex-col items-center gap-3 relative'
-    >
+  const className =
+    'w-full h-full bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-all flex flex-col items-center justify-center gap-3 relative cursor-pointer';
+
+  const content = (
+    <>
       <div className='w-12 h-12 bg-[#3D08BA] rounded-xl flex items-center justify-center'>
         <Icon className='text-white' size={20} />
       </div>
@@ -23,6 +23,12 @@ const QuickActionButton: React.FC<QuickActionButtonProps> = ({ icon: Icon, label
           {badge}
         </span>
       )}
+    </>
+  );
+
+  return (
+    <button type='button' onClick={onClick} className={className}>
+      {content}
     </button>
   );
 };

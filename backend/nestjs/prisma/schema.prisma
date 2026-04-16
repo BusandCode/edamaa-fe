@@ -585,3 +585,73 @@ model ResourcePurchase {
   @@index([buyerEmail, purchasedAt])
   @@index([resourceId, purchasedAt])
 }
+
+// Stores school-curated free-library recommendations so pinned books survive
+// server restarts and can be targeted to specific student lanes.
+model ResourceFreeBookRecommendation {
+  id                Int      @id @default(autoincrement())
+  publicId          String   @unique
+  bookId            String
+  source            String
+  sourceLabel       String
+  title             String
+  authors           Json
+  description       String
+  subject           String
+  coverImageUrl     String?
+  actionUrl         String
+  actionLabel       String
+  accessLabel       String
+  licenseLabel      String
+  publishedAt       String?
+  curatorEmail      String
+  curatorName       String
+  curatorRole       String   @default("school")
+  note              String?
+  targetSchoolLevel String?
+  targetDepartment  String?
+  targetClassGroup  String?
+  recommendedAt     DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([bookId, curatorEmail])
+  @@index([curatorEmail, recommendedAt])
+  @@index([bookId, recommendedAt])
+}
+
+// Stores reusable school-side audience targets for free-book recommendations.
+model ResourceFreeBookAudiencePreset {
+  id                Int      @id @default(autoincrement())
+  publicId          String   @unique
+  workspaceKey      String
+  workspaceLabel    String?
+  curatorEmail      String
+  curatorName       String
+  label             String
+  targetSchoolLevel String?
+  targetDepartment  String?
+  targetClassGroup  String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([workspaceKey, label])
+  @@index([workspaceKey, updatedAt])
+  @@index([curatorEmail, updatedAt])
+}
+
+// Stores the Cloudflare RealtimeKit meeting mapped to an Edamaa live-class
+// session id so hosts and learners reliably join the same reusable meeting.
+model CloudflareRealtimeKitMeeting {
+  id                Int      @id @default(autoincrement())
+  publicId          String   @unique
+  sessionPublicId   String   @unique
+  providerMeetingId String   @unique
+  title             String
+  createdByEmail    String
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([createdByEmail, updatedAt])
+  @@index([sessionPublicId, updatedAt])
+}

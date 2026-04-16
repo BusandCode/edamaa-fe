@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AcademicCapIcon,
+  ArrowDownTrayIcon,
   ArrowLeftIcon,
   BookOpenIcon,
   CheckCircleIcon,
@@ -8,14 +9,22 @@ import {
   ChevronRightIcon,
   ClockIcon,
   PlayCircleIcon,
+  SparklesIcon,
 } from '@heroicons/react/24/outline';
 import { useNavigate, useParams } from 'react-router-dom';
 import StudentBottomNavigation from '../../../components/layout/student-layout/StudentBottomNavigation';
+import { createPdfBlob, downloadFile } from '../../../utils/exportFiles';
 import {
   getRecordedCourseById,
   type RecordedLesson,
   type RecordedModule,
 } from '../data/recordedCourses';
+import {
+  buildCourseCertificateDocDefinition,
+  getStudentCourseCertificateForCourse,
+  issueCourseCertificateIfEligible,
+  type CourseCertificateRecord,
+} from '../utils/courseCertificatesApi';
 
 type ProgressMap = Record<number, string[]>;
 type ResumeLessonMap = Record<number, string>;
@@ -187,6 +196,8 @@ const CourseLearning = () => {
   const [activeQuizModuleId, setActiveQuizModuleId] = useState<string | null>(null);
   const [quizAnswers, setQuizAnswers] = useState<Record<string, string>>({});
   const [quizResult, setQuizResult] = useState<{ score: number; total: number; passed: boolean } | null>(null);
+  const [issuedCertificate, setIssuedCertificate] = useState<CourseCertificateRecord | null>(null);
+  const [certificateBusy, setCertificateBusy] = useState(false);
 
   useEffect(() => {
     setLearnerKey(getOrCreateLearnerKey());
@@ -228,6 +239,7 @@ const CourseLearning = () => {
       setActiveQuizModuleId(null);
       setQuizAnswers({});
       setQuizResult(null);
+      setIssuedCertificate(null);
       setInitialSyncDone(false);
       return;
     }
@@ -254,6 +266,7 @@ const CourseLearning = () => {
     setActiveQuizModuleId(null);
     setQuizAnswers({});
     setQuizResult(null);
+    setIssuedCertificate(null);
     setInitialSyncDone(false);
   }, [course, resumeLessonMap]);
 
@@ -289,11 +302,30 @@ const CourseLearning = () => {
     [allLessons, completedLessonIds]
   );
 
+  const certificateEligible = useMemo(() => {
+    if (!course || allLessons.length === 0 || course.modules.length === 0) {
+      return false;
+    }
+
+    const allLessonsCompleted = completedLessonCount === allLessons.length;
+    const allModulesPassed = course.modules.every((module) => passedModuleIds.has(module.id));
+    return allLessonsCompleted && allModulesPassed;
+  }, [allLessons.length, completedLessonCount, course, passedModuleIds]);
+
   const completionPercent = allLessons.length
     ? Math.round((completedLessonCount / allLessons.length) * 100)
     : 0;
 
   const nextLesson = allLessons.find((lesson) => !completedLessonIds.has(lesson.id));
+
+  useEffect(() => {
+    if (!course || !learnerKey) {
+      setIssuedCertificate(null);
+      return;
+    }
+
+    setIssuedCertificate(getStudentCourseCertificateForCourse(course.id, learnerKey));
+  }, [course, learnerKey]);
 
   const totalRuntimeMinutes = useMemo(
     () => allLessons.reduce((sum, lesson) => sum + lesson.durationMinutes, 0),
@@ -489,6 +521,63 @@ const CourseLearning = () => {
     initialSyncDone,
   ]);
 
+  useEffect(() => {
+    if (!course || !learnerKey || !certificateEligible) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const maybeIssueCertificate = async () => {
+      setCertificateBusy(true);
+      try {
+        const result = await issueCourseCertificateIfEligible({
+          learnerKey,
+          course,
+          completedLessonIds: completedLessonList,
+          passedModuleIds: passedModuleList,
+        });
+
+        if (cancelled || !result.certificate) {
+          return;
+        }
+
+        setIssuedCertificate(result.certificate);
+        if (result.issuedNow) {
+          setActionNotice('Course completed. Your Edamaa3D certificate is now in your certificate wallet.');
+        }
+      } finally {
+        if (!cancelled) {
+          setCertificateBusy(false);
+        }
+      }
+    };
+
+    void maybeIssueCertificate();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [certificateEligible, completedLessonList, course, learnerKey, passedModuleList]);
+
+  const downloadIssuedCertificate = async () => {
+    if (!issuedCertificate) {
+      return;
+    }
+
+    setCertificateBusy(true);
+    try {
+      const pdfBlob = await createPdfBlob(buildCourseCertificateDocDefinition(issuedCertificate));
+      const safeTitle =
+        course?.title.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'course';
+      downloadFile(pdfBlob, `${issuedCertificate.certificateCode.toLowerCase()}-${safeTitle}.pdf`);
+    } catch {
+      setActionNotice('Certificate is ready, but the PDF could not be prepared right now.');
+    } finally {
+      setCertificateBusy(false);
+    }
+  };
+
   const handleLessonEnded = () => {
     if (!selectedLesson) {
       return;
@@ -553,6 +642,7 @@ const CourseLearning = () => {
   const onCoursesClick = () => navigate('/mycourses');
   const onAssignmentsClick = () => navigate('/assignments');
   const onPerformanceClick = () => navigate('/performance');
+  const onCertificatesClick = () => navigate('/student-certificates');
 
   if (!course) {
     return (
@@ -639,6 +729,41 @@ const CourseLearning = () => {
         {actionNotice && (
           <div className="mb-4 rounded-lg border border-[#3D08BA]/20 bg-[#3D08BA]/5 px-4 py-3 text-sm text-[#3D08BA]">
             {actionNotice}
+          </div>
+        )}
+
+        {issuedCertificate && (
+          <div className="mb-4 rounded-2xl border border-emerald-200 bg-[linear-gradient(135deg,_rgba(16,185,129,0.08),_rgba(255,255,255,0.98))] px-4 py-4 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                  <SparklesIcon className="h-4 w-4" />
+                  Certificate ready
+                </div>
+                <h2 className="mt-3 text-lg font-bold text-gray-900">Your course certificate has been issued.</h2>
+                <p className="mt-1 text-sm text-gray-600">
+                  {issuedCertificate.issuerName} issued this certificate via Edamaa3D after you completed all lessons and passed every module checkpoint. It is signed by {issuedCertificate.signatoryName}.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={onCertificatesClick}
+                  className="inline-flex items-center rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 transition-colors"
+                >
+                  Open wallet
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void downloadIssuedCertificate()}
+                  disabled={certificateBusy}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  <ArrowDownTrayIcon className="h-4 w-4" />
+                  {certificateBusy ? 'Preparing PDF...' : 'Download certificate'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -819,6 +944,30 @@ const CourseLearning = () => {
               <p className="mt-2 text-xs text-gray-500">
                 Modules passed: {passedModuleList.length}/{course.modules.length}
               </p>
+              <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                  Certificate status
+                </p>
+                {issuedCertificate ? (
+                  <>
+                    <p className="mt-2 text-sm font-semibold text-emerald-700">Issued and saved in your wallet</p>
+                    <p className="mt-1 text-xs text-gray-600">
+                      Code: {issuedCertificate.certificateCode}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-2 text-sm font-semibold text-gray-900">
+                      {certificateEligible
+                        ? 'Finalizing certificate issue...'
+                        : 'Complete every lesson and pass all module checkpoints to unlock it.'}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-600">
+                      Lessons: {completedLessonCount}/{allLessons.length} • Checkpoints: {passedModuleList.length}/{course.modules.length}
+                    </p>
+                  </>
+                )}
+              </div>
             </div>
 
             <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">

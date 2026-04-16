@@ -30,6 +30,8 @@ export type LocalDevAuthSession = {
   role: AppAccountRole;
   defaultRole: AppAccountRole;
   activeRoles: AppAccountRole[];
+  userMetadata?: Record<string, unknown>;
+  appMetadata?: Record<string, unknown>;
   mode: 'local-dev';
   signedInAt: string;
 };
@@ -37,6 +39,8 @@ export type LocalDevAuthSession = {
 type PersistLocalDevSessionOptions = {
   defaultRole?: AppAccountRole;
   activeRoles?: AppAccountRole[];
+  userMetadata?: Record<string, unknown>;
+  appMetadata?: Record<string, unknown>;
 };
 
 type KnownRoleByEmailMap = Record<string, AppAccountRole>;
@@ -47,6 +51,13 @@ const isLikelyJwt = (value: string) => {
 };
 
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
+
+const sanitizeMetadataRecord = (value: unknown): Record<string, unknown> | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  return { ...(value as Record<string, unknown>) };
+};
 
 export const normalizeAccountRole = (value: unknown): AppAccountRole => {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -163,6 +174,8 @@ const parseLocalDevAuthSession = (rawValue: string | null): LocalDevAuthSession 
       role: defaultRole,
       defaultRole,
       activeRoles,
+      userMetadata: sanitizeMetadataRecord(candidate.userMetadata),
+      appMetadata: sanitizeMetadataRecord(candidate.appMetadata),
       mode: 'local-dev',
       signedInAt,
     };
@@ -344,12 +357,21 @@ export const persistLocalDevAuthSession = (
 
   const defaultRole = normalizeAccountRole(options?.defaultRole || role);
   const activeRoles = uniqueRoles([defaultRole, ...(options?.activeRoles || [])]);
+  const existingSession = parseLocalDevAuthSession(
+    window.localStorage.getItem(LOCAL_DEV_AUTH_SESSION_STORAGE_KEY)
+  );
+  const userMetadata =
+    sanitizeMetadataRecord(options?.userMetadata) || existingSession?.userMetadata || undefined;
+  const appMetadata =
+    sanitizeMetadataRecord(options?.appMetadata) || existingSession?.appMetadata || undefined;
 
   const payload: LocalDevAuthSession = {
     email: normalizedEmail,
     role: defaultRole,
     defaultRole,
     activeRoles,
+    ...(userMetadata ? { userMetadata } : {}),
+    ...(appMetadata ? { appMetadata } : {}),
     mode: 'local-dev',
     signedInAt: new Date().toISOString(),
   };

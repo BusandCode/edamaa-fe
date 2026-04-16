@@ -1,8 +1,13 @@
+export type StudentSchoolLevel = '' | 'primary' | 'secondary' | 'tertiary';
+
 export type StudentIdentity = {
   id: number;
   name: string;
   phone: string;
   avatar?: string;
+  schoolLevel?: StudentSchoolLevel;
+  department?: string;
+  classGroup?: string;
 };
 
 const STUDENT_IDENTITY_STORAGE_KEY = 'edamaa_student_identity_v1';
@@ -13,6 +18,9 @@ const DEFAULT_STUDENT_IDENTITY: StudentIdentity = {
   name: 'Adetokunbo Andrew',
   phone: '07048222080',
   avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Setiu',
+  schoolLevel: '',
+  department: '',
+  classGroup: '',
 };
 
 const isFiniteNumber = (value: unknown): value is number =>
@@ -28,6 +36,14 @@ const normalizeStudentIdentity = (value: unknown): StudentIdentity | null => {
   const name = typeof candidate.name === 'string' ? candidate.name.trim() : '';
   const phone = typeof candidate.phone === 'string' ? candidate.phone.trim() : '';
   const avatar = typeof candidate.avatar === 'string' ? candidate.avatar.trim() : '';
+  const schoolLevel =
+    candidate.schoolLevel === 'primary' ||
+    candidate.schoolLevel === 'secondary' ||
+    candidate.schoolLevel === 'tertiary'
+      ? candidate.schoolLevel
+      : DEFAULT_STUDENT_IDENTITY.schoolLevel;
+  const department = typeof candidate.department === 'string' ? candidate.department.trim() : '';
+  const classGroup = typeof candidate.classGroup === 'string' ? candidate.classGroup.trim() : '';
 
   if (!Number.isFinite(id) || !name) {
     return null;
@@ -38,6 +54,9 @@ const normalizeStudentIdentity = (value: unknown): StudentIdentity | null => {
     name,
     phone: phone || DEFAULT_STUDENT_IDENTITY.phone,
     avatar: avatar || DEFAULT_STUDENT_IDENTITY.avatar,
+    schoolLevel,
+    department,
+    classGroup,
   };
 };
 
@@ -79,6 +98,21 @@ export const saveStudentIdentity = (updates: Partial<StudentIdentity>) => {
     name: typeof updates.name === 'string' && updates.name.trim() ? updates.name.trim() : current.name,
     phone: typeof updates.phone === 'string' && updates.phone.trim() ? updates.phone.trim() : current.phone,
     avatar: typeof updates.avatar === 'string' && updates.avatar.trim() ? updates.avatar.trim() : current.avatar,
+    schoolLevel:
+      updates.schoolLevel === 'primary' ||
+      updates.schoolLevel === 'secondary' ||
+      updates.schoolLevel === 'tertiary' ||
+      updates.schoolLevel === ''
+        ? updates.schoolLevel
+        : current.schoolLevel || '',
+    department:
+      typeof updates.department === 'string'
+        ? updates.department.trim()
+        : current.department || '',
+    classGroup:
+      typeof updates.classGroup === 'string'
+        ? updates.classGroup.trim()
+        : current.classGroup || '',
   };
 
   window.localStorage.setItem(STUDENT_IDENTITY_STORAGE_KEY, JSON.stringify(next));
