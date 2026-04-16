@@ -8,6 +8,45 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 API_HOST="${API_HOST:-127.0.0.1}"
 API_PORT="${API_PORT:-3001}"
+
+# Cross-platform port checking functions
+is_port_in_use() {
+  local port=$1
+  if command -v lsof &>/dev/null; then
+    lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+  elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
+    # Windows with Git Bash
+    netstat -ano 2>/dev/null | grep -i "listening" | grep ":$port " >/dev/null 2>&1 || return 1
+  else
+    # Fallback: assume port not in use if we can't check
+    return 1
+  fi
+}
+
+get_pids_on_port() {
+  local port=$1
+  if command -v lsof &>/dev/null; then
+    lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
+  elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
+    # Windows: extract PIDs from netstat output
+    netstat -ano 2>/dev/null | grep -i "listening" | grep ":$port " | awk '{print $NF}' | sort -u || true
+  else
+    # Fallback: return nothing
+    true
+  fi
+}
+
+show_port_info() {
+  local port=$1
+  if command -v lsof &>/dev/null; then
+    lsof -iTCP:"$port" -sTCP:LISTEN || true
+  elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
+    # Windows: show netstat info
+    netstat -ano 2>/dev/null | grep -i "listening" | grep ":$port" || true
+  else
+    echo "Cannot determine process using port $port"
+  fi
+}
 API_HEALTH_PATH="${API_HEALTH_PATH:-/auth/ready}"
 API_COMPAT_PATH="${API_COMPAT_PATH:-/school-finance/me/reminders/health?days=7}"
 API_COMPAT_POST_PATH="${API_COMPAT_POST_PATH:-/school-finance/me/reminders/exports/audit}"
@@ -70,7 +109,7 @@ if [ "$api_health_code" = "200" ]; then
       sleep 1
     done
   else
-    stale_pids="$(lsof -tiTCP:${API_PORT} -sTCP:LISTEN 2>/dev/null || true)"
+    stale_pids="$(get_pids_on_port "$API_PORT")"
     if [ -n "$stale_pids" ]; then
       while IFS= read -r pid; do
         if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
@@ -81,9 +120,9 @@ if [ "$api_health_code" = "200" ]; then
     fi
   fi
 
-  if lsof -iTCP:"${API_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+  if is_port_in_use "$API_PORT"; then
     echo "Could not reclaim API port ${API_PORT}. Stop the running process and retry." >&2
-    lsof -iTCP:"${API_PORT}" -sTCP:LISTEN >&2 || true
+    show_port_info "$API_PORT" >&2 || true
     exit 1
   fi
 fi

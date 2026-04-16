@@ -52,6 +52,46 @@ DJANGO_PID=""
 NEST_PID=""
 DJANGO_READY="0"
 
+# Cross-platform port checking functions
+is_port_in_use() {
+  local port=$1
+  if command -v lsof &>/dev/null; then
+    lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+  elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
+    # Windows with Git Bash
+    netstat -ano 2>/dev/null | grep -i "listening" | grep ":$port " >/dev/null 2>&1 || return 1
+  else
+    # Fallback: assume port not in use if we can't check
+    return 1
+  fi
+}
+
+get_pids_on_port() {
+  local port=$1
+  if command -v lsof &>/dev/null; then
+    lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
+  elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
+    # Windows: extract PIDs from netstat output
+    netstat -ano 2>/dev/null | grep -i "listening" | grep ":$port " | awk '{print $NF}' | sort -u || true
+  else
+    # Fallback: return nothing
+    true
+  fi
+}
+
+show_port_info() {
+  local port=$1
+  if command -v lsof &>/dev/null; then
+    lsof -iTCP:"$port" -sTCP:LISTEN || true
+  elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
+    # Windows: show netstat info
+    netstat -ano 2>/dev/null | grep -i "listening" | grep ":$port" || true
+  else
+    echo "Cannot determine process using port $port"
+  fi
+}
+
+
 read_env_file_value() {
   local key="$1"
   local file_path="$2"
@@ -286,7 +326,7 @@ wait_for_port_listen() {
   local attempt=1
 
   while [ "$attempt" -le "$retries" ]; do
-    if lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    if is_port_in_use "$port"; then
       return 0
     fi
     echo "Waiting for ${name} on port ${port} (attempt ${attempt}/${retries})"
@@ -316,13 +356,13 @@ ensure_local_infra_if_needed() {
   local need_local_redis="0"
 
   if is_local_host "$db_host"; then
-    if ! lsof -iTCP:"$db_port" -sTCP:LISTEN >/dev/null 2>&1; then
+    if ! is_port_in_use "$db_port"; then
       need_local_db="1"
     fi
   fi
 
   if [ "$SKIP_REDIS_CONNECT" != "1" ] && is_local_host "$redis_host"; then
-    if ! lsof -iTCP:"$redis_port" -sTCP:LISTEN >/dev/null 2>&1; then
+    if ! is_port_in_use "$redis_port"; then
       need_local_redis="1"
     fi
   fi
@@ -377,13 +417,13 @@ assert_port_free() {
   local port="$1"
   local service_name="$2"
 
-  if ! lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+  if ! is_port_in_use "$port"; then
     return
   fi
 
   if [ "$AUTO_RECLAIM_PORTS" = "1" ]; then
     local pids
-    pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+    pids="$(get_pids_on_port "$port")"
     if [ -n "$pids" ]; then
       echo "Port $port is busy. Reclaiming it for ${service_name}..."
       # Split newline-separated PIDs safely.
@@ -394,12 +434,12 @@ assert_port_free() {
       done <<<"$pids"
 
       sleep 1
-      if ! lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      if ! is_port_in_use "$port"; then
         return
       fi
 
       # Graceful stop failed; force kill any remaining listeners.
-      pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+      pids="$(get_pids_on_port "$port")"
       if [ -n "$pids" ]; then
         while IFS= read -r pid; do
           if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
@@ -409,14 +449,14 @@ assert_port_free() {
       fi
 
       sleep 1
-      if ! lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      if ! is_port_in_use "$port"; then
         return
       fi
     fi
   fi
 
   echo "Port $port is already in use. Stop the existing process first." >&2
-  lsof -iTCP:"$port" -sTCP:LISTEN >&2 || true
+  show_port_info "$port" >&2 || true
   exit 1
 }
 
@@ -481,7 +521,6 @@ on_exit() {
 trap on_exit EXIT INT TERM
 
 require_cmd curl
-require_cmd lsof
 require_cmd npm
 ensure_local_infra_if_needed
 

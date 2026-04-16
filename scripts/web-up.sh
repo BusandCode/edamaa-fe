@@ -27,7 +27,32 @@ require_cmd() {
 
 require_cmd npm
 require_cmd curl
-require_cmd lsof
+
+# Cross-platform port checking functions
+is_port_in_use() {
+  local port=$1
+  if command -v lsof &>/dev/null; then
+    lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+  elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
+    # Windows with Git Bash
+    netstat -ano 2>/dev/null | grep -i "listening" | grep ":$port " >/dev/null 2>&1 || return 1
+  else
+    # Fallback: assume port not in use if we can't check
+    return 1
+  fi
+}
+
+show_port_info() {
+  local port=$1
+  if command -v lsof &>/dev/null; then
+    lsof -iTCP:"$port" -sTCP:LISTEN || true
+  elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
+    # Windows: show netstat info
+    netstat -ano 2>/dev/null | grep -i "listening" | grep ":$port" || true
+  else
+    echo "Cannot determine process using port $port"
+  fi
+}
 
 wait_for_http_200() {
   local name="$1"
@@ -81,7 +106,7 @@ start_api_watchdog() {
   echo "$watchdog_pid" >"$API_WATCHDOG_PID_FILE"
 }
 
-if lsof -iTCP:"$WEB_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+if is_port_in_use "$WEB_PORT"; then
   code="$(curl -s -o /dev/null -w '%{http_code}' "http://${WEB_HOST}:${WEB_PORT}" || true)"
   if [ "$code" = "200" ]; then
     start_api_watchdog
@@ -90,7 +115,7 @@ if lsof -iTCP:"$WEB_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   fi
 
   echo "Port ${WEB_PORT} is already in use but not responding with HTTP 200." >&2
-  lsof -iTCP:"$WEB_PORT" -sTCP:LISTEN >&2 || true
+  show_port_info "$WEB_PORT" >&2 || true
   echo "Stop the conflicting process, then retry." >&2
   exit 1
 fi
