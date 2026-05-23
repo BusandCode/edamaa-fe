@@ -1,0 +1,46 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  display: inline-flex;
+  align-items: center;
+  -webkit-user-select: none;
+     -moz-user-select: none;
+          user-select: none;
+  font-size: 14px;
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+
+  /* for clock text to not have different width each time it changes */
+  font-variant-numeric: tabular-nums;
+}
+
+/* useful for removing from layouts that may have gap */
+:host([data-hidden]) {
+  display: none;
+}
+
+:host([size='sm']) {
+  font-size: 12px;
+}
+
+rtk-icon {
+  margin-right: var(--rtk-space-1, 4px);
+  height: var(--rtk-space-5, 20px);
+  width: var(--rtk-space-5, 20px);
+}
+
+:host([size='sm']) rtk-icon {
+  height: var(--rtk-space-4, 16px);
+  width: var(--rtk-space-4, 16px);
+}

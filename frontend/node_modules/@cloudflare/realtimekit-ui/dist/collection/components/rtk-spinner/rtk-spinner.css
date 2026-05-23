@@ -1,0 +1,52 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  box-sizing: border-box;
+  display: block;
+  height: var(--rtk-space-10, 40px);
+  width: var(--rtk-space-10, 40px);
+  --rtk-spinner-color: currentColor;
+}
+
+.spinner {
+  height: 100%;
+  width: 100%;
+}
+
+@keyframes spin {
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+  border-radius: 9999px;
+  background-color: transparent;
+  animation-duration: 1.3s;
+}
+
+/* Sizes */
+
+:host([size='md']) {
+  height: var(--rtk-space-6, 24px);
+  width: var(--rtk-space-6, 24px);
+}
+
+:host([size='sm']) {
+  height: var(--rtk-space-4, 16px);
+  width: var(--rtk-space-4, 16px);
+}

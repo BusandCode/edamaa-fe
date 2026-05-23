@@ -1,0 +1,43 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-1000, 8 8 8) / var(--tw-bg-opacity));
+  color: rgb(var(--rtk-colors-text-900, 255 255 255 / 0.88));
+  overflow: hidden;
+
+  /* fixed `mode` by default */
+
+  position: fixed;
+
+  top: var(--rtk-space-0, 0px);
+
+  right: var(--rtk-space-0, 0px);
+
+  bottom: var(--rtk-space-0, 0px);
+
+  left: var(--rtk-space-0, 0px);
+
+  height: 100%;
+
+  width: 100%;
+}
+
+:host([mode='fill']) {
+  position: relative;
+}

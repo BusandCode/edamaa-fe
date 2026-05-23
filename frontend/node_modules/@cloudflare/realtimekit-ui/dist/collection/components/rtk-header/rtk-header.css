@@ -1,0 +1,35 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  display: flex;
+  height: var(--rtk-space-12, 48px);
+  align-items: center;
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-1000, 8 8 8) / var(--tw-bg-opacity));
+  padding-left: var(--rtk-space-4, 16px);
+  padding-right: var(--rtk-space-4, 16px);
+}
+
+@media only screen and (max-device-height: 480px) and (orientation: landscape) {
+  :host {
+    display: none !important;
+  }
+}
+
+@media only screen and (max-height: 480px) and (orientation: landscape) {
+  :host {
+    display: none !important;
+  }
+}

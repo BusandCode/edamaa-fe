@@ -1,0 +1,81 @@
+:host {
+    display: flex;
+    --tw-bg-opacity: 1;
+    background-color: rgba(var(--rtk-colors-background-800, 30 30 30) / var(--tw-bg-opacity));
+    border-top-left-radius: var(--rtk-border-radius-md, 8px);
+    border-top-right-radius: var(--rtk-border-radius-md, 8px)
+}
+.preview-overlay {
+    position: absolute;
+    top: var(--rtk-space-0, 0px);
+    right: var(--rtk-space-0, 0px);
+    bottom: var(--rtk-space-0, 0px);
+    left: var(--rtk-space-0, 0px);
+    background-color: inherit
+}
+
+.preview {
+    position: absolute;
+    top: var(--rtk-space-4, 16px);
+    left: var(--rtk-space-4, 16px);
+    max-width: -moz-fit-content;
+    max-width: fit-content;
+    max-height: var(--rtk-space-20, 80px)
+}
+
+.preview:hover rtk-tooltip {
+    display: block
+}
+
+.preview rtk-tooltip {
+    position: absolute;
+    top: calc(var(--rtk-space-1, 4px) * -1);
+    left: calc(var(--rtk-space-1, 4px) * -1);
+    display: none;
+    margin-left: calc(var(--rtk-space-1, 4px) * -1);
+    margin-top: calc(var(--rtk-space-1, 4px) * -1)
+}
+
+.preview rtk-button {
+    display: flex;
+    height: var(--rtk-space-4, 16px);
+    width: var(--rtk-space-4, 16px);
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    --tw-bg-opacity: 1;
+    background-color: rgba(var(--rtk-colors-background-600, 60 60 60) / var(--tw-bg-opacity));
+    border: 1px solid rgb(var(--rtk-colors-text-1000, 255 255 255))
+}
+
+.preview rtk-icon {
+    height: var(--rtk-space-3, 12px);
+    width: var(--rtk-space-3, 12px);
+    color: rgb(var(--rtk-colors-text-1000, 255 255 255))
+}
+
+.preview-image {
+    height: var(--rtk-space-16, 64px);
+    width: var(--rtk-space-16, 64px);
+    -o-object-fit: cover;
+       object-fit: cover;
+    max-height: 100%;
+    max-width: 100%;
+    overflow: clip;
+    border-radius: var(--rtk-border-radius-md, 8px)
+}
+
+.preview-file {
+    padding-left: var(--rtk-space-3, 12px);
+    padding-right: var(--rtk-space-3, 12px);
+    padding-top: var(--rtk-space-2, 8px);
+    padding-bottom: var(--rtk-space-2, 8px);
+    --tw-bg-opacity: 1;
+    background-color: rgba(var(--rtk-colors-background-600, 60 60 60) / var(--tw-bg-opacity));
+    color: rgb(var(--rtk-colors-text-900, 255 255 255 / 0.88));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-radius: var(--rtk-border-radius-md, 8px);
+  max-width: 200px
+}

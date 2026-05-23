@@ -1,0 +1,38 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  -webkit-user-select: none;
+     -moz-user-select: none;
+          user-select: none;
+  font-size: 16px;
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+}
+
+/* useful for removing from layouts that may have gap */
+:host([data-hidden]) {
+  display: none;
+}
+
+.title {
+  text-align: center;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+:host([size='sm']) {
+  font-size: 12px;
+}

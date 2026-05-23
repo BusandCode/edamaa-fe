@@ -1,0 +1,55 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  display: inline-flex;
+  -webkit-user-select: none;
+     -moz-user-select: none;
+          user-select: none;
+  align-items: center;
+  padding-top: var(--rtk-space-1, 4px);
+  padding-bottom: var(--rtk-space-1, 4px);
+  padding-left: var(--rtk-space-1\.5, 6px);
+  padding-right: var(--rtk-space-1\.5, 6px);
+  font-size: 14px;
+  border-radius: var(--rtk-border-radius-sm, 4px);
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-700, 44 44 44) / var(--tw-bg-opacity));
+  color: rgb(var(--rtk-colors-text-900, 255 255 255 / 0.88));
+}
+
+span.name {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+::slotted(rtk-audio-visualizer[slot='start']) {
+  margin-right: var(--rtk-space-1\.5, 6px);
+}
+
+::slotted(rtk-audio-visualizer[slot='end']) {
+  margin-left: var(--rtk-space-1\.5, 6px);
+}
+
+:host([size='sm']) {
+  font-size: 12px;
+  --tw-bg-opacity: 0.6;
+}
+
+:host([variant='text']) {
+  background-color: transparent;
+  padding: var(--rtk-space-0, 0px);
+}

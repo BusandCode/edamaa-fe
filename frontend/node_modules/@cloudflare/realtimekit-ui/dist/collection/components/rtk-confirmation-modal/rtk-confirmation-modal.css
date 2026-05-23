@@ -1,0 +1,68 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--rtk-border-radius-md, 8px);
+  padding: var(--rtk-space-8, 32px);
+  width: 100%;
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-1000, 8 8 8) / var(--tw-bg-opacity));
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+  width: 400px;
+  max-width: 80%;
+}
+
+.leave-modal {
+  width: 100%;
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+}
+
+.leave-modal .header h2 {
+  margin: var(--rtk-space-0, 0px);
+}
+
+.leave-modal .content {
+  font-size: 14px;
+}
+
+.leave-modal p {
+  margin-top: var(--rtk-space-3, 12px);
+  margin-bottom: var(--rtk-space-3, 12px);
+}
+
+.leave-meeting {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  gap: var(--rtk-space-4, 16px);
+}
+
+.leave-meeting rtk-button {
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+  flex: 1 1 0%;
+}
+
+.br-secondary-btn {
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-800, 30 30 30) / var(--tw-bg-opacity));
+}
+
+.br-secondary-btn:hover {
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-600, 60 60 60) / var(--tw-bg-opacity));
+}

@@ -1,0 +1,99 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+.scrollbar {
+  /* For Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: var(--rtk-scrollbar-color, rgb(var(--rtk-colors-background-600, 60 60 60)))
+    var(--rtk-scrollbar-background, transparent);
+}
+
+/* For WebKit */
+.scrollbar::-webkit-scrollbar {
+  height: var(--rtk-space-1\.5, 6px);
+  width: var(--rtk-space-1\.5, 6px);
+  border-radius: 9999px;
+  background-color: var(--rtk-scrollbar-background, transparent);
+}
+
+.scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background-color: var(--rtk-scrollbar-color, rgb(var(--rtk-colors-background-600, 60 60 60)));
+}
+
+
+:host {
+  width: 1140px;
+  max-width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: var(--rtk-space-6, 24px);
+  padding-top: var(--rtk-space-5, 20px);
+  overflow-y: auto;
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+  z-index: 40;
+  border-radius: var(--rtk-border-radius-md, 8px);
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-900, 26 26 26) / var(--tw-bg-opacity));
+}
+
+.displayName {
+  font-weight: 700;
+}
+
+.image-ctr {
+  margin-top: var(--rtk-space-2, 8px);
+  box-sizing: border-box;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--rtk-space-2, 8px);
+}
+
+img {
+  box-sizing: border-box;
+  display: block;
+  max-height: 100%;
+  max-width: 100%;
+  -o-object-fit: contain;
+     object-fit: contain;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--rtk-space-4, 16px);
+}
+
+.shared-by-user {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+:host([size='sm']) .header {
+  flex-direction: column;
+}
+
+:host([size='sm']) .header .actions {
+  margin-top: var(--rtk-space-4, 16px);
+}

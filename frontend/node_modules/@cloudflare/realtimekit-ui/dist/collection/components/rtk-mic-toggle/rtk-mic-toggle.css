@@ -1,0 +1,27 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  display: block;
+}
+
+/* useful for removing from layouts that may have gap */
+:host([data-hidden]) {
+  display: none;
+}
+
+:host(.audioDisabled) :slotted(rtk-icon) {
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-danger, 255 45 45) / var(--tw-text-opacity));
+}

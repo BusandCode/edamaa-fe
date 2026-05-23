@@ -1,0 +1,102 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+.scrollbar {
+  /* For Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: var(--rtk-scrollbar-color, rgb(var(--rtk-colors-background-600, 60 60 60)))
+    var(--rtk-scrollbar-background, transparent);
+}
+
+/* For WebKit */
+.scrollbar::-webkit-scrollbar {
+  height: var(--rtk-space-1\.5, 6px);
+  width: var(--rtk-space-1\.5, 6px);
+  border-radius: 9999px;
+  background-color: var(--rtk-scrollbar-background, transparent);
+}
+
+.scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background-color: var(--rtk-scrollbar-color, rgb(var(--rtk-colors-background-600, 60 60 60)));
+}
+
+
+:host {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.content {
+  position: relative;
+  display: flex;
+  height: 100%;
+  width: 100%;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.waitlist-area {
+  display: flex;
+  flex-direction: column;
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-800, 30 30 30) / var(--tw-bg-opacity));
+}
+
+.listening-title {
+  text-align: center;
+  margin-top: var(--rtk-space-5, 20px);
+  margin-bottom: var(--rtk-space-4, 16px);
+}
+
+.waitlist-grid {
+  flex: 1 1 0%;
+}
+
+.grid {
+  box-sizing: border-box;
+  flex: 1 1 0%;
+  gap: var(--rtk-space-6, 24px);
+  display: flex;
+  align-content: center;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+:host([size='md']) .grid {
+  gap: var(--rtk-space-4, 16px);
+}
+
+:host([size='sm']) .grid {
+  gap: var(--rtk-space-3, 12px);
+}
+
+rtk-audio-tile {
+  aspect-ratio: 1 / 1;
+  flex: none;
+  width: calc(20%);
+  max-width: var(--rtk-space-48, 192px);
+  transition: all 0.3s;
+}
+
+rtk-audio-tile[size='md'] {
+  width: 100%;
+  max-width: var(--rtk-space-36, 144px);
+}
+
+rtk-audio-tile[size='sm'] {
+  width: 100%;
+  max-width: var(--rtk-space-24, 96px);
+}

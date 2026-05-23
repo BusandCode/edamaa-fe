@@ -1,0 +1,89 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  position: relative;
+  display: flex;
+  height: var(--rtk-space-14, 56px);
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+}
+
+
+:host rtk-avatar {
+  height: var(--rtk-space-8, 32px);
+  width: var(--rtk-space-8, 32px);
+  font-size: 14px;
+}
+
+.left {
+  display: flex;
+  align-items: center;
+}
+
+.left > * {
+  margin-right: var(--rtk-space-2, 8px);
+}
+
+.left > *:last-child {
+  margin-right: var(--rtk-space-0, 0px);
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.right > * {
+  margin-left: var(--rtk-space-2, 8px);
+}
+
+.right > *:first-child {
+  margin-left: var(--rtk-space-0, 0px);
+}
+
+.name {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+rtk-icon {
+  height: var(--rtk-space-6, 24px);
+  width: var(--rtk-space-6, 24px);
+}
+
+rtk-icon.red {
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-danger, 255 45 45) / var(--tw-text-opacity));
+}
+
+rtk-icon.more {
+  cursor: pointer;
+}
+
+.menu {
+  position: relative;
+  display: inline-block;
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+}
+
+#menu-list {
+  position: absolute;
+  z-index: 20;
+}

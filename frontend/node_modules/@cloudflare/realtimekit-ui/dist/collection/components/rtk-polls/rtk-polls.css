@@ -1,0 +1,69 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+.scrollbar {
+  /* For Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: var(--rtk-scrollbar-color, rgb(var(--rtk-colors-background-600, 60 60 60)))
+    var(--rtk-scrollbar-background, transparent);
+}
+
+/* For WebKit */
+.scrollbar::-webkit-scrollbar {
+  height: var(--rtk-space-1\.5, 6px);
+  width: var(--rtk-space-1\.5, 6px);
+  border-radius: 9999px;
+  background-color: var(--rtk-scrollbar-background, transparent);
+}
+
+.scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background-color: var(--rtk-scrollbar-color, rgb(var(--rtk-colors-background-600, 60 60 60)));
+}
+
+
+:host {
+  margin-top: var(--rtk-space-2, 8px);
+  display: flex;
+  height: 100%;
+  width: 100%;
+  flex-direction: column;
+  font-size: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.ctr {
+  box-sizing: border-box;
+  padding: var(--rtk-space-3, 12px);
+  padding-top: var(--rtk-space-0, 0px);
+  display: flex;
+  flex: 1 1 0%;
+  flex-direction: column;
+}
+
+.polls-view {
+  overflow-y: auto;
+  flex: 1 1 0%;
+  flex-basis: 0;
+}
+
+.empty-polls {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+}

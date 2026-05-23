@@ -1,0 +1,63 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  display: block;
+}
+
+/* useful for removing from layouts that may have gap */
+:host([data-hidden]) {
+  display: none;
+}
+
+:host[size='sm'] {
+  margin-left: var(--rtk-space-1, 4px);
+  margin-right: var(--rtk-space-1, 4px);
+}
+
+.indicator {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  font-size: 14px;
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-danger, 255 45 45) / var(--tw-text-opacity));
+}
+
+rtk-icon {
+  margin-right: var(--rtk-space-1, 4px);
+  height: var(--rtk-space-5, 20px);
+  width: var(--rtk-space-5, 20px);
+  animation: blink 4s linear infinite;
+}
+
+:host([size='sm']) rtk-icon {
+  height: var(--rtk-space-4, 16px);
+  width: var(--rtk-space-4, 16px);
+}
+
+:host([size='sm']) .indicator span {
+  display: none;
+}
+
+@keyframes blink {
+  0%,
+  10% {
+    opacity: 0;
+  }
+  11%,
+  100% {
+    opacity: 1;
+  }
+}

@@ -1,0 +1,61 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+
+.more-menu {
+  position: absolute;
+  right: calc(var(--rtk-space-24, 96px) * -1);
+  bottom: var(--rtk-space-16, 64px);
+  z-index: 50;
+  margin-bottom: var(--rtk-space-3, 12px);
+  box-sizing: border-box;
+  max-height: 60vh;
+  width: var(--rtk-space-64, 256px);
+  overflow: auto;
+  border-radius: var(--rtk-border-radius-md, 8px);
+  border-width: var(--rtk-border-width-sm, 1px);
+  border-style: solid;
+  --tw-border-opacity: 1;
+  border-color: rgba(var(--rtk-colors-background-600, 60 60 60) / var(--tw-border-opacity));
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-1000, 8 8 8) / var(--tw-bg-opacity));
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+:host([size='sm']) .more-menu {
+  bottom: var(--rtk-space-10, 40px);
+}
+
+.more-menu::-webkit-scrollbar {
+  height: var(--rtk-space-0, 0px);
+  width: var(--rtk-space-1\.5, 6px);
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-900, 26 26 26) / var(--tw-bg-opacity));
+}
+
+.more-menu::-webkit-scrollbar-thumb {
+  border-radius: var(--rtk-border-radius-sm, 4px);
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-600, 60 60 60) / var(--tw-bg-opacity));
+}

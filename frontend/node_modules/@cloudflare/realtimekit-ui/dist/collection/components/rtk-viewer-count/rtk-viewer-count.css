@@ -1,0 +1,61 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  display: inline-flex;
+  height: var(--rtk-space-10, 40px);
+  -webkit-user-select: none;
+     -moz-user-select: none;
+          user-select: none;
+  align-items: center;
+  font-size: 14px;
+}
+
+/* useful for removing from layouts that may have gap */
+:host([data-hidden]) {
+  display: none;
+}
+
+:host([size='sm']) {
+  font-size: 12px;
+}
+
+rtk-icon {
+  margin-right: var(--rtk-space-1, 4px);
+  height: var(--rtk-space-5, 20px);
+  width: var(--rtk-space-5, 20px);
+}
+
+:host([size='sm']) rtk-icon {
+  height: var(--rtk-space-4, 16px);
+  width: var(--rtk-space-4, 16px);
+}
+
+:host([variant='embedded']) {
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-1000, 8 8 8) / var(--tw-bg-opacity));
+  opacity: 0.5;
+  margin-top: var(--rtk-space-1, 4px);
+  margin-left: var(--rtk-space-1, 4px);
+  height: var(--rtk-space-5, 20px);
+  border-radius: var(--rtk-border-radius-sm, 4px);
+  padding-left: var(--rtk-space-2, 8px);
+  padding-right: var(--rtk-space-2, 8px);
+  font-size: 12px;
+}
+
+:host([variant='embedded']) rtk-icon {
+  height: var(--rtk-space-4, 16px);
+  width: var(--rtk-space-4, 16px);
+}

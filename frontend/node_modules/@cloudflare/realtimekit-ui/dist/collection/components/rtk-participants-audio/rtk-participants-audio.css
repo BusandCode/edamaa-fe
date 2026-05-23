@@ -1,0 +1,46 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  display: block;
+  overflow-wrap: break-word;
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+  word-wrap: break-word;
+}
+
+.modal {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--rtk-space-96, 384px);
+  padding: var(--rtk-space-4, 16px);
+  border-radius: var(--rtk-border-radius-md, 8px);
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-1000, 8 8 8) / var(--tw-bg-opacity));
+}
+
+.modal h3 {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+  font-size: 24px;
+  font-weight: 500;
+}
+
+.modal p {
+  margin-top: var(--rtk-space-4, 16px);
+  margin-bottom: var(--rtk-space-6, 24px);
+}
+
+.modal rtk-button {
+  width: 100%;
+}

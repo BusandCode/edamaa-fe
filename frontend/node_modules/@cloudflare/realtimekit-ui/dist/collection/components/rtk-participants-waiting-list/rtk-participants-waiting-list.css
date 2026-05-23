@@ -1,0 +1,107 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  margin-top: var(--rtk-space-4, 16px);
+  margin-bottom: calc(var(--rtk-space-2, 8px) * -1);
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  font-size: 14px;
+}
+
+.waiting-participants {
+  margin-bottom: var(--rtk-space-8, 32px);
+}
+
+.waiting-participants .accept-all-button {
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-success, 98 165 4) / var(--tw-text-opacity));
+}
+
+h3, 
+.heading-count {
+  margin: var(--rtk-space-0, 0px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--rtk-space-0, 0px);
+  font-size: 16px;
+  font-weight: 400;
+  color: rgb(var(--rtk-colors-text-900, 255 255 255 / 0.88));
+  text-align: center;
+}
+
+.heading-count {
+  font-size: 14px;
+}
+
+.participants {
+  margin-top: var(--rtk-space-2, 8px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+.waiting-participant {
+  margin-top: var(--rtk-space-2, 8px);
+  margin-bottom: var(--rtk-space-2, 8px);
+  display: flex;
+  align-items: center;
+}
+
+.waiting-participant .participant-details {
+  margin-right: auto;
+  display: flex;
+  align-items: center;
+}
+
+.waiting-participant .participant-details rtk-avatar {
+  margin-right: var(--rtk-space-2, 8px);
+  height: var(--rtk-space-8, 32px);
+  width: var(--rtk-space-8, 32px);
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.waiting-participant .participant-details .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (min-width: 1080px) {
+
+  .waiting-participant .participant-details .name {
+    max-width: var(--rtk-space-40, 160px);
+  }
+}
+
+.waiting-participant .waitlist-controls {
+  display: flex;
+}
+
+.waiting-participant .waitlist-controls rtk-button {
+  margin-left: var(--rtk-space-2, 8px);
+  cursor: pointer;
+  border-radius: var(--rtk-border-radius-sm, 4px);
+}
+
+.waiting-participant .waitlist-controls rtk-icon.accept {
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-success, 98 165 4) / var(--tw-text-opacity));
+}
+
+.waiting-participant .waitlist-controls rtk-icon.deny {
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-danger, 255 45 45) / var(--tw-text-opacity));
+}

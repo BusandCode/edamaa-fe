@@ -1,0 +1,67 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  --background-color: var(--rtk-tooltip-background-color, rgb(var(--rtk-colors-background-600, 60 60 60)));
+  --color: var(--rtk-tooltip-color, rgb(var(--rtk-colors-text-1000, 255 255 255)));
+  display: inline-flex;
+}
+
+#trigger {
+  display: block;
+  width: 100%;
+  flex: 1 1 0%;
+}
+
+.tooltip {
+  max-width: var(--rtk-space-64, 256px);
+  position: fixed;
+  z-index: 20;
+  display: none;
+  width: -moz-max-content;
+  width: max-content;
+  padding-left: var(--rtk-space-2, 8px);
+  padding-right: var(--rtk-space-2, 8px);
+  padding-top: var(--rtk-space-1, 4px);
+  padding-bottom: var(--rtk-space-1, 4px);
+  border-radius: var(--rtk-border-radius-sm, 4px);
+  --tw-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --tw-shadow-colored: 0 1px 2px 0 var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+  font-size: 12px;
+}
+
+.tooltip, 
+#arrow {
+  position: absolute;
+  background-color: var(--background-color);
+  color: var(--color);
+}
+
+#arrow {
+  position: absolute;
+  height: var(--rtk-space-2, 8px);
+  width: var(--rtk-space-2, 8px);
+  transform: rotate(45deg);
+}
+
+:host([variant='primary']) {
+  --background-color: rgb(var(--rtk-colors-brand-500, 33 96 253));
+  --color: rgb(var(--rtk-colors-text-on-brand-1000, var(--rtk-colors-text-1000, 255 255 255)));
+}
+
+:host([kind='block']) {
+  /* Wide kind so that tooltips inline-block doesn't affect it's trigger's width */
+  display: block;
+}

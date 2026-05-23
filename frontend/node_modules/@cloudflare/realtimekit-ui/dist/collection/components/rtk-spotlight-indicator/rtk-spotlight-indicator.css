@@ -1,0 +1,102 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  font-size: 12px;
+}
+
+#sync-button {
+  flex-direction: row;
+  border-radius: var(--rtk-border-radius-sm, 4px);
+  padding-left: var(--rtk-space-1, 4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--rtk-space-1, 4px);
+  font-size: 12px;
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-700, 44 44 44) / var(--tw-bg-opacity));
+}
+:host([size='sm']) rtk-tooltip, 
+:host([size='md']) rtk-tooltip {
+  width: 100%;
+}
+
+:host([size='sm']) > #sync-button {
+  height: var(--rtk-space-8, 32px);
+  width: var(--rtk-space-16, 64px);
+  padding-left: var(--rtk-space-0, 0px);
+}
+
+:host([size='md']) > #sync-button {
+  height: var(--rtk-space-8, 32px);
+  width: var(--rtk-space-16, 64px);
+}
+
+:host([size='lg']) > #sync-button {
+  flex-direction: row;
+  height: var(--rtk-space-8, 32px);
+  width: var(--rtk-space-16, 64px);
+}
+
+@media (orientation: portrait) {
+  :host([size='lg']) #sync-button {
+    flex-direction: column-reverse;
+    height: var(--rtk-space-16, 64px);
+    width: var(--rtk-space-16, 64px);
+  }
+
+  :host([size='md']) #sync-button {
+    height: var(--rtk-space-16, 64px);
+    width: var(--rtk-space-16, 64px);
+  }
+
+  :host([size='sm']) #sync-button {
+    height: var(--rtk-space-10, 40px);
+    width: var(--rtk-space-16, 64px);
+    flex-direction: row;
+  }
+}
+
+#sync-button > rtk-icon {
+  max-height: 14px;
+}
+
+#sync-button rtk-icon {
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-danger, 255 45 45) / var(--tw-text-opacity));
+}
+
+:host([size='sm']) #sync-button > rtk-icon {
+  width: auto;
+}
+
+#sync-button.active rtk-icon {
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+}
+
+div {
+  align-content: center;
+  line-height: 2rem;
+}
+
+rtk-icon {
+  height: var(--rtk-space-6, 24px);
+  width: var(--rtk-space-8, 32px);
+}
+
+#sync-button.active {
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-success, 98 165 4) / var(--tw-bg-opacity));
+}

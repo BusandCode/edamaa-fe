@@ -1,0 +1,110 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  box-sizing: border-box;
+  display: block;
+  max-height: 100%;
+  width: 600px;
+  overflow-y: auto;
+  padding: var(--rtk-space-6, 24px);
+  border-radius: var(--rtk-border-radius-md, 8px);
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-1000, 8 8 8) / var(--tw-bg-opacity));
+  overflow-wrap: break-word;
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+  word-wrap: break-word;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--rtk-space-2, 8px);
+}
+
+.text-icon {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+h2 {
+  margin-top: var(--rtk-space-0, 0px);
+  margin-bottom: var(--rtk-space-4, 16px);
+}
+
+h2 .text-icon {
+  margin-right: var(--rtk-space-2, 8px);
+  height: var(--rtk-space-8, 32px);
+  width: var(--rtk-space-8, 32px);
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-danger, 255 45 45) / var(--tw-text-opacity));
+}
+
+p {
+  margin-top: var(--rtk-space-0, 0px);
+  margin-bottom: var(--rtk-space-0, 0px);
+  margin-bottom: var(--rtk-space-4, 16px);
+}
+
+.need-help-link {
+  margin-top: var(--rtk-space-2, 8px);
+  display: inline-block;
+  text-underline-offset: 2px;
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-brand-400, 53 110 253) / var(--tw-text-opacity));
+}
+
+.need-help-link:hover {
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-brand-600, 13 81 253) / var(--tw-text-opacity));
+}
+
+a rtk-icon {
+  margin-right: var(--rtk-space-2, 8px);
+  height: var(--rtk-space-5, 20px);
+  width: var(--rtk-space-5, 20px);
+}
+
+:host([size='sm']) .actions {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+:host([size='sm']) .action {
+  width: 100%;
+  padding-top: var(--rtk-space-2, 8px);
+  padding-bottom: var(--rtk-space-2, 8px);
+}
+
+.actions {
+  margin-top: var(--rtk-space-6, 24px);
+}
+
+.actions rtk-button {
+  flex: 1 1 0%;
+}
+
+.svg-container {
+  display: flex;
+  width: 100%;
+  justify-content: center !important;
+}
+
+.svg-ins {
+  width: 80%;
+  border-radius: var(--rtk-border-radius-md, 8px);
+  --tw-bg-opacity: 1;
+  background-color: rgb(255 255 255 / var(--tw-bg-opacity));
+}

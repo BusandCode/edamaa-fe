@@ -1,0 +1,88 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  display: flex;
+  height: 100%;
+  width: 100%;
+}
+
+main {
+  flex: 1 1 0%;
+}
+
+.grid-width-sm {
+  width: 25%;
+}
+.grid-width-md {
+  width: 50%;
+}
+.grid-width-lg {
+  width: 66.666667%;
+}
+
+:host([size='sm']), 
+:host([size='md']) {
+  flex-direction: column;
+}
+
+:host([size='md']) aside {
+  max-height: var(--rtk-space-96, 384px);
+  width: 100%;
+  max-width: 100%;
+}
+
+:host([size='md']) .grid-width-sm {
+  height: 25%;
+}
+
+:host([size='md']) .grid-width-md {
+  height: 50%;
+}
+
+:host([size='md']) .grid-width-lg {
+  height: 66.666667%;
+}
+
+:host([size='sm']) aside {
+  max-height: var(--rtk-space-96, 384px);
+  width: 100%;
+  max-width: 100%;
+}
+
+:host([size='sm']) .grid-width-sm, 
+  :host([size='sm']) .grid-width-md, 
+  :host([size='sm']) .grid-width-lg {
+  height: 50%;
+}
+
+:host([size='xl']) .grid-width-sm, 
+  :host([size='xl']) .grid-width-md, 
+  :host([size='xl']) .grid-width-lg {
+  width: 400px;
+}
+
+:host([layout='column']) {
+  flex-direction: column;
+}
+
+:host([layout='column']) main {
+    flex: 4;
+  }
+
+:host([layout='column']) aside {
+    flex: 2;
+    max-width: 100%;
+    width: 100%;
+  }

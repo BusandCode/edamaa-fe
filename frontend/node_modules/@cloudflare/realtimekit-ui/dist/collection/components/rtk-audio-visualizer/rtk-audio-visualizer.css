@@ -1,0 +1,46 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  display: block;
+  width: -moz-fit-content;
+  width: fit-content;
+}
+
+.audioActivePadding {
+  padding: var(--rtk-space-1, 4px);
+}
+
+canvas, 
+rtk-icon {
+  height: var(--rtk-space-6, 24px);
+  width: var(--rtk-space-6, 24px);
+}
+
+:host([size='sm']) {
+  transform: scale(0.9);
+}
+
+canvas {
+  display: none;
+}
+
+canvas.visible {
+  display: block;
+}
+
+canvas.bars {
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-brand-500, 33 96 253) / var(--tw-text-opacity));
+}

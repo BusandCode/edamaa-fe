@@ -1,0 +1,7 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-900, 26 26 26) / var(--tw-bg-opacity));
+  flex: 1 0 0px
+}

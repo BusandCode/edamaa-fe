@@ -1,0 +1,30 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  position: absolute;
+  top: var(--rtk-space-4, 16px);
+  right: var(--rtk-space-4, 16px);
+  bottom: var(--rtk-space-4, 16px);
+  left: var(--rtk-space-4, 16px);
+  top: auto;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+  z-index: 100;
+}
+
+rtk-notification {
+  margin-top: var(--rtk-space-2, 8px);
+}

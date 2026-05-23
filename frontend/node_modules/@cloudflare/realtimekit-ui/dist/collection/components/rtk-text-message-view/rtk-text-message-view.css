@@ -1,0 +1,25 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+.text {
+  word-break: break-word;
+  display: block;
+  overflow-wrap: break-word;
+  line-height: 1.375;
+}
+
+
+.text.emoji {
+  font-size: 24px;
+}

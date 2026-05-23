@@ -1,0 +1,162 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  pointer-events: none;
+  display: block;
+  height: var(--rtk-space-10, 40px);
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+  animation: show 0.4s ease;
+  transition: 0.4s;
+  z-index: 100;
+}
+
+.ctr {
+  box-sizing: border-box;
+  display: inline-flex;
+  height: 100%;
+  min-width: var(--rtk-space-40, 160px);
+  align-items: center;
+  padding-left: var(--rtk-space-3, 12px);
+  padding-right: var(--rtk-space-2, 8px);
+  -webkit-user-select: none;
+     -moz-user-select: none;
+          user-select: none;
+  border-radius: var(--rtk-border-radius-md, 8px);
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-600, 60 60 60) / var(--tw-bg-opacity));
+  --tw-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --tw-shadow-colored: 0 4px 6px -1px var(--tw-shadow-color), 0 2px 4px -2px var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+  --tw-shadow-color: rgb(var(--rtk-colors-background-1000, 8 8 8));
+  --tw-shadow: var(--tw-shadow-colored);
+  pointer-events: auto;
+}
+
+img {
+  margin-right: var(--rtk-space-2, 8px);
+  height: var(--rtk-space-0, 0px);
+  width: var(--rtk-space-0, 0px);
+  border-radius: 9999px;
+}
+ 
+img.loaded {
+  height: var(--rtk-space-6, 24px);
+  width: var(--rtk-space-6, 24px);
+}
+
+.message {
+  margin-right: var(--rtk-space-2, 8px);
+  max-width: var(--rtk-space-72, 288px) !important;
+  font-size: 14px !important;
+  overflow: hidden !important;
+  display: -webkit-box !important;
+  -webkit-box-orient: vertical !important;
+  -webkit-line-clamp: 2 !important;
+}
+
+.message p {
+  margin: var(--rtk-space-0, 0px);
+  margin-right: var(--rtk-space-1, 4px);
+}
+
+.message blockquote {
+  display: none;
+}
+
+rtk-icon.icon {
+  margin-right: var(--rtk-space-2, 8px);
+  height: var(--rtk-space-6, 24px);
+  width: var(--rtk-space-6, 24px);
+  color: rgb(var(--rtk-colors-text-900, 255 255 255 / 0.88));
+}
+
+button.dismiss {
+  display: flex;
+  height: var(--rtk-space-6, 24px);
+  width: var(--rtk-space-6, 24px);
+  align-items: center;
+  justify-content: center;
+  border-width: var(--rtk-border-width-none, 0);
+  border-style: none;
+  padding: var(--rtk-space-0, 0px);
+  border-radius: var(--rtk-border-radius-sm, 4px);
+  background-color: transparent;
+  color: rgb(var(--rtk-colors-text-600, 255 255 255 / 0.52));
+  outline-width: 1px;
+  outline-color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+}
+
+button.dismiss:hover {
+  cursor: pointer;
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+}
+
+button.dismiss:focus-visible {
+  outline-style: solid;
+}
+
+button.dismiss {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+.dismiss rtk-icon {
+  height: var(--rtk-space-5, 20px);
+  width: var(--rtk-space-5, 20px);
+}
+
+rtk-button {
+  border-radius: var(--rtk-border-radius-sm, 4px);
+}
+
+.right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--rtk-space-2, 8px);
+}
+
+:host(.exit) {
+  animation: exit 0.4s ease;
+}
+
+@keyframes show {
+  0% {
+    opacity: 0;
+    transform: translateX(-120px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateX(0px);
+  }
+}
+
+@keyframes exit {
+  0% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(-120px);
+  }
+}
+
+:host([size='sm']) {
+  font-size: 14px;
+}

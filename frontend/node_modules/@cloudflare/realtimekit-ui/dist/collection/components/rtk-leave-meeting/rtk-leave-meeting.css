@@ -1,0 +1,75 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+.leave-modal {
+  width: var(--rtk-space-72, 288px);
+}
+
+
+@media (min-width: 768px) {
+
+  .leave-modal {
+    width: var(--rtk-space-96, 384px);
+  }
+}
+
+
+.leave-modal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--rtk-border-radius-md, 8px);
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-1000, 8 8 8) / var(--tw-bg-opacity));
+  padding: var(--rtk-space-8, 32px);
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+}
+
+.leave-modal .header h2 {
+  margin: var(--rtk-space-0, 0px);
+  margin-bottom: var(--rtk-space-3, 12px);
+}
+
+.leave-modal .message {
+  color: rgb(var(--rtk-colors-text-600, 255 255 255 / 0.52));
+}
+
+.leave-modal .content {
+  margin-top: var(--rtk-space-4, 16px);
+  font-size: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--rtk-space-4, 16px);
+}
+
+.leave-modal .content rtk-button {
+  height: var(--rtk-space-9, 36px);
+  min-width: var(--rtk-space-44, 176px);
+  flex-grow: 1;
+}
+
+.leave-modal .content .secondary-btn {
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-800, 30 30 30) / var(--tw-bg-opacity));
+}
+
+.leave-modal .content .secondary-btn:hover {
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-600, 60 60 60) / var(--tw-bg-opacity));
+}
+
+.leave-modal .content .secondary-danger-btn {
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-danger, 255 45 45) / var(--tw-text-opacity));
+}

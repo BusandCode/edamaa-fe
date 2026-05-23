@@ -1,0 +1,194 @@
+.scrollbar {
+  /* For Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: var(--rtk-scrollbar-color, rgb(var(--rtk-colors-background-600, 60 60 60)))
+    var(--rtk-scrollbar-background, transparent);
+}
+
+/* For WebKit */
+.scrollbar::-webkit-scrollbar {
+  height: var(--rtk-space-1\.5, 6px);
+  width: var(--rtk-space-1\.5, 6px);
+  border-radius: 9999px;
+  background-color: var(--rtk-scrollbar-background, transparent);
+}
+
+.scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background-color: var(--rtk-scrollbar-color, rgb(var(--rtk-colors-background-600, 60 60 60)));
+}
+
+
+:host {
+  box-sizing: border-box;
+  display: flex;
+  height: 100%;
+  width: var(--rtk-space-16, 64px);
+  flex-direction: column;
+  gap: var(--rtk-space-2, 8px);
+  overflow-y: auto;
+  font-family: var(--rtk-font-family, sans-serif);
+}
+
+rtk-button {
+  /* Note(callmetarush): Making sure indicator doesn't hamper with tab clicks */
+  z-index: 10;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.tab {
+  display: flex;
+  height: var(--rtk-space-16, 64px);
+  width: var(--rtk-space-16, 64px);
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--rtk-space-2, 8px);
+  font-size: 12px;
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-700, 44 44 44) / var(--tw-bg-opacity));
+}
+
+.tab.active {
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-brand-500, 33 96 253) / var(--tw-bg-opacity));
+}
+
+.tab img {
+  height: var(--rtk-space-7, 28px);
+  width: var(--rtk-space-7, 28px);
+  border-radius: var(--rtk-border-radius-sm, 4px);
+}
+
+.tab .name {
+  margin-top: var(--rtk-space-0\.5, 2px);
+}
+
+:host([size='sm']) {
+  flex-direction: column;
+  margin-top: var(--rtk-space-4, 16px);
+  height: var(--rtk-space-16, 64px);
+  width: 100%;
+  flex-direction: row;
+  gap: var(--rtk-space-2, 8px);
+  overflow-x: auto;
+}
+
+:host([size='sm']) .tab {
+  margin: var(--rtk-space-0, 0px);
+  text-overflow: clip;
+  min-width: 100px;
+  height: 40px;
+}
+
+:host([size='sm']) .tab .col {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--rtk-space-2, 8px);
+}
+
+:host([size='sm']) .tab .col img, 
+    :host([size='sm']) .tab .col rtk-icon {
+  height: var(--rtk-space-6, 24px);
+  width: var(--rtk-space-6, 24px);
+}
+
+:host([size='sm']) .tab .col .name {
+  gap: var(--rtk-space-1, 4px);
+}
+
+:host([layout='column']) {
+  flex-direction: column;
+}
+
+:host([layout='column']) .aside {
+    flex: 2;
+    max-width: 100%;
+    width: 100%;
+  }
+
+/* Mobile breakpoint */
+
+/* Use mobile styling for portrait views */
+
+@media (orientation: portrait) {
+  :host([size='sm']) {
+    margin-top: var(--rtk-space-2, 8px);
+    height: var(--rtk-space-16, 64px);
+    width: 100%;
+    flex-direction: row;
+    transition: all 0.3s linear;
+  }
+
+  :host([size='md']) {
+    height: var(--rtk-space-24, 96px);
+    width: 100%;
+    flex-direction: row;
+    transition: all 0.3s linear;
+  }
+
+  :host .tab {
+    margin: var(--rtk-space-0, 0px);
+  }
+}
+
+/* Use mobile styling for landscape views */
+
+@media (orientation: landscape) {
+  :host([size='sm']) {
+    margin-right: var(--rtk-space-4, 16px);
+    height: 100%;
+    width: var(--rtk-space-14, 56px);
+    flex-direction: row;
+    gap: var(--rtk-space-2, 8px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    transition: all 0.3s linear;
+  }
+
+  :host([size='md']) {
+    margin-right: var(--rtk-space-4, 16px);
+    height: 100%;
+    width: var(--rtk-space-14, 56px);
+    flex-direction: row;
+    gap: var(--rtk-space-2, 8px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    transition: all 0.3s linear;
+  }
+
+  :host .tab {
+    margin: var(--rtk-space-0, 0px);
+  }
+
+  :host([size='sm']) .tab {
+    margin: var(--rtk-space-0, 0px);
+    width: 100%;
+    text-overflow: clip;
+    min-width: 0px;
+    min-height: 40px;
+  }
+
+    :host([size='sm']) .tab .col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--rtk-space-2, 8px);
+    font-size: 10px;
+  }
+
+      :host([size='sm']) .tab .col img, 
+      :host([size='sm']) .tab .col rtk-icon {
+    height: var(--rtk-space-3, 12px);
+    width: var(--rtk-space-3, 12px);
+  }
+
+      :host([size='sm']) .tab .col .name {
+    gap: var(--rtk-space-1, 4px);
+  }
+}

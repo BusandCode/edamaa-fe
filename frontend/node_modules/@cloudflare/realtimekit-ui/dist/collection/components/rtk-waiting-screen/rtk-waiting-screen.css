@@ -1,0 +1,45 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.centered {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+rtk-logo {
+  margin-bottom: var(--rtk-space-8, 32px);
+  height: var(--rtk-space-12, 48px);
+}
+
+p {
+  font-size: 16px;
+  border-radius: var(--rtk-border-radius-lg, 12px);
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-800, 30 30 30) / var(--tw-bg-opacity));
+  padding-left: var(--rtk-space-8, 32px);
+  padding-right: var(--rtk-space-8, 32px);
+  padding-top: var(--rtk-space-4, 16px);
+  padding-bottom: var(--rtk-space-4, 16px);
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+}

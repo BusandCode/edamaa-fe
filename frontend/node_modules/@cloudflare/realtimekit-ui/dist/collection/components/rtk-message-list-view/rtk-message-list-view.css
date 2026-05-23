@@ -1,0 +1,68 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+.scrollbar {
+  /* For Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: var(--rtk-scrollbar-color, rgb(var(--rtk-colors-background-600, 60 60 60)))
+    var(--rtk-scrollbar-background, transparent);
+}
+
+/* For WebKit */
+.scrollbar::-webkit-scrollbar {
+  height: var(--rtk-space-1\.5, 6px);
+  width: var(--rtk-space-1\.5, 6px);
+  border-radius: 9999px;
+  background-color: var(--rtk-scrollbar-background, transparent);
+}
+
+.scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background-color: var(--rtk-scrollbar-color, rgb(var(--rtk-colors-background-600, 60 60 60)));
+}
+
+
+.loading {
+  cursor: wait;
+}
+
+.content-wrapper {
+  height: 100%;
+  overflow-y: auto;
+  position: relative;
+  contain: strict;
+}
+
+.scroller {
+  width: 1px;
+  opacity: 0;
+}
+
+.content {
+  position: absolute;
+  top: 0;
+  width: 100%;
+}
+
+.smallest-dom-element {
+  width: 100%;
+  height: 2px;
+  background: red;
+}
+
+.loader {
+  margin-top: var(--rtk-space-2, 8px);
+  margin-bottom: var(--rtk-space-2, 8px);
+  display: flex;
+  justify-content: center;
+}

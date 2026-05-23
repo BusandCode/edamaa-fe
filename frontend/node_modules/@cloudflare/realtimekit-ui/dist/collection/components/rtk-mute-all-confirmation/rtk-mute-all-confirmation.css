@@ -1,0 +1,74 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  display: block;
+  -webkit-user-select: none;
+     -moz-user-select: none;
+          user-select: none;
+}
+
+.leave-modal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--rtk-border-radius-md, 8px);
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-900, 26 26 26) / var(--tw-bg-opacity));
+  padding: var(--rtk-space-4, 16px);
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+}
+
+.leave-modal .header h2 {
+  margin: var(--rtk-space-0, 0px);
+  margin-bottom: var(--rtk-space-3, 12px);
+}
+
+.leave-modal .content {
+  font-size: 14px;
+}
+
+.leave-message p {
+  margin-top: var(--rtk-space-3, 12px);
+  margin-bottom: var(--rtk-space-3, 12px);
+}
+
+.leave-meeting {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  gap: var(--rtk-space-2, 8px);
+}
+
+.leave-meeting rtk-button {
+  flex: 1 1 0%;
+}
+
+.end-meeting {
+  margin-top: var(--rtk-space-2, 8px);
+}
+
+.message {
+  margin-bottom: var(--rtk-space-4, 16px);
+}
+
+label {
+  display: flex;
+  align-items: center;
+}
+
+input[type='checkbox'] {
+  margin-right: var(--rtk-space-2, 8px);
+  accent-color: rgb(var(--rtk-colors-brand-500, 33 96 253));
+}

@@ -1,0 +1,122 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+.offline-grid {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.offline-grid h3 {
+  margin-top: var(--rtk-space-2, 8px);
+  margin-bottom: var(--rtk-space-2, 8px);
+  margin-left: var(--rtk-space-0, 0px);
+  margin-right: var(--rtk-space-0, 0px);
+  font-size: 20px;
+  font-weight: 500;
+  color: rgb(var(--rtk-colors-text-900, 255 255 255 / 0.88));
+}
+
+.offline-grid p {
+  margin-top: var(--rtk-space-1, 4px);
+  margin-bottom: var(--rtk-space-1, 4px);
+  margin-left: var(--rtk-space-0, 0px);
+  margin-right: var(--rtk-space-0, 0px);
+  text-align: center;
+  font-size: 16px;
+  font-weight: 400;
+  color: rgb(var(--rtk-colors-text-700, 255 255 255 / 0.64));
+}
+
+.offline-grid rtk-icon {
+  margin-bottom: var(--rtk-space-2, 8px);
+}
+
+.webinar-stage {
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  align-content: center;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.webinar-stage h2 {
+  margin: var(--rtk-space-0, 0px);
+  font-weight: normal;
+}
+
+rtk-viewer-count {
+  display: none;
+}
+
+.ctr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.message {
+  font-size: 16px;
+  border-radius: var(--rtk-border-radius-lg, 12px);
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-800, 30 30 30) / var(--tw-bg-opacity));
+  padding-left: var(--rtk-space-8, 32px);
+  padding-right: var(--rtk-space-8, 32px);
+  padding-top: var(--rtk-space-4, 16px);
+  padding-bottom: var(--rtk-space-4, 16px);
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+}
+
+.description {
+  margin-top: var(--rtk-space-4, 16px);
+  margin-bottom: var(--rtk-space-4, 16px);
+  font-size: 14px;
+}
+
+rtk-livestream-indicator {
+  display: none;
+}
+
+@media only screen and (max-device-height: 480px) and (orientation: landscape) {
+  rtk-viewer-count[variant='embedded'] {
+    position: absolute;
+    top: var(--rtk-space-0, 0px);
+    right: var(--rtk-space-2, 8px);
+    z-index: 20;
+    margin-top: var(--rtk-space-0, 0px);
+    margin-left: var(--rtk-space-0, 0px);
+    display: flex;
+  }
+
+  rtk-livestream-indicator {
+    position: absolute;
+    top: var(--rtk-space-0, 0px);
+    left: var(--rtk-space-2, 8px);
+    z-index: 20;
+    margin-top: var(--rtk-space-0, 0px);
+    margin-left: var(--rtk-space-0, 0px);
+    display: flex;
+  }
+}

@@ -1,0 +1,146 @@
+.rtk-select {
+
+  --tw-bg-opacity: 1;
+
+  background-color: rgba(var(--rtk-colors-background-700, 44 44 44) / var(--tw-bg-opacity));
+
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255))
+}.rtk-select:focus {
+
+  --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
+
+  --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(0px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+
+  box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000)
+}.rtk-select {
+
+  display: block;
+
+  border-radius: var(--rtk-border-radius-sm, 4px);
+
+  border-width: var(--rtk-border-width-none, 0);
+
+  border-style: none;
+
+  -webkit-appearance: none;
+
+     -moz-appearance: none;
+
+          appearance: none;
+
+  padding: var(--rtk-space-3, 12px);
+
+  font-size: 16px;
+
+  --icon-size: var(--rtk-select-chevron-size, var(--rtk-space-6, 24px));
+  --icon-right-position: var(--rtk-select-chevron-right-position, var(--rtk-space-2, 8px));
+
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+  background-position: right var(--icon-right-position) center;
+  background-repeat: no-repeat;
+  background-size: var(--icon-size) var(--icon-size);
+  padding-right: calc(var(--icon-right-position) * 5);
+  width: 100%;
+  max-width: 100%;
+  text-overflow: ellipsis
+}
+
+.inline .rtk-select {
+
+  margin-top: var(--rtk-space-1, 4px);
+
+  width: 100%;
+
+  padding-top: var(--rtk-space-1, 4px);
+
+  padding-bottom: var(--rtk-space-1, 4px);
+
+  padding-left: var(--rtk-space-1\.5, 6px);
+
+  padding-right: var(--rtk-space-1\.5, 6px);
+
+  padding-right: var(--rtk-space-8, 32px);
+
+  font-size: 14px
+}
+
+.row {
+
+  margin-bottom: var(--rtk-space-2, 8px);
+
+  display: flex;
+
+  width: 100%;
+
+  align-items: center;
+
+  justify-content: space-between;
+
+  gap: var(--rtk-space-3, 12px)
+}
+
+.group {
+
+  margin-top: var(--rtk-space-2, 8px);
+
+  margin-bottom: var(--rtk-space-2, 8px)
+}
+
+.group>* {
+
+  margin-bottom: var(--rtk-space-2, 8px)
+}
+
+.group>*:last-child {
+
+  margin-bottom: var(--rtk-space-0, 0px)
+}
+
+.group select {
+
+  flex: 1 1 0%
+}
+
+.group {
+
+  margin-top: var(--rtk-space-0, 0px);
+
+  margin-bottom: var(--rtk-space-0, 0px)
+}
+
+.group>* {
+
+  margin-bottom: var(--rtk-space-0, 0px)
+}
+
+label {
+
+  display: flex;
+
+  -webkit-user-select: none;
+
+     -moz-user-select: none;
+
+          user-select: none;
+
+  align-items: center;
+
+  gap: var(--rtk-space-1, 4px);
+
+  font-size: 14px
+}
+
+.inline.container {
+
+  display: flex;
+
+  align-items: center;
+
+  justify-content: flex-start;
+
+  gap: var(--rtk-space-2, 8px);
+
+  padding-left: var(--rtk-space-2, 8px);
+
+  padding-right: var(--rtk-space-2, 8px)
+}

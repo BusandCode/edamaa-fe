@@ -1,0 +1,41 @@
+:host {
+  margin-left: var(--rtk-space-2, 8px);
+  margin-right: var(--rtk-space-2, 8px);
+  cursor: pointer
+}
+
+.tooltip-container {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center
+}
+
+.tooltip-container rtk-icon {
+  cursor: pointer;
+  color: rgb(var(--rtk-colors-text-600, 255 255 255 / 0.52))
+}
+
+.tooltip-container rtk-icon:hover + .tooltip {
+  display: flex !important
+}
+
+.tooltip {
+  position: absolute;
+  margin-left: var(--rtk-space-2, 8px);
+  display: none !important;
+  border-radius: var(--rtk-border-radius-md, 8px);
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-700, 44 44 44) / var(--tw-bg-opacity));
+  padding: var(--rtk-space-2, 8px);
+  font-weight: 400;
+  color: rgb(var(--rtk-colors-text-600, 255 255 255 / 0.52));
+  z-index: 50;
+  display: flex;
+  min-width: var(--rtk-space-60, 240px);
+  flex-direction: column;
+  --tw-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --tw-shadow-colored: 0 4px 6px -1px var(--tw-shadow-color), 0 2px 4px -2px var(--tw-shadow-color);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+  left: 14px
+}

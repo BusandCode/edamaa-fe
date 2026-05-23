@@ -1,0 +1,21 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+.image-spinner {
+  cursor: wait;
+}
+
+.image-errored {
+  cursor: not-allowed;
+}

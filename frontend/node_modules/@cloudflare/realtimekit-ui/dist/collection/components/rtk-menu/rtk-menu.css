@@ -1,0 +1,25 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+
+:host {
+  position: relative;
+  display: inline-block;
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+}
+
+#menu-list {
+  position: absolute;
+  z-index: 20;
+  display: none;
+}

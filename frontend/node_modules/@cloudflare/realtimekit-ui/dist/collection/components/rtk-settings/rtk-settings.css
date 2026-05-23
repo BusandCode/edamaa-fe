@@ -1,0 +1,241 @@
+:host {
+  line-height: initial;
+  font-family: var(--rtk-font-family, sans-serif);
+
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+}
+
+p {
+  margin: var(--rtk-space-0, 0px);
+  padding: var(--rtk-space-0, 0px);
+}
+
+.scrollbar {
+  /* For Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: var(--rtk-scrollbar-color, rgb(var(--rtk-colors-background-600, 60 60 60)))
+    var(--rtk-scrollbar-background, transparent);
+}
+
+/* For WebKit */
+.scrollbar::-webkit-scrollbar {
+  height: var(--rtk-space-1\.5, 6px);
+  width: var(--rtk-space-1\.5, 6px);
+  border-radius: 9999px;
+  background-color: var(--rtk-scrollbar-background, transparent);
+}
+
+.scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background-color: var(--rtk-scrollbar-color, rgb(var(--rtk-colors-background-600, 60 60 60)));
+}
+
+
+:host {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  border-radius: var(--rtk-border-radius-md, 8px);
+  width: 100%;
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-800, 30 30 30) / var(--tw-bg-opacity));
+  color: rgb(var(--rtk-colors-text-1000, 255 255 255));
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: var(--rtk-space-4, 16px);
+  padding-right: var(--rtk-space-4, 16px);
+}
+
+button {
+}
+
+.title {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.back-btn, 
+.dismiss-btn {
+  border-radius: var(--rtk-border-radius-sm, 4px);
+  background-color: transparent;
+  --tw-shadow: 0 0 #0000;
+  --tw-shadow-colored: 0 0 #0000;
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+
+.back-btn:hover, 
+.dismiss-btn:hover {
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-700, 44 44 44) / var(--tw-bg-opacity));
+}
+
+aside {
+  box-sizing: border-box;
+  display: flex;
+  min-width: var(--rtk-space-56, 224px);
+  flex-direction: column;
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-900, 26 26 26) / var(--tw-bg-opacity));
+  padding-left: var(--rtk-space-2, 8px);
+}
+
+aside button {
+  margin-top: var(--rtk-space-4, 16px);
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  border-top-left-radius: var(--rtk-border-radius-sm, 4px);
+  border-bottom-left-radius: var(--rtk-border-radius-sm, 4px);
+  padding-left: var(--rtk-space-4, 16px);
+  padding-right: var(--rtk-space-4, 16px);
+  padding-top: var(--rtk-space-3, 12px);
+  padding-bottom: var(--rtk-space-3, 12px);
+  background-color: transparent;
+  color: rgb(var(--rtk-colors-text-900, 255 255 255 / 0.88));
+  cursor: default;
+  font-size: 16px;
+  --tw-shadow: 0 0 #0000;
+  --tw-shadow-colored: 0 0 #0000;
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+  border-width: var(--rtk-border-width-none, 0);
+  border-style: none;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+aside button .right {
+  display: flex;
+  align-items: center;
+}
+
+aside button .right rtk-icon {
+  height: var(--rtk-space-6, 24px);
+  width: var(--rtk-space-6, 24px);
+}
+
+aside button .right rtk-icon:last-child {
+  margin-left: var(--rtk-space-4, 16px);
+}
+
+aside button[type='button'] {
+  cursor: pointer;
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+aside button[type='button']:hover {
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-700, 44 44 44) / var(--tw-bg-opacity));
+}
+
+aside button[type='button'] {
+    border-right: var(--rtk-border-width-md, 2px) solid transparent;
+  }
+
+aside button.active {
+  --tw-border-opacity: 1;
+  border-color: rgba(var(--rtk-colors-brand-500, 33 96 253) / var(--tw-border-opacity));
+  background-color: rgba(var(--rtk-colors-brand-500, 33 96 253) / 0.2);
+}
+
+aside button.active:hover {
+  background-color: rgba(var(--rtk-colors-brand-500, 33 96 253) / 0.2);
+}
+
+rtk-icon.poor {
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-warning, 255 205 7) / var(--tw-text-opacity));
+}
+
+rtk-icon.poorest {
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-danger, 255 45 45) / var(--tw-text-opacity));
+}
+
+rtk-icon.good {
+  --tw-text-opacity: 1;
+  color: rgba(var(--rtk-colors-success, 98 165 4) / var(--tw-text-opacity));
+}
+
+main {
+  display: flex;
+  flex: 1 1 0%;
+  align-items: center;
+  justify-content: center;
+  padding-left: var(--rtk-space-6, 24px);
+  padding-right: var(--rtk-space-6, 24px);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(100% - var(--rtk-space-56, 224px));
+}
+
+.dismiss-btn {
+  position: absolute;
+  top: var(--rtk-space-3, 12px);
+  right: var(--rtk-space-3, 12px);
+  height: var(--rtk-space-6, 24px);
+  width: var(--rtk-space-6, 24px);
+}
+
+:host([size='sm']) aside {
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-800, 30 30 30) / var(--tw-bg-opacity));
+}
+
+:host([size='sm']) .dismiss-btn {
+  top: var(--rtk-space-5, 20px);
+  right: var(--rtk-space-4, 16px);
+}
+
+:host([size='sm']) aside {
+  width: 100%;
+  padding-left: var(--rtk-space-0, 0px);
+}
+
+:host([size='sm']) aside button {
+  border-radius: var(--rtk-border-radius-none, 0);
+}
+
+:host([size='sm']) aside button.active {
+  border-width: var(--rtk-border-width-none, 0);
+  border-style: none;
+  background-color: transparent;
+}
+
+:host([size='sm']) aside button.active:hover {
+  --tw-bg-opacity: 1;
+  background-color: rgba(var(--rtk-colors-background-700, 44 44 44) / var(--tw-bg-opacity));
+}
+
+:host([size='sm']) aside.hide {
+  display: none;
+}
+
+:host([size='sm']) main {
+  display: none;
+  max-width: 100%;
+  overflow-y: auto;
+  padding-left: var(--rtk-space-4, 16px);
+  padding-right: var(--rtk-space-4, 16px);
+}
+
+:host([size='sm']) main header {
+  justify-content: center;
+}
+
+:host([size='sm']) main header rtk-button {
+  position: absolute;
+  left: var(--rtk-space-4, 16px);
+}
+
+:host([size='sm']) main.active {
+  display: block;
+}
