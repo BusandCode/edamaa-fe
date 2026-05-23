@@ -1,0 +1,18 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "api:up": "bash scripts/api-up.sh",
+    "api:up:lite": "SKIP_PRISMA_CONNECT=1 bash scripts/api-up.sh",
+    "local:up": "bash scripts/local-up.sh",
+    "local:up:lite": "SKIP_PRISMA_CONNECT=1 bash scripts/local-up.sh",
+    "local:down": "bash scripts/local-down.sh",
+    "reset:auth": "bash scripts/reset-local-auth-db.sh"
+  }
+}

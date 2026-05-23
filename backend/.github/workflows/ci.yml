@@ -1,0 +1,138 @@
+name: CI Gates - Internal Bridge & Service Boundaries
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  service-boundaries:
+    name: Service Boundary Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Run service boundary checks
+        run: bash scripts/check_service_boundaries.sh
+
+  nestjs-lint-build:
+    name: NestJS Lint & Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install NestJS dependencies
+        working-directory: backend/nestjs
+        run: npm install --no-audit --no-fund
+
+      - name: Build NestJS
+        working-directory: backend/nestjs
+        run: npm run build
+
+  smoke-internal-bridge:
+    name: Smoke Test - Internal Bridge
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: backend/nestjs
+        run: npm install --no-audit --no-fund
+
+      - name: Run smoke test - internal bridge
+        env:
+          REDIS_URL: redis://localhost:6379
+          INTERNAL_API_TOKEN: test-smoke-token-${{ github.run_id }}
+          SKIP_PRISMA_CONNECT: '1'
+          SKIP_QUEUE_CONNECT: '0'
+          NEST_BASE_URL: http://127.0.0.1:3001
+        run: |
+          cd backend/nestjs
+          npm run start &
+          NEST_PID=$!
+          sleep 5
+          
+          # Verify internal bridge endpoint exists and validates token
+          echo "Testing internal bridge health check with valid token..."
+          if curl -s -H "X-Internal-Token: test-smoke-token-${{ github.run_id }}" \
+               http://127.0.0.1:3001/internal/admin/health | grep -q '"status"'; then
+            echo "✓ Internal bridge health endpoint passed"
+          else
+            echo "✗ Internal bridge health endpoint failed"
+            kill $NEST_PID || true
+            exit 1
+          fi
+          
+          kill $NEST_PID || true
+          echo "✓ Smoke test passed"
+
+  frontend-build:
+    name: Frontend Build & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Type check
+        run: npx tsc -b
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+  django-checks:
+    name: Django System Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        working-directory: backend/django
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Django system checks
+        working-directory: backend/django
+        run: python manage.py check
